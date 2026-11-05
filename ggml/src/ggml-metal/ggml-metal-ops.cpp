@@ -3701,10 +3701,11 @@ int ggml_metal_op_flash_attn_ext(ggml_metal_op_t ctx, int idx) {
             nsg = 4;
         } else {
             nwg = 32;
+            // TASK-066 / ggml-org/llama.cpp#25618 (skoulik): pin nsg.
+            // Doubling past padded KV 2048/4096 makes verify batches (longer ne11)
+            // cross the threshold earlier than N=1 decode → different reduction tree
+            // for the same query. Keep nsg=1 so row0(N>1) matches N=1.
             nsg = 1;
-            while (2*nwg*nsg*ncpsg < ne11 && nsg < 4) {
-                nsg *= 2;
-            }
         }
 
         ggml_metal_kargs_flash_attn_ext_vec args = {
