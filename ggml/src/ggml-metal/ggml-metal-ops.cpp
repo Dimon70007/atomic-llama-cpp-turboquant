@@ -2444,7 +2444,9 @@ int ggml_metal_op_mul_mat(ggml_metal_op_t ctx, int idx) {
 
     // first try to use small-batch mat-mv kernels
     // these should be efficient for BS [2, ~8]
-    if (op->src[1]->type == GGML_TYPE_F32 && (ne00%128 == 0) &&
+    // TASK-066 / ggml-org/llama.cpp#25618 (skoulik): disable mul_mv_ext for ne11 in 2..8.
+    // N=1 uses mul_mv; verify batches used mul_mv_ext → row0 float drift (~1 ULP). Force mul_mv.
+    if (false && op->src[1]->type == GGML_TYPE_F32 && (ne00%128 == 0) &&
         (
          (
           (

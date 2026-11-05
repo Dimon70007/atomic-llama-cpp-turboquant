@@ -403,6 +403,12 @@ target_link_libraries(test-flash-attn-batch-invariance PRIVATE ggml)
 add_test(NAME test-flash-attn-batch-invariance COMMAND test-flash-attn-batch-invariance)
 set_tests_properties(test-flash-attn-batch-invariance PROPERTIES SKIP_RETURN_CODE 77)
 
+# TASK-066 / #25618 — Metal mul_mat / mul_mat_id batch-invariance (C1/C4/C5)
+add_executable(test-mul-mat-batch-invariance test-mul-mat-batch-invariance.cpp)
+target_link_libraries(test-mul-mat-batch-invariance PRIVATE ggml)
+add_test(NAME test-mul-mat-batch-invariance COMMAND test-mul-mat-batch-invariance)
+set_tests_properties(test-mul-mat-batch-invariance PROPERTIES SKIP_RETURN_CODE 77)
+
 llama_build_and_test(test-model-load-cancel.cpp LABEL "model")
 llama_build_and_test(test-autorelease.cpp       LABEL "model")
 llama_build_and_test(test-backend-sampler.cpp   LABEL "model")
