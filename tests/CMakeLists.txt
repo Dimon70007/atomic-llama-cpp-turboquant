@@ -415,6 +415,22 @@ target_link_libraries(test-longctx-row0-parity PRIVATE ggml)
 add_test(NAME test-longctx-row0-parity COMMAND test-longctx-row0-parity)
 set_tests_properties(test-longctx-row0-parity PROPERTIES SKIP_RETURN_CODE 77)
 
+# TASK-066 ST-3.2d — MoE mul_mv_id row0 localizer (IQ4_XS / Gemma-like top-8 + hetero ids)
+add_executable(test-moe-row0-parity test-moe-row0-parity.cpp)
+target_link_libraries(test-moe-row0-parity PRIVATE ggml)
+add_test(NAME test-moe-row0-parity COMMAND test-moe-row0-parity)
+set_tests_properties(test-moe-row0-parity PROPERTIES SKIP_RETURN_CODE 77)
+
+# TASK-066 ST-3.2d — MoE router→soft_max→argsort_top_k→mul_mat_id (computed ids / logits)
+add_executable(test-moe-router-row0-parity test-moe-router-row0-parity.cpp)
+target_link_libraries(test-moe-router-row0-parity PRIVATE ggml)
+add_test(NAME test-moe-router-row0-parity COMMAND test-moe-router-row0-parity)
+set_tests_properties(test-moe-router-row0-parity PROPERTIES SKIP_RETURN_CODE 77)
+
+# TASK-066 ST-3.2f — full-graph decode row0 (N=1 vs N=2) bit-exact logits; patch-C TDD RED
+# Runner: tests/run-task066-fullgraph-corners.sh (requires TASK066_MODEL; not in SUITE=all)
+llama_build(test-fullgraph-decode-row0-parity.cpp)
+
 llama_build_and_test(test-model-load-cancel.cpp LABEL "model")
 llama_build_and_test(test-autorelease.cpp       LABEL "model")
 llama_build_and_test(test-backend-sampler.cpp   LABEL "model")

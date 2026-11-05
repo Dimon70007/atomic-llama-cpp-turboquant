@@ -95,7 +95,10 @@ fa_run run_fa(
         const std::vector<float> & v_f32,
         bool causal_mask,
         ggml_type type_k,
-        ggml_type type_v) {
+        ggml_type type_v,
+        // When >= 0: q_pos for iq is q_pos0_base+iq (keep ne11 equal across decode vs verify).
+        // When < 0: default causal q_pos = (nkv - nq) + iq.
+        int64_t q_pos0_base = -1) {
     ggml_init_params params = {
         /*.mem_size   =*/ ggml_tensor_overhead() * 16 + ggml_graph_overhead_custom(32, false),
         /*.mem_base   =*/ nullptr,
@@ -133,8 +136,8 @@ fa_run run_fa(
     if (m) {
         std::vector<ggml_fp16_t> mask(size_t(nkv * nq));
         for (int64_t iq = 0; iq < nq; ++iq) {
+            const int64_t q_pos = (q_pos0_base >= 0) ? (q_pos0_base + iq) : ((nkv - nq) + iq);
             for (int64_t ik = 0; ik < nkv; ++ik) {
-                const int64_t q_pos = (nkv - nq) + iq;
                 const bool visible = ik <= q_pos;
                 mask[size_t(iq * nkv + ik)] = ggml_fp32_to_fp16(visible ? 0.0f : -INFINITY);
             }
@@ -226,8 +229,12 @@ bool check_c2_boundary(
         ggml_type type_v,
         const char * label,
         int & fails) {
+    // Speculative verify grows KV earlier than plain decode. Keep ne11 identical
+    // (verify_kv) on both arms and mask decode row0 to decode_kv-1 — otherwise
+    // different ne11 alone yields ~1 ULP even when nsg is pinned.
     const int64_t verify_kv = decode_kv + (n - 1);
-    printf("C2 early-cross [%s] decode_kv=%lld verify_kv=%lld N=%lld K=%s V=%s nsg_formula %lld→%lld\n",
+    const int64_t q_pos0 = decode_kv - 1;
+    printf("C2 early-cross [%s] decode_kv=%lld verify_kv=%lld N=%lld K=%s V=%s nsg_formula %lld→%lld (same-ne11+mask)\n",
            label, (long long) decode_kv, (long long) verify_kv, (long long) n,
            ggml_type_name(type_k), ggml_type_name(type_v),
            (long long) nsg_for_ne11(decode_kv), (long long) nsg_for_ne11(verify_kv));
@@ -236,9 +243,6 @@ bool check_c2_boundary(
     std::vector<float> v(static_cast<size_t>(kHead * verify_kv), 0.0f);
     fill_sin(k, 0.41f);
     fill_sin(v, 0.91f);
-
-    std::vector<float> k_dec(k.begin(), k.begin() + size_t(kHead * decode_kv));
-    std::vector<float> v_dec(v.begin(), v.begin() + size_t(kHead * decode_kv));
 
     std::vector<float> q1(static_cast<size_t>(kHead), 0.0f);
     fill_sin(q1, 0.55f);
@@ -251,8 +255,10 @@ bool check_c2_boundary(
         }
     }
 
-    const fa_run decode = run_fa(backend, 1, decode_kv, q1, k_dec, v_dec, true, type_k, type_v);
-    const fa_run verify = run_fa(backend, n, verify_kv, qn, k, v, true, type_k, type_v);
+    const fa_run decode = run_fa(
+            backend, 1, verify_kv, q1, k, v, true, type_k, type_v, /*q_pos0_base=*/q_pos0);
+    const fa_run verify = run_fa(
+            backend, n, verify_kv, qn, k, v, true, type_k, type_v, /*q_pos0_base=*/q_pos0);
     const bool exact = row0_bit_identical(decode.out, verify.out, n);
     const double mad = max_abs_diff_row0(decode.out, verify.out, n);
     printf("  exact=%d max_abs_diff=%.6g %s\n", exact ? 1 : 0, mad, exact ? "PASS" : "FAIL");
