@@ -409,6 +409,12 @@ target_link_libraries(test-mul-mat-batch-invariance PRIVATE ggml)
 add_test(NAME test-mul-mat-batch-invariance COMMAND test-mul-mat-batch-invariance)
 set_tests_properties(test-mul-mat-batch-invariance PROPERTIES SKIP_RETURN_CODE 77)
 
+# TASK-066 P5 residual — long-KV FA row0 localizer (patch-C TDD gate for FA)
+add_executable(test-longctx-row0-parity test-longctx-row0-parity.cpp)
+target_link_libraries(test-longctx-row0-parity PRIVATE ggml)
+add_test(NAME test-longctx-row0-parity COMMAND test-longctx-row0-parity)
+set_tests_properties(test-longctx-row0-parity PROPERTIES SKIP_RETURN_CODE 77)
+
 llama_build_and_test(test-model-load-cancel.cpp LABEL "model")
 llama_build_and_test(test-autorelease.cpp       LABEL "model")
 llama_build_and_test(test-backend-sampler.cpp   LABEL "model")
