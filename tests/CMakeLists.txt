@@ -397,6 +397,12 @@ add_executable(test-flash-attn-generic-hash test-flash-attn-generic-hash.cpp)
 target_link_libraries(test-flash-attn-generic-hash PRIVATE ggml)
 add_test(NAME test-flash-attn-generic-hash COMMAND test-flash-attn-generic-hash)
 
+# TASK-066 / #25618 — Metal FA nsg batch-invariance (C1 row0 + C2 2048/4096)
+add_executable(test-flash-attn-batch-invariance test-flash-attn-batch-invariance.cpp)
+target_link_libraries(test-flash-attn-batch-invariance PRIVATE ggml)
+add_test(NAME test-flash-attn-batch-invariance COMMAND test-flash-attn-batch-invariance)
+set_tests_properties(test-flash-attn-batch-invariance PROPERTIES SKIP_RETURN_CODE 77)
+
 llama_build_and_test(test-model-load-cancel.cpp LABEL "model")
 llama_build_and_test(test-autorelease.cpp       LABEL "model")
 llama_build_and_test(test-backend-sampler.cpp   LABEL "model")
