@@ -437,6 +437,17 @@ set_tests_properties(test-moe-out-row0-parity PROPERTIES SKIP_RETURN_CODE 77)
 # Runner: tests/run-task066-fullgraph-corners.sh (requires TASK066_MODEL; not in SUITE=all)
 llama_build(test-fullgraph-decode-row0-parity.cpp)
 
+# TASK-066 follow-up / #31688 — Metal CB split vs ADD fusion (CPU unit; no GPU).
+# Needs ggml_metal_fusion_max from static ggml-metal. Expected RED until
+# tests/TASK-066-cb-fusion-followup.md High/Medium. Runner: SUITE=cb-fusion.
+if (GGML_METAL AND NOT GGML_BACKEND_DL)
+    add_executable(test-metal-cb-fusion test-metal-cb-fusion.cpp)
+    target_link_libraries(test-metal-cb-fusion PRIVATE ggml)
+    # ggml-metal-fusion.h includes ggml-impl.h
+    target_include_directories(test-metal-cb-fusion PRIVATE ${CMAKE_SOURCE_DIR}/ggml/src)
+    add_test(NAME test-metal-cb-fusion COMMAND test-metal-cb-fusion)
+endif()
+
 llama_build_and_test(test-model-load-cancel.cpp LABEL "model")
 llama_build_and_test(test-autorelease.cpp       LABEL "model")
 llama_build_and_test(test-backend-sampler.cpp   LABEL "model")

@@ -456,41 +456,14 @@ void ggml_graph_optimize(ggml_cgraph * gf) {
     }
 }
 
-// TASK-066 / ggml-org/llama.cpp#31688 (fork adaptation without upstream fusion table):
-// structural ADD-chain length matching ggml_metal_op_bin fusion (≤7 ADDs). Other ops → 1.
-int ggml_metal_fusion_max(const struct ggml_cgraph * gf, int idx) {
-    if (!gf || idx < 0 || idx >= gf->n_nodes || !gf->nodes[idx]) {
-        return 1;
-    }
-    if (ggml_op_is_empty(gf->nodes[idx]->op)) {
-        return 1;
-    }
-    if (gf->nodes[idx]->op != GGML_OP_ADD) {
-        return 1;
-    }
+// TASK-066 / #28164: STRUCTURAL stubs for fusion-table MUL_MAT+ADD packing.
+// Encoder does not yet run few-row MMA+ADD fuse (#30100 path missing here).
+bool ggml_metal_op_mul_mat_may_use_mma(const struct ggml_tensor * op) {
+    return op != nullptr && op->src[0] != nullptr && op->src[1] != nullptr &&
+           op->src[1]->type == GGML_TYPE_F32;
+}
 
-    enum ggml_op fops[8];
-    for (int k = 0; k < 8; ++k) {
-        fops[k] = GGML_OP_ADD;
-    }
-
-    int n_fuse = 1;
-    for (int n = 0; n <= 6; ++n) {
-        if (idx + n + 1 >= gf->n_nodes) {
-            break;
-        }
-        if (!ggml_can_fuse(gf, idx + n, fops + n, 2)) {
-            break;
-        }
-        struct ggml_tensor * f0 = gf->nodes[idx + n];
-        struct ggml_tensor * f1 = gf->nodes[idx + n + 1];
-        if (!f0 || !f1 || f0 != f1->src[0]) {
-            break;
-        }
-        if (!f0->src[1] || !f1->src[1] || !ggml_are_same_layout(f0->src[1], f1->src[1])) {
-            break;
-        }
-        n_fuse = n + 2;
-    }
-    return n_fuse;
+bool ggml_metal_op_mul_mat_use_mma(const struct ggml_tensor * op) {
+    GGML_UNUSED(op);
+    return false;
 }

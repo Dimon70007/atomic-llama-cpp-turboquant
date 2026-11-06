@@ -5,6 +5,7 @@
 
 #import "ggml-metal-impl.h"
 #import "ggml-metal-common.h"
+#import "ggml-metal-fusion.h"
 #import "ggml-metal-ops.h"
 
 #import <Foundation/Foundation.h>

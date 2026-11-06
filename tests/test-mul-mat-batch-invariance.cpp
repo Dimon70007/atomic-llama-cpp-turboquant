@@ -242,7 +242,14 @@ bool check_c5_mul_mat_id(
 
 } // namespace
 
-int main() {
+int main(int argc, char ** argv) {
+    bool residual = false;
+    for (int i = 1; i < argc; ++i) {
+        if (std::string(argv[i]) == "--residual") {
+            residual = true;
+        }
+    }
+
     ggml_backend_load_all();
     ggml_backend_dev_t chosen = nullptr;
     for (size_t i = 0; i < ggml_backend_dev_count(); ++i) {
@@ -267,9 +274,25 @@ int main() {
     }
     ggml_backend_t backend = backend_holder.get();
     printf("backend=%s device=%s\n", ggml_backend_name(backend), ggml_backend_dev_description(chosen));
-    printf("APPLICABLE patchB(mul_mv_ext): C1,C4(Q8_0),C5(mul_mat_id); IQ4_XS=control; C6=external\n");
 
     int fails = 0;
+
+    if (residual) {
+        // B5 / TASK-066-mul-mat-batch-inventory.md: widths past the mul_mv_ext 2..8 pin.
+        printf("APPLICABLE B5 residual: ne11 in {9,16,32} row0 bit-exact (Q8_0 + IQ4_XS)\n");
+        const std::vector<int64_t> widths = {9, 16, 32};
+        check_c1_c4_mul_mat(backend, GGML_TYPE_Q8_0, "q8_0-residual", widths, fails);
+        check_c1_c4_mul_mat(backend, GGML_TYPE_IQ4_XS, "iq4_xs-residual", widths, fails);
+        check_c5_mul_mat_id(backend, GGML_TYPE_Q8_0, "q8_0-moe-residual", widths, fails);
+        if (fails != 0) {
+            printf("RESULT FAIL fails=%d (B5 residual; see TASK-066-mul-mat-batch-inventory.md)\n", fails);
+            return 1;
+        }
+        printf("RESULT PASS (B5 residual ne11={9,16,32})\n");
+        return 0;
+    }
+
+    printf("APPLICABLE patchB(mul_mv_ext): C1,C4(Q8_0),C5(mul_mat_id); IQ4_XS=control; C6=external\n");
     const std::vector<int64_t> widths = {2, 3, 4, 5, 8};
 
     // C4 product-relevant: Q8_0 hits mul_mv_ext for ne11 in 2..8 (skoulik class).

@@ -47,10 +47,10 @@ bool ggml_mem_ranges_check(ggml_mem_ranges_t mrs, const struct ggml_tensor * ten
 //       if it proves to work well, we can start using it for other backends in the future
 void ggml_graph_optimize(struct ggml_cgraph * gf);
 
-// TASK-066 / ggml-org/llama.cpp#31688: size of the fusable group starting at idx
-// (at least 1). Used to align Metal command-buffer split boundaries so fusion
-// matches a single-buffer encode (prevents N-dependent greedy/MTP drift).
-int ggml_metal_fusion_max(const struct ggml_cgraph * gf, int idx);
+// STRUCTURAL helpers for ggml-metal-fusion.cpp (#28164 port). Full few-row MMA
+// encode is not wired in this fork yet; may_use_mma is enough for CB-align packing.
+bool ggml_metal_op_mul_mat_use_mma    (const struct ggml_tensor * op);
+bool ggml_metal_op_mul_mat_may_use_mma(const struct ggml_tensor * op);
 
 #ifdef __cplusplus
 }

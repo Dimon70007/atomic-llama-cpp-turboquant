@@ -12,6 +12,25 @@
 #include <algorithm>
 #include <limits>
 #include <cmath>
+#include <cstdlib>
+
+// TASK-066: mul_mm break-even. Default 32 keeps B5 residual pin (mul_mv through ne11=32).
+// Set GGML_METAL_MUL_MM_MIN=8 for upstream-like skinny/mm debug on the ubatch ladder.
+static int ggml_metal_mul_mm_batch_min(void) {
+    static int cached = -1;
+    if (cached >= 0) {
+        return cached;
+    }
+    cached = 32;
+    const char * env = getenv("GGML_METAL_MUL_MM_MIN");
+    if (env && env[0] != '\0') {
+        const int v = atoi(env);
+        if (v >= 0) {
+            cached = v;
+        }
+    }
+    return cached;
+}
 
 static ggml_metal_buffer_id ggml_metal_get_buffer_id(const ggml_tensor * t) {
     if (!t) {
@@ -2440,7 +2459,10 @@ int ggml_metal_op_mul_mat(ggml_metal_op_t ctx, int idx) {
 
     // find the break-even point where the matrix-matrix kernel becomes more efficient compared
     // to the matrix-vector kernel
-    const int ne11_mm_min = 8;
+    // TASK-066 B5: upstream breakeven was 8. N=1 uses mul_mv; ne11>8 used mul_mm → row0 drift
+    // (~1e-4 on Q8_0/IQ4_XS). Default 32 keeps mul_mv through residual widths {9,16,32};
+    // GGML_METAL_MUL_MM_MIN overrides (use 8 for skinny/mm ladder debug).
+    const int ne11_mm_min = ggml_metal_mul_mm_batch_min();
 
     // first try to use small-batch mat-mv kernels
     // these should be efficient for BS [2, ~8]
@@ -2768,9 +2790,12 @@ int ggml_metal_op_mul_mat_id(ggml_metal_op_t ctx, int idx) {
     // to the matrix-vector kernel
     // ne20 = n_used_experts
     // ne21 = n_rows (batch size)
-    const int ne21_mm_id_min = is_tq_weight ? 1 : 32;
+    // TASK-066 B5: upstream used ne21 >= 32 for mul_mm_id. N=1 stays on mul_mv_id; ne21=32
+    // switched to mul_mm_id → row0 drift. Default shares GGML_METAL_MUL_MM_MIN (32);
+    // TQ weights still force mul_mm_id early (min=1).
+    const int ne21_mm_id_min = is_tq_weight ? 1 : ggml_metal_mul_mm_batch_min();
 
-    if (props_dev->has_simdgroup_mm && ne00 >= 64 && (ne21 >= ne21_mm_id_min)) {
+    if (props_dev->has_simdgroup_mm && ne00 >= 64 && (ne21 > ne21_mm_id_min)) {
         // some Metal matrix data types require aligned pointers
         // ref: https://developer.apple.com/metal/Metal-Shading-Language-Specification.pdf (Table 2.5)
         //switch (op->src[0]->type) {
