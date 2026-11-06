@@ -54,9 +54,10 @@ struct ggml_metal {
 
     // command buffer state
     int n_cb;           // number of extra threads used to submit the command buffers
-    int n_nodes_0;      // number of nodes submitted by the main thread
-    int n_nodes_1;      // remaining number of nodes submitted by the n_cb threads
-    int n_nodes_per_cb;
+
+    // TASK-066 / ggml-org/llama.cpp#31688: first node of each extra CB, then end of graph
+    // (replaces n_nodes_0 / n_nodes_1 / n_nodes_per_cb so splits cannot bisect fuse groups)
+    int cb_start[GGML_METAL_MAX_COMMAND_BUFFERS + 1];
 
     struct ggml_cgraph * gf;
 
@@ -451,19 +452,33 @@ enum ggml_status ggml_metal_graph_compute(ggml_metal_t ctx, struct ggml_cgraph *
     ggml_metal_device_rsets_keep_alive(ctx->dev);
 
     // submit the ggml compute graph to the GPU by creating command buffers and encoding the ops in them
-    // the first n_nodes_0 are encoded and submitted for processing directly by the calling thread
+    // the first n_main nodes are encoded and submitted for processing directly by the calling thread
     // while these nodes are processing, we start n_cb threads to enqueue the rest of the nodes
     // each thread creates it's own command buffer and enqueues the ops in parallel
     //
     // tests on M1 Pro and M2 Ultra using LLaMA models, show that optimal values for n_cb are 1 or 2
+    //
+    // TASK-066 / ggml-org/llama.cpp#31688: move each CB boundary to the end of the fusable group it
+    // falls into so encoders fuse the same nodes as with a single command buffer (Metal greedy/MTP).
 
     @autoreleasepool {
         ctx->gf = gf;
 
-        ctx->n_nodes_0 = MIN(n_main, gf->n_nodes);
-        ctx->n_nodes_1 = gf->n_nodes - ctx->n_nodes_0;
+        // main thread encodes [0, cb_start[0]); extra CB i encodes [cb_start[i], cb_start[i+1])
+        {
+            const int n_rest   = gf->n_nodes - MIN(n_main, gf->n_nodes);
+            const int n_per_cb = n_cb > 0 ? (n_rest + n_cb - 1) / n_cb : 0;
 
-        ctx->n_nodes_per_cb = (ctx->n_nodes_1 + ctx->n_cb - 1) / ctx->n_cb;
+            int i = 0;
+            for (int cb_idx = 0; cb_idx < n_cb; ++cb_idx) {
+                const int target = MIN(n_main + cb_idx * n_per_cb, gf->n_nodes);
+                while (i < target) {
+                    i += ggml_metal_fusion_max(gf, i);
+                }
+                ctx->cb_start[cb_idx] = MIN(i, gf->n_nodes);
+            }
+            ctx->cb_start[n_cb] = gf->n_nodes;
+        }
 
         if (ctx->capture_compute >= 0) {
             ctx->capture_compute--;
@@ -677,17 +692,12 @@ void ggml_metal_set_n_cb(ggml_metal_t ctx, int n_cb) {
         const int cb_idx = iter;
         const int n_cb_l = ctx->n_cb;
 
-        const int n_nodes_0 = ctx->n_nodes_0;
-        const int n_nodes_1 = ctx->n_nodes_1;
-
-        const int n_nodes_per_cb = ctx->n_nodes_per_cb;
-
         int idx_start = 0;
-        int idx_end   = n_nodes_0;
+        int idx_end   = ctx->cb_start[0];
 
         if (cb_idx < n_cb_l) {
-            idx_start = n_nodes_0 + (                                         (cb_idx + 0) * n_nodes_per_cb);
-            idx_end   = n_nodes_0 + (MIN((cb_idx == n_cb_l - 1) ? n_nodes_1 : (cb_idx + 1) * n_nodes_per_cb, n_nodes_1));
+            idx_start = ctx->cb_start[cb_idx];
+            idx_end   = ctx->cb_start[cb_idx + 1];
         }
 
         id<MTLCommandBuffer> cmd_buf = ctx->cmd_bufs[cb_idx].obj;
