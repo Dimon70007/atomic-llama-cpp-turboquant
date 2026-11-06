@@ -5,8 +5,8 @@
 #   SUITE=all ./tests/run-task066-metal-corners.sh [OUT_DIR]
 #   SUITE=moe ./tests/run-task066-metal-corners.sh
 # Env:
-#   SUITE      — required: all|fa|mul-mat|longctx|moe|moe-router|fullgraph (no silent default)
-#                fullgraph is NOT part of `all` (expected RED until patch C)
+#   SUITE      — required: all|fa|mul-mat|longctx|moe|moe-router|moe-out|fullgraph (no silent default)
+#                moe-out/fullgraph are NOT part of `all` (expected RED until patch C)
 #   BUILD_DIR  — cmake build dir (default: <repo>/build)
 #   REBUILD=1  — rebuild suite binaries before run (forwarded to child runners)
 #
@@ -22,15 +22,15 @@ STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 OUT_DIR="${1:-${REPO_ROOT}/logs/task066-metal-corners-${SUITE:-unset}-${STAMP}}"
 
 if [[ -z "${SUITE}" ]]; then
-  echo "FAIL: missing required SUITE=all|fa|mul-mat|longctx|moe|moe-router|fullgraph" >&2
+  echo "FAIL: missing required SUITE=all|fa|mul-mat|longctx|moe|moe-router|moe-out|fullgraph" >&2
   echo "(refusing silent suite substitution)" >&2
   exit 1
 fi
 
 case "${SUITE}" in
-  all|fa|mul-mat|longctx|moe|moe-router|fullgraph) ;;
+  all|fa|mul-mat|longctx|moe|moe-router|moe-out|fullgraph) ;;
   *)
-    echo "FAIL: unknown SUITE=${SUITE} (allowed: all|fa|mul-mat|longctx|moe|moe-router|fullgraph)" >&2
+    echo "FAIL: unknown SUITE=${SUITE} (allowed: all|fa|mul-mat|longctx|moe|moe-router|moe-out|fullgraph)" >&2
     exit 1
     ;;
 esac
@@ -81,6 +81,9 @@ case "${SUITE}" in
   moe-router)
     run_one moe-router "${REPO_ROOT}/tests/run-task066-moe-router-corners.sh"
     ;;
+  moe-out)
+    run_one moe-out "${REPO_ROOT}/tests/run-task066-moe-out-corners.sh"
+    ;;
   fullgraph)
     run_one fullgraph "${REPO_ROOT}/tests/run-task066-fullgraph-corners.sh"
     ;;
@@ -90,7 +93,7 @@ case "${SUITE}" in
     run_one longctx "${REPO_ROOT}/tests/run-task066-longctx-corners.sh"
     run_one moe "${REPO_ROOT}/tests/run-task066-moe-corners.sh"
     run_one moe-router "${REPO_ROOT}/tests/run-task066-moe-router-corners.sh"
-    # fullgraph intentionally omitted from `all` (ST-3.2f RED until patch C)
+    # moe-out/fullgraph intentionally omitted from `all` (ST-3.2f-ter-loc / 3.2f RED until patch C)
     ;;
 esac
 

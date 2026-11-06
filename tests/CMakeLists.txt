@@ -427,6 +427,12 @@ target_link_libraries(test-moe-router-row0-parity PRIVATE ggml)
 add_test(NAME test-moe-router-row0-parity COMMAND test-moe-router-row0-parity)
 set_tests_properties(test-moe-router-row0-parity PROPERTIES SKIP_RETURN_CODE 77)
 
+# TASK-066 ST-3.2f-ter-loc — MoE ffn_moe_out dual-topology (permute+sum_rows vs view+add)
+add_executable(test-moe-out-row0-parity test-moe-out-row0-parity.cpp)
+target_link_libraries(test-moe-out-row0-parity PRIVATE ggml)
+add_test(NAME test-moe-out-row0-parity COMMAND test-moe-out-row0-parity)
+set_tests_properties(test-moe-out-row0-parity PROPERTIES SKIP_RETURN_CODE 77)
+
 # TASK-066 ST-3.2f — full-graph decode row0 (N=1 vs N=2) bit-exact logits; patch-C TDD RED
 # Runner: tests/run-task066-fullgraph-corners.sh (requires TASK066_MODEL; not in SUITE=all)
 llama_build(test-fullgraph-decode-row0-parity.cpp)
