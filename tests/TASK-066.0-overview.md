@@ -6,13 +6,13 @@
 
 ## Status
 
-🟢 **066.7 KEEP** (2026-11-06): `SUITE=mul-mat-residual` GREEN (float-tile mm + `MUL_MM_MIN` default **7**).  
-Optional: short ladder S8 vs S1024 confirm. Prior Stage 1 WAIVE is **not** Done. **MTP blocked.** 066.5/066.6 still deferred.
+🟢 **066.7 KEEP** + **066.8 R&D DELIVERED** (2026-11-06). Findings frozen in [TASK-066.8 § Frozen findings](TASK-066.8-fp-comparison-metrics-rd.md).  
+**Next operator gate:** optional short ladder S8 vs S1024 confirm. Prior Stage 1 WAIVE is **not** Done. **MTP blocked.** 066.5/066.6 deferred until product DIFF remains after confirm.
 
 ## Locked decisions
 
 1. Goal: shrink nomtp cross-ubatch drift (primary **S8 vs S1024**; also `{256,512}`).
-2. Order: 066.1–066.4 done → **066.7 now** (mul-mat-residual). 066.5/066.6 deferred unless residual GREEN still leaves product drift.
+2. Order: 066.1–066.4 done → **066.7 KEEP** → **066.8 R&D** (metrics/lit; no ε-PASS). 066.5/066.6 deferred unless residual GREEN still leaves product drift.
 3. Backend: Metal first. CUDA out of scope for this numbered track.
 4. Premature WAIVE forbidden as “Done”.
 5. Raising `MUL_MM_MIN` to hide mm is **not** a fix. 066.7 **lowered** default to **7** so N=8 and large N share float-tile `mul_mm` (diag: mm is batch-invariant; failure was cross-kernel). `#27441` stays closed unless corrected hypothesis (hist: `task066-hist/TASK-066-p22-27441-audit.md`).
@@ -35,6 +35,7 @@ Optional: short ladder S8 vs S1024 confirm. Prior Stage 1 WAIVE is **not** Done.
 
 1. `SUITE=mul-mat-residual` PASS (all widths vs N=8). ✅ 066.7  
 2. Then optional short nomtp ladder; KEEP if first-DIFF later **or** generations identical for S8 vs S1024.  
+3. 066.8: dual-report mad/ULP + lit recommendation (ε is telemetry, not residual PASS).  
 “Owned huge DIFF@80” ≠ Done.
 
 ## Flow
@@ -45,12 +46,14 @@ flowchart TD
   t2[066_2_compose_autotests]
   t3[066_3_fix_until_PASS]
   t4[066_4_short_model]
-  t7[066_7_mul_mat_residual_PRIMARY]
+  t7[066_7_mul_mat_residual_KEEP]
+  t8[066_8_fp_metrics_RD]
   t5[066_5_fusion_deferred]
   t6[066_6_cb_deferred]
   confirm[optional_ladder_after_residual_GREEN]
   mtp[MTP_blocked]
   t1 --> t2 --> t3 --> t4 --> t7
+  t7 --> t8
   t7 --> confirm
   t7 -.-> t5
   t7 -.-> t6

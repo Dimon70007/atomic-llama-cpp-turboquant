@@ -12,6 +12,12 @@ Releases before `b10269-1.5.0` predate this file; see the git history.
 
 ## Unreleased
 
+### Added
+
+- **TASK-066.8 R&D (docs + telemetry):** mathematical FP comparison metrics for ubatch S1/S8/S256/S1024
+  and batch-invariance literature notes; `test-mul-mat-batch-invariance` dual-reports `max_ulp`
+  beside `mad` while **bit-exact** remains the PASS gate.
+
 ### Fixed
 
 - **Metal MUL_MAT residual vs ubatch S8 (TASK-066.7):** float-tile `mul_mm` / `mul_mm_id` for

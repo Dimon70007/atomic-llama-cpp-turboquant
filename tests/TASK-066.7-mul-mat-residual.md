@@ -32,6 +32,13 @@ No `MUL_MM_MIN` can satisfy both residual-vs-N=8 **and** vs-N=1 with width 8 whi
 
 `#27441` skinny not re-applied (prior REGRESS). Raising min to hide mm still forbidden.
 
+### Caveat (frozen)
+
+KEEP unifies **S8 and large N on float-tile mm** (product ubatch class). It does **not** make `mul_mm` bit-exact to `mul_mv` for decode N=1.  
+`SUITE=mul-mat` no longer asserts N=8 vs N=1 (widths `{2,3,4,5,7}`). Re-opening N=8 vs N=1 bit-exact = new lever (finish ULP gap), not a silent suite tighten.
+
+Metrics / lit / dual-report: **[TASK-066.8](TASK-066.8-fp-comparison-metrics-rd.md)**.
+
 ## Primary gate (lock)
 
 **Do not burn e2e / ubatch ladder / fullgraph / MTP while iterating 066.7.**

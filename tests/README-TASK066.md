@@ -3,7 +3,8 @@
 Self-contained in **this** llama.cpp / ggml fork. Other developers: start here.
 
 **Branch:** `task066-metal-batch-invariance`  
-**Active track:** **[066.7 KEEP](TASK-066.7-mul-mat-residual.md)** — `SUITE=mul-mat-residual` GREEN (float-tile mm + `MUL_MM_MIN` default **7**). Optional ladder S8 vs S1024 confirm. MTP blocked. Prior Stage 1 WAIVE is not Done.
+**Active track:** **[066.7 KEEP](TASK-066.7-mul-mat-residual.md)** + **[066.8 R&D DELIVERED](TASK-066.8-fp-comparison-metrics-rd.md)** (findings frozen in 066.8).  
+**Next:** optional short ladder S8 vs S1024 confirm → then 066.5/066.6 only if product DIFF remains. MTP blocked. Hist Stage 1 WAIVE ≠ Done.
 
 ## Evidence hierarchy (hard)
 
@@ -23,6 +24,7 @@ Self-contained in **this** llama.cpp / ggml fork. Other developers: start here.
 | **066.5** | [TASK-066.5-fusion-table-parity.md](TASK-066.5-fusion-table-parity.md) | after 066.7 if still needed | ⏸ deferred |
 | **066.6** | [TASK-066.6-cb-and-invariance-gates.md](TASK-066.6-cb-and-invariance-gates.md) | after 066.7 if still needed | ⏸ deferred (residual suite already extended) |
 | **066.7** | [TASK-066.7-mul-mat-residual.md](TASK-066.7-mul-mat-residual.md) | 066.4 done; residual was RED | 🟢 **KEEP** |
+| **066.8** | [TASK-066.8-fp-comparison-metrics-rd.md](TASK-066.8-fp-comparison-metrics-rd.md) ([lit](task066-hist/TASK-066.8-lit-notes.md)) | 066.7 KEEP | 🟢 **R&D DELIVERED** |
 
 Overview locks / DoD / out-of-scope: [TASK-066.0-overview.md](TASK-066.0-overview.md).  
 Latest suite GREEN/RED snapshot: [TASK-066-status-matrix-20261106.md](TASK-066-status-matrix-20261106.md).

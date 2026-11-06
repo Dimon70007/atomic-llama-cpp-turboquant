@@ -9,12 +9,16 @@
 #include "ggml-backend.h"
 #include "ggml-cpp.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <string>
 #include <vector>
+
+// TASK-066.8: dual-report max ULP beside mad; bit-exact remains the PASS gate.
 
 namespace {
 
@@ -59,6 +63,30 @@ double max_abs_diff_row0(const std::vector<float> & serial, const std::vector<fl
         mad = std::max(mad, double(std::fabs(serial[size_t(r)] - batch[size_t(r)])));
     }
     return mad;
+}
+
+// Map IEEE-754 bits so integer distance equals float ULP distance (Dawson / gtest style).
+int32_t float_bits_to_ordered_int(uint32_t bits) {
+    const int32_t i = int32_t(bits);
+    return (i < 0) ? (int32_t(0x80000000u) - i) : i;
+}
+
+int64_t ulp_diff_f32(float a, float b) {
+    uint32_t ua = 0;
+    uint32_t ub = 0;
+    static_assert(sizeof(float) == sizeof(uint32_t), "float must be 32-bit");
+    memcpy(&ua, &a, sizeof(ua));
+    memcpy(&ub, &b, sizeof(ub));
+    return std::llabs(int64_t(float_bits_to_ordered_int(ua)) - int64_t(float_bits_to_ordered_int(ub)));
+}
+
+// Max pairwise float ULP distance on row0 (column 0). Telemetry only (TASK-066.8).
+int64_t max_ulp_diff_row0(const std::vector<float> & serial, const std::vector<float> & batch, int64_t /*n_cols*/) {
+    int64_t max_u = 0;
+    for (int64_t r = 0; r < kM; ++r) {
+        max_u = std::max(max_u, ulp_diff_f32(serial[size_t(r)], batch[size_t(r)]));
+    }
+    return max_u;
 }
 
 size_t mul_mat_scratch_bytes(int64_t n) {
@@ -168,8 +196,9 @@ bool check_c1_c4_mul_mat(
         const auto batch  = run_mul_mat(backend, wtype, n, w_q, xn);
         const bool exact = row0_bit_identical(serial, batch, n);
         const double mad = max_abs_diff_row0(serial, batch, n);
-        printf("  N=%lld exact=%d max_abs_diff=%.6g %s\n",
-               (long long) n, exact ? 1 : 0, mad, exact ? "PASS" : "FAIL");
+        const int64_t max_ulp = max_ulp_diff_row0(serial, batch, n);
+        printf("  N=%lld exact=%d max_abs_diff=%.6g max_ulp=%lld %s\n",
+               (long long) n, exact ? 1 : 0, mad, (long long) max_ulp, exact ? "PASS" : "FAIL");
         if (!exact) {
             ok_all = false;
             ++fails;
@@ -218,8 +247,10 @@ bool check_c1_c4_mul_mat_vs_golden(
         const auto batch = run_mul_mat(backend, wtype, n, w_q, fill_batch(n));
         const bool exact = row0_bit_identical(golden_row0, batch, n);
         const double mad = max_abs_diff_row0(golden_row0, batch, n);
-        printf("  N=%lld vs N=%lld exact=%d max_abs_diff=%.6g %s\n",
-               (long long) n, (long long) golden_n, exact ? 1 : 0, mad, exact ? "PASS" : "FAIL");
+        const int64_t max_ulp = max_ulp_diff_row0(golden_row0, batch, n);
+        printf("  N=%lld vs N=%lld exact=%d max_abs_diff=%.6g max_ulp=%lld %s\n",
+               (long long) n, (long long) golden_n, exact ? 1 : 0, mad, (long long) max_ulp,
+               exact ? "PASS" : "FAIL");
         if (!exact) {
             ok_all = false;
             ++fails;
@@ -277,6 +308,7 @@ bool check_c5_mul_mat_id(
         GGML_ASSERT(batch.size() == size_t(kM * n_expert_used * n));
         bool exact = true;
         double mad = 0.0;
+        int64_t max_ulp = 0;
         for (int64_t e = 0; e < n_expert_used; ++e) {
             for (int64_t r = 0; r < kM; ++r) {
                 const size_t si = size_t(r + e * kM);
@@ -284,13 +316,14 @@ bool check_c5_mul_mat_id(
                 const float a = serial[si];
                 const float b = batch[bi];
                 mad = std::max(mad, double(std::fabs(a - b)));
+                max_ulp = std::max(max_ulp, ulp_diff_f32(a, b));
                 if (memcmp(&a, &b, sizeof(float)) != 0) {
                     exact = false;
                 }
             }
         }
-        printf("  ne21=N=%lld exact=%d max_abs_diff=%.6g %s\n",
-               (long long) n, exact ? 1 : 0, mad, exact ? "PASS" : "FAIL");
+        printf("  ne21=N=%lld exact=%d max_abs_diff=%.6g max_ulp=%lld %s\n",
+               (long long) n, exact ? 1 : 0, mad, (long long) max_ulp, exact ? "PASS" : "FAIL");
         if (!exact) {
             ok_all = false;
             ++fails;
@@ -356,6 +389,7 @@ bool check_c5_mul_mat_id_vs_golden(
         GGML_ASSERT(batch.size() == size_t(kM * n_expert_used * n));
         bool exact = true;
         double mad = 0.0;
+        int64_t max_ulp = 0;
         for (int64_t e = 0; e < n_expert_used; ++e) {
             for (int64_t r = 0; r < kM; ++r) {
                 const size_t si = size_t(r + e * kM);
@@ -363,13 +397,15 @@ bool check_c5_mul_mat_id_vs_golden(
                 const float a = golden_tok0[si];
                 const float b = batch[bi];
                 mad = std::max(mad, double(std::fabs(a - b)));
+                max_ulp = std::max(max_ulp, ulp_diff_f32(a, b));
                 if (memcmp(&a, &b, sizeof(float)) != 0) {
                     exact = false;
                 }
             }
         }
-        printf("  ne21=N=%lld vs %lld exact=%d max_abs_diff=%.6g %s\n",
-               (long long) n, (long long) golden_n, exact ? 1 : 0, mad, exact ? "PASS" : "FAIL");
+        printf("  ne21=N=%lld vs %lld exact=%d max_abs_diff=%.6g max_ulp=%lld %s\n",
+               (long long) n, (long long) golden_n, exact ? 1 : 0, mad, (long long) max_ulp,
+               exact ? "PASS" : "FAIL");
         if (!exact) {
             ok_all = false;
             ++fails;
