@@ -3,9 +3,10 @@
 Self-contained in **this** llama.cpp / ggml fork. Other developers: start here.
 
 **Branch:** `task066-metal-batch-invariance`  
-**Active track:** **[066.5](TASK-066.5-fusion-table-parity.md)** / **[066.6](TASK-066.6-cb-and-invariance-gates.md)** (unlocked after ladder confirm).  
+**Active track:** **[066.5](TASK-066.5-fusion-table-parity.md)** / **[066.6](TASK-066.6-cb-and-invariance-gates.md)** — FA multi-step ubatch (C2); turbo4 amplifies.  
+**PR fidelity:** **[TASK-066-pr-audit-registry.md](TASK-066-pr-audit-registry.md)** (re-check after every Metal edit + suites).  
 **Done behind:** **[066.7 KEEP](TASK-066.7-mul-mat-residual.md)** + **[066.8 R&D DELIVERED](TASK-066.8-fp-comparison-metrics-rd.md)**.  
-**Ladder confirm:** `logs/task066-ubatch-ladder-20261106T212703Z` — HELP first-DIFF **80→182**, still DIFF@text. MTP blocked. Hist Stage 1 WAIVE ≠ Done.
+**Ladder confirm:** `212703Z` HELP 80→182 DIFF@text. **C2** n=32 ub8 vs ub32 RED. MTP blocked. Hist Stage 1 WAIVE ≠ Done.
 
 ## Evidence hierarchy (hard)
 

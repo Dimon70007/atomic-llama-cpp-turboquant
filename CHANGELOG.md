@@ -27,6 +27,11 @@ Releases before `b10269-1.5.0` predate this file; see the git history.
 - **TASK-066 fullgraph runner:** classify prefix/KV-slot failures as `FIXTURE_FAIL` (not logit RED);
   prior status-matrix “fullgraph RED” with `CTX=2048`/`-b 2048` was fixture misuse.
 
+### Changed
+
+- **TASK-066 docs:** PR audit registry + frozen findings (ladder/C2/FA ablation); baseline suites
+  `cb-fusion`/`mul-mat-residual`/`fa` GREEN, C2 RED (`logs/task066-pr-audit-baseline-20261106T230631Z`).
+
 ### Fixed
 
 - **Metal MUL_MAT residual vs ubatch S8 (TASK-066.7):** float-tile `mul_mm` / `mul_mm_id` for

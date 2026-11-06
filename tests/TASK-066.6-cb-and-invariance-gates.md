@@ -59,6 +59,12 @@ Product KV `q8_0`/`turbo4` (FA force-on with turbo). `MUL_MM_MIN` default 7.
 
 Fail-closed: `TASK066_FA=off` without non-turbo `TASK066_CTV` → exit 2 (llama would force FA back on).
 
+### Web research (FA-on fix patterns)
+
+SSOT dump: [`task066-hist/TASK-066-fa-batch-invariance-web-research.md`](task066-hist/TASK-066-fa-batch-invariance-web-research.md).
+
+Shortlist: Thinking Machines fixed split-KV / consistent KV layout before attn; #25618 Metal **nsg pin** (fork already pins FA-vec `nsg=1` — C2 still RED ⇒ look beyond vec-only / prefill tile path); Vulkan #26358 no GQA pack for `neq1>1`; avoid shape-keyed FA tuning that changes reduction by `ne01`.
+
 ## Goal
 
 1. Every CB boundary uses the corrected `fusion_max` (autotests break if boundaries ignore fusion).  

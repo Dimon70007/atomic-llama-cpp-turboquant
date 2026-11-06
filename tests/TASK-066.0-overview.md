@@ -8,7 +8,9 @@
 ## Status
 
 🟢 **066.7 KEEP** + **066.8 R&D DELIVERED** (2026-11-06). Findings frozen in [TASK-066.8 § Frozen findings](TASK-066.8-fp-comparison-metrics-rd.md).  
-🟢 **Ladder confirm (2026-11-06T212703Z):** HELP — first-DIFF moved **80→182** under product default `MUL_MM_MIN=7`; generations still **DIFF@text** (S8 «…и Долоховым…» vs S1024 «…и Федором Долоховым…»). Not identical → **unlock 066.5 / 066.6**. Prior Stage 1 WAIVE is **not** Done. **MTP blocked.**
+🟢 **Ladder confirm (2026-11-06T212703Z):** HELP — first-DIFF **80→182**; still DIFF@text → unlock 066.5/066.6.  
+🔬 **Localize + FA ablation:** C2 n=32 multi-step vs one-shot RED; base error in **FA-on** (A4 soft); **turbo4 amplifies** to decision (A0). `#25618` FA-vec `nsg=1` already applied; tile FA path still open.  
+📋 **PR audit registry:** [TASK-066-pr-audit-registry.md](TASK-066-pr-audit-registry.md). Prior Stage 1 WAIVE ≠ Done. **MTP blocked.**
 
 ## Locked decisions
 
