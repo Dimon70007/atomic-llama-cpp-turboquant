@@ -217,7 +217,7 @@ run_cell() {
     echo "batch_mode=${BATCH_MODE}"
     echo "ctk=${CTK} ctv=${CTV}"
     echo "cram=${CRAM} ctxcp=${CTXCP} ctx=${CTX}"
-    echo "GGML_METAL_MUL_MM_MIN=${GGML_METAL_MUL_MM_MIN:-<unset:default 32>}"
+    echo "GGML_METAL_MUL_MM_MIN=${GGML_METAL_MUL_MM_MIN:-<unset:default 7>}"
     echo "cmd=${CLI_BIN} ${args[*]}"
   } > "${dir}/meta.txt"
 
@@ -360,7 +360,7 @@ PY
   echo "batch_mode=${BATCH_MODE} batch_floor=${BATCH_FLOOR} batch_max=${BATCH_MAX}"
   echo "ubatch_list=${UBATCH_LIST}"
   echo "repeat_large=${REPEAT_LARGE}"
-  echo "GGML_METAL_MUL_MM_MIN=${GGML_METAL_MUL_MM_MIN:-<unset:default 32>}"
+  echo "GGML_METAL_MUL_MM_MIN=${GGML_METAL_MUL_MM_MIN:-<unset:default 7>}"
   echo "cli=${CLI_BIN}"
   echo "build_dir=${BUILD_DIR}"
 } | tee "${OUT_DIR}/README.txt"
@@ -380,7 +380,7 @@ MATRIX="${OUT_DIR}/matrix.md"
   echo "# TASK-066 ubatch ladder matrix"
   echo
   echo "stamp: ${STAMP}"
-  echo "MUL_MM_MIN: ${GGML_METAL_MUL_MM_MIN:-<unset:default 32>}"
+  echo "MUL_MM_MIN: ${GGML_METAL_MUL_MM_MIN:-<unset:default 7>}"
   echo "batch_mode: ${BATCH_MODE}"
   echo "golden: ubatch<=8 (prefer S8); S1 optional purity"
   echo
@@ -463,7 +463,7 @@ MATRIX="${OUT_DIR}/matrix.md"
 echo "OK: ladder written to ${OUT_DIR}"
 echo "    matrix: ${MATRIX}"
 if [[ -z "${GGML_METAL_MUL_MM_MIN:-}" ]]; then
-  echo "NOTE: GGML_METAL_MUL_MM_MIN unset (product default 32; S16 stays on mul_mv). Debug skinny/mm with =8." >&2
+  echo "NOTE: GGML_METAL_MUL_MM_MIN unset (product default 7; ne11>=8 uses float-tile mul_mm). Legacy pin =32; N=8 on mv debug =8." >&2
 fi
 # Fail the whole ladder if any capture was empty (even if llama-cli exited 0).
 if grep -q 'EMPTY generation.txt\|EMPTY_CAPTURE\|FAIL: .*empty generation' "${MATRIX}" 2>/dev/null; then

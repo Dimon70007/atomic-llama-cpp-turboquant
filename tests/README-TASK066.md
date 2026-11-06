@@ -3,7 +3,7 @@
 Self-contained in **this** llama.cpp / ggml fork. Other developers: start here.
 
 **Branch:** `task066-metal-batch-invariance`  
-**Active track:** **[066.7 REOPENED](TASK-066.7-mul-mat-residual.md)** — fix Metal until `SUITE=mul-mat-residual` GREEN (row0 vs N=8; `{256,512,1024}` currently RED). **Do not iterate on e2e ladder.** MTP blocked. Prior Stage 1 WAIVE is not Done.
+**Active track:** **[066.7 KEEP](TASK-066.7-mul-mat-residual.md)** — `SUITE=mul-mat-residual` GREEN (float-tile mm + `MUL_MM_MIN` default **7**). Optional ladder S8 vs S1024 confirm. MTP blocked. Prior Stage 1 WAIVE is not Done.
 
 ## Evidence hierarchy (hard)
 
@@ -22,7 +22,7 @@ Self-contained in **this** llama.cpp / ggml fork. Other developers: start here.
 | **066.4** | [TASK-066.4-short-model-s8-s1024.md](TASK-066.4-short-model-s8-s1024.md) | 066.3 PASS | ✅ NO_EFFECT |
 | **066.5** | [TASK-066.5-fusion-table-parity.md](TASK-066.5-fusion-table-parity.md) | after 066.7 if still needed | ⏸ deferred |
 | **066.6** | [TASK-066.6-cb-and-invariance-gates.md](TASK-066.6-cb-and-invariance-gates.md) | after 066.7 if still needed | ⏸ deferred (residual suite already extended) |
-| **066.7** | [TASK-066.7-mul-mat-residual.md](TASK-066.7-mul-mat-residual.md) | 066.4 done; residual RED | 🔴 **REOPENED / PRIMARY** |
+| **066.7** | [TASK-066.7-mul-mat-residual.md](TASK-066.7-mul-mat-residual.md) | 066.4 done; residual was RED | 🟢 **KEEP** |
 
 Overview locks / DoD / out-of-scope: [TASK-066.0-overview.md](TASK-066.0-overview.md).  
 Latest suite GREEN/RED snapshot: [TASK-066-status-matrix-20261106.md](TASK-066-status-matrix-20261106.md).

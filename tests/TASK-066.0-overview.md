@@ -6,8 +6,8 @@
 
 ## Status
 
-🔴 **Active: 066.7 REOPENED** (2026-11-06). Primary loop = `SUITE=mul-mat-residual` (row0 vs golden **N=8**; `{256,512,1024}` RED).  
-Prior Stage 1 WAIVE is **not** Done. **MTP blocked.** E2E / ubatch ladder **not** required between 066.7 levers.
+🟢 **066.7 KEEP** (2026-11-06): `SUITE=mul-mat-residual` GREEN (float-tile mm + `MUL_MM_MIN` default **7**).  
+Optional: short ladder S8 vs S1024 confirm. Prior Stage 1 WAIVE is **not** Done. **MTP blocked.** 066.5/066.6 still deferred.
 
 ## Locked decisions
 
@@ -15,7 +15,7 @@ Prior Stage 1 WAIVE is **not** Done. **MTP blocked.** E2E / ubatch ladder **not*
 2. Order: 066.1–066.4 done → **066.7 now** (mul-mat-residual). 066.5/066.6 deferred unless residual GREEN still leaves product drift.
 3. Backend: Metal first. CUDA out of scope for this numbered track.
 4. Premature WAIVE forbidden as “Done”.
-5. Raising `MUL_MM_MIN` to hide mm is **not** a fix. `#27441` may reopen only with corrected hypothesis + RED→GREEN autotest (hist: `task066-hist/TASK-066-p22-27441-audit.md`).
+5. Raising `MUL_MM_MIN` to hide mm is **not** a fix. 066.7 **lowered** default to **7** so N=8 and large N share float-tile `mul_mm` (diag: mm is batch-invariant; failure was cross-kernel). `#27441` stays closed unless corrected hypothesis (hist: `task066-hist/TASK-066-p22-27441-audit.md`).
 6. `#30100` encode N/A until encode path exists (hist recheck).
 7. **Every code change ships with autotests** (hard — see below). No silent “fix then maybe test later”.
 8. **Primary gate for mm work = `mul-mat-residual`**, not e2e. Ladder / fullgraph / MTP are confirm-only or blocked until residual GREEN.
@@ -33,7 +33,7 @@ Prior Stage 1 WAIVE is **not** Done. **MTP blocked.** E2E / ubatch ladder **not*
 
 ## Progressive DoD
 
-1. `SUITE=mul-mat-residual` PASS (all widths vs N=8).  
+1. `SUITE=mul-mat-residual` PASS (all widths vs N=8). ✅ 066.7  
 2. Then optional short nomtp ladder; KEEP if first-DIFF later **or** generations identical for S8 vs S1024.  
 “Owned huge DIFF@80” ≠ Done.
 

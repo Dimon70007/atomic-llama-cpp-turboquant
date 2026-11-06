@@ -40,7 +40,7 @@ Stamp: `logs/task066-status-matrix-20261106T204235Z/` · `results.tsv`
 |-------|------|---------|-----|
 | `cb-fusion` | 0 | **GREEN** | I1–I4 incl. empty_ne after 066.3 |
 | `b1-shared-kv` | 0 | **GREEN** | `#27781` shared cells |
-| `mul-mat-residual` | 0→**1** | **RED** (re-extended) | After extend: vs golden **N=8**, widths `{9,16,32,256,512,1024}` — small GREEN, **256/512/1024 RED** (see stamp `logs/task066-mul-mat-residual-vs8-*`) |
+| `mul-mat-residual` | 0 | **GREEN** (066.7 KEEP) | After float-tile mm + `MUL_MM_MIN` default **7**: all widths vs N=8 PASS (stamp `logs/task066-metal-corners-mul-mat-residual-20261106T210344Z`) |
 | `mtp-acc-trace` | 1 | **RED** | Expected: no `TASK066_ACC_TRACE_LOG` attached (MTP track blocked) |
 | `mtp-e2e` | 0 | **SKIP** | Follow-up path skips without engagement / MODEL gate |
 
@@ -67,6 +67,6 @@ Follow-up overall `VERDICT=FAIL` only because of expected `mtp-acc-trace` RED.
 
 ## Next
 
-- Autotest surface for nomtp ubatch track: **cb-fusion GREEN**; product S8≠S1024 → continue **066.5** with new RED→GREEN corners per lock 7.  
+- **066.7 residual GREEN** — optional short ladder S8 vs S1024 confirm; then 066.5/066.6 only if product drift remains.  
 - Do not treat `mtp-*` RED as Stage 1 blockers while MTP is blocked.  
-- `fullgraph` RED is useful invariant for later MTP/row0 work — not a waiver to skip 066.5.
+- `fullgraph` RED is useful invariant for later MTP/row0 work — not a waiver to skip confirm ladder.

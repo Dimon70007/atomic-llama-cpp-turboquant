@@ -10,6 +10,15 @@ commit list underneath.
 
 Releases before `b10269-1.5.0` predate this file; see the git history.
 
+## Unreleased
+
+### Fixed
+
+- **Metal MUL_MAT residual vs ubatch S8 (TASK-066.7):** float-tile `mul_mm` / `mul_mm_id` for
+  `q8_0` and `iq4_xs` (cuts half-MMA row0 drift ~1e-4 → ~1 ULP vs `mul_mv`), and product default
+  `GGML_METAL_MUL_MM_MIN` **32 → 7** so `ne11`/`ne21` ≥ 8 share that mm path with golden N=8.
+  `SUITE=mul-mat-residual` GREEN; `SUITE=mul-mat` stays GREEN on widths `{2,3,4,5,7}`.
+
 ## b10298-2.1.0
 
 ### Added

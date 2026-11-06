@@ -434,15 +434,17 @@ int main(int argc, char ** argv) {
     }
 
     printf("APPLICABLE patchB(mul_mv_ext): C1,C4(Q8_0),C5(mul_mat_id); IQ4_XS=control; C6=external\n");
-    const std::vector<int64_t> widths = {2, 3, 4, 5, 8};
+    // 066.7 product min=7: ne11<=7 stays on mul_mv (bit-exact vs N=1). N=8 uses mul_mm
+    // (float-tile; ~1 ULP vs mv) — covered by residual vs golden N=8 instead.
+    const std::vector<int64_t> widths = {2, 3, 4, 5, 7};
 
-    // C4 product-relevant: Q8_0 hits mul_mv_ext for ne11 in 2..8 (skoulik class).
+    // C4 product-relevant: Q8_0 hits mul_mv_ext for ne11 in 2..8 (skoulik class; ext forced off).
     check_c1_c4_mul_mat(backend, GGML_TYPE_Q8_0, "q8_0-ext-hot", widths, fails);
 
-    // Control: IQ4_XS stays on mul_mv for all ne11 — should already be bit-exact.
+    // Control: IQ4_XS stays on mul_mv for ne11<=7 — should already be bit-exact.
     check_c1_c4_mul_mat(backend, GGML_TYPE_IQ4_XS, "iq4_xs-control", widths, fails);
 
-    // C5 MoE: verify widths stay on mul_mv_id (ne21 < 32).
+    // C5 MoE: verify widths stay on mul_mv_id (ne21 <= min).
     check_c5_mul_mat_id(backend, GGML_TYPE_Q8_0, "q8_0-moe", widths, fails);
 
     if (fails != 0) {

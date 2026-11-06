@@ -5,7 +5,7 @@
 # Usage:
 #   ./tests/run-task066-mul-mat-residual-corners.sh [OUT_DIR]
 # Env: BUILD_DIR, REBUILD=1
-# Gate: requires default GGML_METAL_MUL_MM_MIN=32 (unset or 32). Other values SKIP (77).
+# Gate: requires product default GGML_METAL_MUL_MM_MIN=7 (unset or 7). Other values SKIP (77).
 
 set -euo pipefail
 
@@ -16,15 +16,15 @@ mkdir -p "${OUT_DIR}"
 
 TEST_BIN="${BUILD_DIR}/bin/test-mul-mat-batch-invariance"
 
-# B5 residual expects the product default pin. Debug ladder uses MUL_MM_MIN=8 separately.
-if [[ -n "${GGML_METAL_MUL_MM_MIN:-}" && "${GGML_METAL_MUL_MM_MIN}" != "32" ]]; then
+# 066.7 residual expects product default pin (min=7 → N=8 on float-tile mul_mm).
+if [[ -n "${GGML_METAL_MUL_MM_MIN:-}" && "${GGML_METAL_MUL_MM_MIN}" != "7" ]]; then
   {
-    echo "track=B5"
+    echo "track=B5+066.7"
     echo "inventory=tests/TASK-066-mul-mat-batch-inventory.md"
     echo "GGML_METAL_MUL_MM_MIN=${GGML_METAL_MUL_MM_MIN}"
-    echo "VERDICT=SKIP (residual suite gates on default MUL_MM_MIN=32; unset env or set 32)"
+    echo "VERDICT=SKIP (residual suite gates on default MUL_MM_MIN=7; unset env or set 7)"
   } | tee "${OUT_DIR}/summary.txt"
-  echo "SKIP: SUITE=mul-mat-residual requires GGML_METAL_MUL_MM_MIN unset or 32 (got ${GGML_METAL_MUL_MM_MIN})" >&2
+  echo "SKIP: SUITE=mul-mat-residual requires GGML_METAL_MUL_MM_MIN unset or 7 (got ${GGML_METAL_MUL_MM_MIN})" >&2
   exit 77
 fi
 
