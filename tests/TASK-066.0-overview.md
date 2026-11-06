@@ -2,12 +2,13 @@
 
 **Index:** [README-TASK066.md](README-TASK066.md)  
 **Research inputs:** [`task066-hist/draft_mtp_research_task-066*.md`](task066-hist/)  
-**Baseline stamp:** `logs/task066-ubatch-ladder-20261106T170944Z` (S8 vs S1024 DIFF @byte 80)
+**Baseline stamp:** `logs/task066-ubatch-ladder-20261106T170944Z` (S8 vs S1024 DIFF @byte 80; `MUL_MM_MIN=8` debug)  
+**Confirm stamp:** `logs/task066-ubatch-ladder-20261106T212703Z` (S8 vs S1024 DIFF @byte 182; product `MUL_MM_MIN` unset→7)
 
 ## Status
 
 🟢 **066.7 KEEP** + **066.8 R&D DELIVERED** (2026-11-06). Findings frozen in [TASK-066.8 § Frozen findings](TASK-066.8-fp-comparison-metrics-rd.md).  
-**Next operator gate:** optional short ladder S8 vs S1024 confirm. Prior Stage 1 WAIVE is **not** Done. **MTP blocked.** 066.5/066.6 deferred until product DIFF remains after confirm.
+🟢 **Ladder confirm (2026-11-06T212703Z):** HELP — first-DIFF moved **80→182** under product default `MUL_MM_MIN=7`; generations still **DIFF@text** (S8 «…и Долоховым…» vs S1024 «…и Федором Долоховым…»). Not identical → **unlock 066.5 / 066.6**. Prior Stage 1 WAIVE is **not** Done. **MTP blocked.**
 
 ## Locked decisions
 

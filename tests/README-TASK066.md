@@ -3,8 +3,9 @@
 Self-contained in **this** llama.cpp / ggml fork. Other developers: start here.
 
 **Branch:** `task066-metal-batch-invariance`  
-**Active track:** **[066.7 KEEP](TASK-066.7-mul-mat-residual.md)** + **[066.8 R&D DELIVERED](TASK-066.8-fp-comparison-metrics-rd.md)** (findings frozen in 066.8).  
-**Next:** optional short ladder S8 vs S1024 confirm → then 066.5/066.6 only if product DIFF remains. MTP blocked. Hist Stage 1 WAIVE ≠ Done.
+**Active track:** **[066.5](TASK-066.5-fusion-table-parity.md)** / **[066.6](TASK-066.6-cb-and-invariance-gates.md)** (unlocked after ladder confirm).  
+**Done behind:** **[066.7 KEEP](TASK-066.7-mul-mat-residual.md)** + **[066.8 R&D DELIVERED](TASK-066.8-fp-comparison-metrics-rd.md)**.  
+**Ladder confirm:** `logs/task066-ubatch-ladder-20261106T212703Z` — HELP first-DIFF **80→182**, still DIFF@text. MTP blocked. Hist Stage 1 WAIVE ≠ Done.
 
 ## Evidence hierarchy (hard)
 
@@ -21,8 +22,8 @@ Self-contained in **this** llama.cpp / ggml fork. Other developers: start here.
 | **066.2** | [TASK-066.2-compose-autotests.md](TASK-066.2-compose-autotests.md) | 066.1 | ✅ |
 | **066.3** | [TASK-066.3-fix-until-autotest-pass.md](TASK-066.3-fix-until-autotest-pass.md) | 066.2 | ✅ Gap A HELP |
 | **066.4** | [TASK-066.4-short-model-s8-s1024.md](TASK-066.4-short-model-s8-s1024.md) | 066.3 PASS | ✅ NO_EFFECT |
-| **066.5** | [TASK-066.5-fusion-table-parity.md](TASK-066.5-fusion-table-parity.md) | after 066.7 if still needed | ⏸ deferred |
-| **066.6** | [TASK-066.6-cb-and-invariance-gates.md](TASK-066.6-cb-and-invariance-gates.md) | after 066.7 if still needed | ⏸ deferred (residual suite already extended) |
+| **066.5** | [TASK-066.5-fusion-table-parity.md](TASK-066.5-fusion-table-parity.md) | residual GREEN + ladder still DIFF | 🔓 **active** |
+| **066.6** | [TASK-066.6-cb-and-invariance-gates.md](TASK-066.6-cb-and-invariance-gates.md) | after 066.5 / parallel invariance | 🔓 **active** (residual suite already extended; `fullgraph` still RED) |
 | **066.7** | [TASK-066.7-mul-mat-residual.md](TASK-066.7-mul-mat-residual.md) | 066.4 done; residual was RED | 🟢 **KEEP** |
 | **066.8** | [TASK-066.8-fp-comparison-metrics-rd.md](TASK-066.8-fp-comparison-metrics-rd.md) ([lit](task066-hist/TASK-066.8-lit-notes.md)) | 066.7 KEEP | 🟢 **R&D DELIVERED** |
 
@@ -97,6 +98,7 @@ cmake --build build --parallel \
 | `mtp-acc-trace` | `run-task066-mtp-acc-trace-checklist.sh` | ACC_TRACE log attach |
 | `mtp-e2e` | `run-task066-mtp-e2e-corners.sh` | MTP e2e (blocked for now) |
 | `mul-mat-residual` | `run-task066-mul-mat-residual-corners.sh` | ne11 residual |
+| `ubatch-s8-s1024` | `run-task066-ubatch-s8-s1024-corners.sh` | greedy S8 vs S1024 (product ladder class; needs MODEL+CTX) |
 | `followup` | `run-task066-followup-all.sh` | Track A+B one-shot |
 | `all` | umbrella | fa…moe-router |
 

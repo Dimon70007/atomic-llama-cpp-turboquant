@@ -14,9 +14,18 @@ Releases before `b10269-1.5.0` predate this file; see the git history.
 
 ### Added
 
+- **TASK-066.5/066.6 TDD gate:** `test-ubatch-s8-s1024-row0-parity` + `SUITE=ubatch-s8-s1024` —
+  C2 fast RED (n=32 ub=8 vs ub=32 logits) + C1 product greedy S8 vs S1024. Diag:
+  `TASK066_DIAG=localize|fa-ablation`; true FA-off needs `TASK066_CTV=f16` (fail-closed with turbo).
+  Requires `TASK066_MODEL` + `TASK066_CTX`. Not in `SUITE=all`.
 - **TASK-066.8 R&D (docs + telemetry):** mathematical FP comparison metrics for ubatch S1/S8/S256/S1024
   and batch-invariance literature notes; `test-mul-mat-batch-invariance` dual-reports `max_ulp`
   beside `mad` while **bit-exact** remains the PASS gate.
+
+### Fixed
+
+- **TASK-066 fullgraph runner:** classify prefix/KV-slot failures as `FIXTURE_FAIL` (not logit RED);
+  prior status-matrix “fullgraph RED” with `CTX=2048`/`-b 2048` was fixture misuse.
 
 ### Fixed
 

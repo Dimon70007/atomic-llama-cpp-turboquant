@@ -141,8 +141,16 @@ echo "fullgraph_row0_exit=${RC}" | tee "${OUT_DIR}/fullgraph-row0.exit"
     echo "VERDICT=MISUSE"
     echo "note=argv/env misuse (not a patch-C RED)"
   else
-    echo "VERDICT=RED"
-    echo "note=full-graph row0 logits not bit-exact under N=2 verify width (patch-C TDD RED; product knobs)"
+    # Audit: stamp 20261106T204326Z was labeled RED but log was prefix-decode
+    # "failed to find a memory slot for batch of size 2048" with CTX=2048 — fixture
+    # misuse, not logit N=1 vs N=2 proof. Classify before claiming patch-C RED.
+    if grep -q "failed to find a memory slot\|FAIL: prefix decode" "${OUT_DIR}/fullgraph-row0.log" 2>/dev/null; then
+      echo "VERDICT=FIXTURE_FAIL"
+      echo "note=prefix decode / KV slot failure (often CTX<=batch); NOT proof of row0 N=1 vs N=2 divergence — raise TASK066_CTX (e.g. 3072+) or shorten prompt"
+    else
+      echo "VERDICT=RED"
+      echo "note=full-graph row0 logits not bit-exact under N=2 verify width (patch-C TDD RED; product knobs)"
+    fi
   fi
 } | tee "${OUT_DIR}/summary.txt"
 

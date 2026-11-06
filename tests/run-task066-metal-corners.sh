@@ -8,7 +8,7 @@
 #   SUITE      — required (no silent default):
 #                all|fa|mul-mat|longctx|moe|moe-router|moe-out|fullgraph|
 #                cb-fusion|b1-shared-kv|mtp-acc-trace|mtp-e2e|mul-mat-residual|
-#                followup
+#                ubatch-s8-s1024|followup
 #                RED / follow-up suites are NOT part of `all`
 #                followup = one-shot Track A+B (see run-task066-followup-all.sh)
 #   BUILD_DIR  — cmake build dir (default: <repo>/build)
@@ -25,7 +25,7 @@ SUITE="${SUITE:-}"
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 OUT_DIR="${1:-${REPO_ROOT}/logs/task066-metal-corners-${SUITE:-unset}-${STAMP}}"
 
-ALLOWED="all|fa|mul-mat|longctx|moe|moe-router|moe-out|fullgraph|cb-fusion|b1-shared-kv|mtp-acc-trace|mtp-e2e|mul-mat-residual|followup"
+ALLOWED="all|fa|mul-mat|longctx|moe|moe-router|moe-out|fullgraph|cb-fusion|b1-shared-kv|mtp-acc-trace|mtp-e2e|mul-mat-residual|ubatch-s8-s1024|followup"
 
 if [[ -z "${SUITE}" ]]; then
   echo "FAIL: missing required SUITE=${ALLOWED}" >&2
@@ -34,7 +34,7 @@ if [[ -z "${SUITE}" ]]; then
 fi
 
 case "${SUITE}" in
-  all|fa|mul-mat|longctx|moe|moe-router|moe-out|fullgraph|cb-fusion|b1-shared-kv|mtp-acc-trace|mtp-e2e|mul-mat-residual|followup) ;;
+  all|fa|mul-mat|longctx|moe|moe-router|moe-out|fullgraph|cb-fusion|b1-shared-kv|mtp-acc-trace|mtp-e2e|mul-mat-residual|ubatch-s8-s1024|followup) ;;
   *)
     echo "FAIL: unknown SUITE=${SUITE} (allowed: ${ALLOWED})" >&2
     exit 1
@@ -107,6 +107,9 @@ case "${SUITE}" in
     ;;
   mul-mat-residual)
     run_one mul-mat-residual "${REPO_ROOT}/tests/run-task066-mul-mat-residual-corners.sh"
+    ;;
+  ubatch-s8-s1024)
+    run_one ubatch-s8-s1024 "${REPO_ROOT}/tests/run-task066-ubatch-s8-s1024-corners.sh"
     ;;
   followup)
     # One-shot Track A+B; continues through failures and prints a TSV summary.

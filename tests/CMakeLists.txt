@@ -437,6 +437,10 @@ set_tests_properties(test-moe-out-row0-parity PROPERTIES SKIP_RETURN_CODE 77)
 # Runner: tests/run-task066-fullgraph-corners.sh (requires TASK066_MODEL; not in SUITE=all)
 llama_build(test-fullgraph-decode-row0-parity.cpp)
 
+# TASK-066.5/066.6 — product ubatch S8 vs S1024 greedy token-stream bit-exact (ladder DIFF class)
+# Runner: tests/run-task066-ubatch-s8-s1024-corners.sh (requires TASK066_MODEL+CTX; not in SUITE=all)
+llama_build(test-ubatch-s8-s1024-row0-parity.cpp)
+
 # TASK-066 follow-up / #31688 — Metal CB split vs ADD fusion (CPU unit; no GPU).
 # Needs ggml_metal_fusion_max from static ggml-metal. Expected RED until
 # tests/TASK-066-cb-fusion-followup.md High/Medium. Runner: SUITE=cb-fusion.

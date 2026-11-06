@@ -1,0 +1,640 @@
+// TASK-066.5 / 066.6 — product ubatch S8 vs S1024 greedy token-stream parity (TDD RED gate).
+//
+// Ladder confirm `logs/task066-ubatch-ladder-20261106T212703Z` still DIFF@text under
+// product MUL_MM_MIN=7 (residual GREEN). This autotest reproduces that *class*:
+//
+//   Same prompt + product KV/FA knobs; greedy (argmax) decode for N tokens with
+//     A: -b max(512,8)=512  -ub 8
+//     B: -b 1024            -ub 1024
+//   Require identical generated token ids. First mismatch → RED (not ε).
+//
+// Root-cause diagnostics (no PASS change; evidence only):
+//   TASK066_DIAG=localize     — ubatch step / threshold matrix (product KV)
+//   TASK066_DIAG=fa-ablation  — C2 (n=32 ub8 vs ub32) under FA/KV variants:
+//       product turbo4+FA-on; f16+FA-on; f16+FA-off (true FA-off — turbo forces FA)
+//   TASK066_FA=off requires TASK066_CTV=<non-turbo> (e.g. f16); else fail-closed.
+//   FA-off / non-turbo runs are LOCALIZATION ONLY — product path stays FA-on+turbo4.
+//
+// Fail-closed: -m MODEL, -c CTX, -f PROMPT; TASK066_N_PREDICT (default 64).
+// Runner: tests/run-task066-ubatch-s8-s1024-corners.sh
+
+#include "arg.h"
+#include "common.h"
+#include "llama.h"
+#include "log.h"
+
+#include "ggml-backend.h"
+#include "ggml.h"
+
+#include <cmath>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <string>
+#include <vector>
+
+namespace {
+
+struct logits_cmp {
+    bool    exact = false;
+    double  mad = 0.0;
+    int32_t argmax_a = -1;
+    int32_t argmax_b = -1;
+    int64_t first_diff_i = -1;
+};
+
+struct gen_result {
+    std::vector<llama_token> tokens;
+    bool                     ok = false;
+};
+
+struct logits_result {
+    std::vector<float> logits;
+    bool               ok = false;
+};
+
+int32_t argmax_f32(const float * logits, int32_t n_vocab) {
+    int32_t best_i = 0;
+    float   best_v = -INFINITY;
+    for (int32_t i = 0; i < n_vocab; ++i) {
+        const float v = logits[i];
+        if (v > best_v) {
+            best_v = v;
+            best_i = i;
+        }
+    }
+    return best_i;
+}
+
+logits_cmp compare_logits(const float * a, const float * b, int32_t n_vocab) {
+    logits_cmp out;
+    out.exact = true;
+    float best_a = -INFINITY;
+    float best_b = -INFINITY;
+    for (int32_t i = 0; i < n_vocab; ++i) {
+        const float da = a[i];
+        const float db = b[i];
+        if (da > best_a) {
+            best_a = da;
+            out.argmax_a = i;
+        }
+        if (db > best_b) {
+            best_b = db;
+            out.argmax_b = i;
+        }
+        const double ad = std::fabs(double(da) - double(db));
+        if (ad > out.mad) {
+            out.mad = ad;
+        }
+        uint32_t ua = 0;
+        uint32_t ub = 0;
+        std::memcpy(&ua, &da, sizeof(ua));
+        std::memcpy(&ub, &db, sizeof(ub));
+        if (ua != ub) {
+            out.exact = false;
+            if (out.first_diff_i < 0) {
+                out.first_diff_i = i;
+            }
+        }
+    }
+    return out;
+}
+
+bool decode_prefix(llama_context * ctx, const std::vector<llama_token> & tokens, int32_t n_prefix) {
+    const int32_t n_batch = std::max(1, (int32_t) llama_n_batch(ctx));
+    int32_t i = 0;
+    while (i < n_prefix) {
+        const int32_t n = std::min(n_batch, n_prefix - i);
+        llama_batch batch = llama_batch_init(n, 0, 1);
+        for (int32_t j = 0; j < n; ++j) {
+            const bool want_logits = (i + j + 1 == n_prefix);
+            common_batch_add(batch, tokens[size_t(i + j)], i + j, { 0 }, want_logits);
+        }
+        const int rc = llama_decode(ctx, batch);
+        llama_batch_free(batch);
+        if (rc != 0) {
+            fprintf(stderr, "FAIL: prefix decode rc=%d at i=%d n=%d (n_batch=%d n_ubatch=%d)\n",
+                    rc, i, n, (int) llama_n_batch(ctx), (int) llama_n_ubatch(ctx));
+            return false;
+        }
+        i += n;
+    }
+    return true;
+}
+
+logits_result run_prefill_logits(
+        llama_model * model,
+        common_params params,
+        const std::vector<llama_token> & prompt_tokens,
+        int32_t n_prefix,
+        int32_t n_batch,
+        int32_t n_ubatch) {
+    logits_result out;
+    params.n_batch = n_batch;
+    params.n_ubatch = n_ubatch;
+    params.warmup = false;
+
+    auto cparams = common_context_params_to_llama(params);
+    cparams.n_seq_max = 1;
+    llama_context_ptr ctx{llama_init_from_model(model, cparams)};
+    if (!ctx) {
+        fprintf(stderr, "FAIL: ctx init b=%d ub=%d\n", n_batch, n_ubatch);
+        return out;
+    }
+    if (n_prefix < 2 || n_prefix > (int32_t) prompt_tokens.size()) {
+        fprintf(stderr, "FAIL: bad n_prefix=%d (prompt=%zu)\n", n_prefix, prompt_tokens.size());
+        return out;
+    }
+    if (!decode_prefix(ctx.get(), prompt_tokens, n_prefix)) {
+        return out;
+    }
+    const float * logits = llama_get_logits(ctx.get());
+    if (!logits) {
+        fprintf(stderr, "FAIL: logits null after prefill b=%d ub=%d\n", n_batch, n_ubatch);
+        return out;
+    }
+    const int32_t n_vocab = llama_vocab_n_tokens(llama_model_get_vocab(model));
+    out.logits.assign(logits, logits + n_vocab);
+    out.ok = true;
+    return out;
+}
+
+gen_result run_greedy_ubatch(
+        llama_model * model,
+        common_params params,
+        const std::vector<llama_token> & prompt_tokens,
+        int32_t n_predict,
+        int32_t n_batch,
+        int32_t n_ubatch) {
+    gen_result out;
+    params.n_batch = n_batch;
+    params.n_ubatch = n_ubatch;
+    params.warmup = false;
+
+    auto cparams = common_context_params_to_llama(params);
+    cparams.n_seq_max = 1;
+    llama_context_ptr ctx{llama_init_from_model(model, cparams)};
+    if (!ctx) {
+        fprintf(stderr, "FAIL: ctx init b=%d ub=%d\n", n_batch, n_ubatch);
+        return out;
+    }
+
+    const int32_t n_prefix = (int32_t) prompt_tokens.size();
+    if (n_prefix < 2) {
+        fprintf(stderr, "FAIL: prompt too short\n");
+        return out;
+    }
+    if (!decode_prefix(ctx.get(), prompt_tokens, n_prefix)) {
+        return out;
+    }
+
+    const llama_vocab * vocab = llama_model_get_vocab(model);
+    const int32_t n_vocab = llama_vocab_n_tokens(vocab);
+    out.tokens.reserve(size_t(n_predict));
+
+    int32_t pos = n_prefix;
+    for (int32_t t = 0; t < n_predict; ++t) {
+        const float * logits = llama_get_logits(ctx.get());
+        if (!logits) {
+            fprintf(stderr, "FAIL: logits null at gen step %d (b=%d ub=%d)\n", t, n_batch, n_ubatch);
+            return out;
+        }
+        const llama_token tok = argmax_f32(logits, n_vocab);
+        out.tokens.push_back(tok);
+
+        llama_batch batch = llama_batch_init(1, 0, 1);
+        common_batch_add(batch, tok, pos, { 0 }, true);
+        const int rc = llama_decode(ctx.get(), batch);
+        llama_batch_free(batch);
+        if (rc != 0) {
+            fprintf(stderr, "FAIL: gen decode rc=%d at step %d (b=%d ub=%d)\n",
+                    rc, t, n_batch, n_ubatch);
+            return out;
+        }
+        ++pos;
+    }
+
+    out.ok = true;
+    return out;
+}
+
+int32_t first_token_diff(const std::vector<llama_token> & a, const std::vector<llama_token> & b) {
+    const size_t n = std::min(a.size(), b.size());
+    for (size_t i = 0; i < n; ++i) {
+        if (a[i] != b[i]) {
+            return (int32_t) i;
+        }
+    }
+    if (a.size() != b.size()) {
+        return (int32_t) n;
+    }
+    return -1;
+}
+
+void print_cmp(const char * label, const logits_cmp & c) {
+    printf("DIAG %s: exact=%d mad=%.8g first_diff_i=%lld argmax_a=%d argmax_b=%d\n",
+           label, c.exact ? 1 : 0, c.mad, (long long) c.first_diff_i, c.argmax_a, c.argmax_b);
+}
+
+bool is_turbo_kv_type(ggml_type t) {
+    return t == GGML_TYPE_TURBO2_0 || t == GGML_TYPE_TURBO3_0 || t == GGML_TYPE_TURBO4_0;
+}
+
+// Minimal name→type for diag overrides (product names only).
+bool parse_kv_type_name(const char * name, ggml_type & out) {
+    if (!name || !name[0]) {
+        return false;
+    }
+    const ggml_type candidates[] = {
+            GGML_TYPE_F16, GGML_TYPE_BF16, GGML_TYPE_F32, GGML_TYPE_Q8_0,
+            GGML_TYPE_Q4_0, GGML_TYPE_Q5_0, GGML_TYPE_TURBO4_0,
+            GGML_TYPE_TURBO3_0, GGML_TYPE_TURBO2_0,
+    };
+    for (ggml_type t : candidates) {
+        if (std::strcmp(ggml_type_name(t), name) == 0) {
+            out = t;
+            return true;
+        }
+    }
+    return false;
+}
+
+bool run_localize(
+        llama_model * model,
+        common_params params,
+        const std::vector<llama_token> & tokens) {
+    const int32_t n_vocab = llama_vocab_n_tokens(llama_model_get_vocab(model));
+    const int32_t n_chunk = std::min(512, (int32_t) tokens.size());
+    const int32_t n_full = (int32_t) tokens.size();
+
+    printf("LOCALIZE: n_chunk=%d n_full=%d (bit-exact logits; not a PASS gate)\n", n_chunk, n_full);
+
+    auto one = [&](const char * label, int32_t n_pref, int32_t b0, int32_t ub0, int32_t b1, int32_t ub1,
+                   bool fa_on, ggml_type ctv) -> bool {
+        common_params p = params;
+        p.cache_type_v = ctv;
+        p.flash_attn_type = fa_on ? LLAMA_FLASH_ATTN_TYPE_ENABLED : LLAMA_FLASH_ATTN_TYPE_DISABLED;
+        if (!fa_on && is_turbo_kv_type(ctv)) {
+            printf("DIAG %s: SKIP — FA-off + turbo ctv is force-re-enabled by llama; "
+                   "use ctv=f16 for true FA-off\n", label);
+            return true;
+        }
+        const logits_result a = run_prefill_logits(model, p, tokens, n_pref, b0, ub0);
+        const logits_result b = run_prefill_logits(model, p, tokens, n_pref, b1, ub1);
+        if (!a.ok || !b.ok) {
+            printf("DIAG %s: FAIL_RUN a.ok=%d b.ok=%d\n", label, a.ok ? 1 : 0, b.ok ? 1 : 0);
+            return false;
+        }
+        const logits_cmp c = compare_logits(a.logits.data(), b.logits.data(), n_vocab);
+        print_cmp(label, c);
+        return true;
+    };
+
+    const ggml_type ctv_prod = params.cache_type_v;
+
+    // H1: pure ubatch split inside one outer batch of 512.
+    if (!one("H1_chunk512_ub8_vs_ub512_same_b512_faON", n_chunk, 512, 8, 512, 512, true, ctv_prod)) {
+        return false;
+    }
+    // H2: product-shaped first chunk (different -b and -ub).
+    if (!one("H2_chunk512_b512ub8_vs_b1024ub1024_faON", n_chunk, 512, 8, 1024, 1024, true, ctv_prod)) {
+        return false;
+    }
+    // H3: full prefill product pair (explains first_token_diff=0).
+    if (!one("H3_full_prefill_b512ub8_vs_b1024ub1024_faON", n_full, 512, 8, 1024, 1024, true, ctv_prod)) {
+        return false;
+    }
+    // H4: FA-off is invalid with turbo — skipped unless ctv already non-turbo.
+    if (!one("H4_chunk512_ub8_vs_ub512_faOFF_turbo_SKIP", n_chunk, 512, 8, 512, 512, false, ctv_prod)) {
+        return false;
+    }
+
+    // H5–H7: scale the *number* of internal ubatch steps (same outer n).
+    if (!one("H5_n8_b8_ub8_vs_ub8_sanity", 8, 8, 8, 8, 8, true, ctv_prod)) {
+        return false;
+    }
+    if (!one("H6_n16_b16_ub8_vs_ub16", 16, 16, 8, 16, 16, true, ctv_prod)) {
+        return false;
+    }
+    if (!one("H7_n32_b32_ub8_vs_ub32", 32, 32, 8, 32, 32, true, ctv_prod)) {
+        return false;
+    }
+
+    printf("LOCALIZE_DONE: see TASK066_DIAG=fa-ablation for true FA-off (ctv=f16)\n");
+    return true;
+}
+
+// C2-shaped FA/KV ablation. Localization only — not a product PASS gate.
+bool run_fa_ablation(
+        llama_model * model,
+        common_params params,
+        const std::vector<llama_token> & tokens) {
+    const int32_t n_vocab = llama_vocab_n_tokens(llama_model_get_vocab(model));
+    if ((int32_t) tokens.size() < 32) {
+        fprintf(stderr, "FAIL: fa-ablation needs >=32 prompt tokens\n");
+        return false;
+    }
+
+    printf("FA_ABLATION: C2 n=32 ub=8 vs ub=32 — LOCALIZATION ONLY "
+           "(product remains FA-on + turbo4)\n");
+
+    auto row = [&](const char * label, ggml_type ctk, ggml_type ctv, bool fa_on) -> bool {
+        if (!fa_on && is_turbo_kv_type(ctv)) {
+            printf("DIAG %s: SKIP — refuse FA-off with turbo ctv "
+                   "(llama would force FA back on)\n", label);
+            return true;
+        }
+        common_params p = params;
+        p.cache_type_k = ctk;
+        p.cache_type_v = ctv;
+        p.flash_attn_type = fa_on ? LLAMA_FLASH_ATTN_TYPE_ENABLED : LLAMA_FLASH_ATTN_TYPE_DISABLED;
+        fprintf(stderr, "fa_ablation_row: %s ctk=%s ctv=%s fa=%s\n",
+                label, ggml_type_name(ctk), ggml_type_name(ctv), fa_on ? "on" : "off");
+        const logits_result a = run_prefill_logits(model, p, tokens, 32, 32, 8);
+        const logits_result b = run_prefill_logits(model, p, tokens, 32, 32, 32);
+        if (!a.ok || !b.ok) {
+            printf("DIAG %s: FAIL_RUN a.ok=%d b.ok=%d\n", label, a.ok ? 1 : 0, b.ok ? 1 : 0);
+            return false;
+        }
+        const logits_cmp c = compare_logits(a.logits.data(), b.logits.data(), n_vocab);
+        print_cmp(label, c);
+        return true;
+    };
+
+    // A0: product lock (known RED).
+    if (!row("A0_C2_product_q8_turbo4_faON", GGML_TYPE_Q8_0, GGML_TYPE_TURBO4_0, true)) {
+        return false;
+    }
+    // A1: same FA-on, V cache f16 — isolates turbo V vs FA.
+    if (!row("A1_C2_q8_f16_faON", GGML_TYPE_Q8_0, GGML_TYPE_F16, true)) {
+        return false;
+    }
+    // A2: true FA-off (requires non-turbo V).
+    if (!row("A2_C2_q8_f16_faOFF", GGML_TYPE_Q8_0, GGML_TYPE_F16, false)) {
+        return false;
+    }
+    // A3: both KV f16, FA-off.
+    if (!row("A3_C2_f16_f16_faOFF", GGML_TYPE_F16, GGML_TYPE_F16, false)) {
+        return false;
+    }
+    // A4: both KV f16, FA-on (control vs A3).
+    if (!row("A4_C2_f16_f16_faON", GGML_TYPE_F16, GGML_TYPE_F16, true)) {
+        return false;
+    }
+
+    printf("FA_ABLATION_DONE: compare A0 vs A1 (turbo V?) vs A2/A3 (FA-off) vs A4 (FA-on f16)\n");
+    printf("NOTE: any GREEN under FA-off does NOT waive product FA-on+turbo4 debugging\n");
+    return true;
+}
+
+}  // namespace
+
+int main(int argc, char ** argv) {
+    common_params params;
+    params.n_predict = 1;
+
+    common_init();
+    if (!common_params_parse(argc, argv, params, LLAMA_EXAMPLE_COMMON)) {
+        return 2;
+    }
+
+    if (params.model.path.empty()) {
+        fprintf(stderr,
+                "FAIL: missing required -m MODEL (product GGUF); "
+                "refusing silent model substitution\n");
+        return 2;
+    }
+    if (params.prompt.empty()) {
+        fprintf(stderr,
+                "FAIL: missing required -f / -p prompt (use ladder fixture); "
+                "refusing silent prompt substitution\n");
+        return 2;
+    }
+    if (params.n_ctx < 4) {
+        fprintf(stderr, "FAIL: -c / n_ctx must be set (>=4); refusing silent ctx\n");
+        return 2;
+    }
+
+    params.n_gpu_layers = 999;
+    params.cache_type_k = GGML_TYPE_Q8_0;
+    params.cache_type_v = GGML_TYPE_TURBO4_0;
+    params.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_ENABLED;
+    params.cache_ram_mib = 0;
+    params.cpuparams.n_threads = 4;
+    params.cpuparams_batch.n_threads = 4;
+    params.n_parallel = 1;
+
+    // Optional KV overrides for localization (not product PASS).
+    if (const char * ctk = std::getenv("TASK066_CTK"); ctk && ctk[0]) {
+        ggml_type t = GGML_TYPE_COUNT;
+        if (!parse_kv_type_name(ctk, t)) {
+            fprintf(stderr, "FAIL: TASK066_CTK unsupported type name: %s\n", ctk);
+            return 2;
+        }
+        params.cache_type_k = t;
+        fprintf(stderr, "DIAG_ONLY: TASK066_CTK=%s\n", ggml_type_name(t));
+    }
+    if (const char * ctv = std::getenv("TASK066_CTV"); ctv && ctv[0]) {
+        ggml_type t = GGML_TYPE_COUNT;
+        if (!parse_kv_type_name(ctv, t)) {
+            fprintf(stderr, "FAIL: TASK066_CTV unsupported type name: %s\n", ctv);
+            return 2;
+        }
+        params.cache_type_v = t;
+        fprintf(stderr, "DIAG_ONLY: TASK066_CTV=%s\n", ggml_type_name(t));
+    }
+
+    if (const char * fa = std::getenv("TASK066_FA"); fa && std::strcmp(fa, "off") == 0) {
+        if (is_turbo_kv_type(params.cache_type_v) || is_turbo_kv_type(params.cache_type_k)) {
+            fprintf(stderr,
+                    "FAIL: TASK066_FA=off with turbo KV is invalid "
+                    "(llama force-enables FA). Set TASK066_CTV=f16 (and ideally non-turbo CTK).\n"
+                    "NOTE: FA-off is localization-only; product debug stays FA-on+turbo4.\n");
+            return 2;
+        }
+        params.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_DISABLED;
+        fprintf(stderr,
+                "DIAG_ONLY: TASK066_FA=off (ctk=%s ctv=%s) — not a product waiver; "
+                "later debugging remains FA-on\n",
+                ggml_type_name(params.cache_type_k), ggml_type_name(params.cache_type_v));
+    }
+
+    int32_t n_predict = 64;
+    if (const char * e = std::getenv("TASK066_N_PREDICT"); e && e[0]) {
+        n_predict = (int32_t) std::strtol(e, nullptr, 10);
+        if (n_predict < 1) {
+            fprintf(stderr, "FAIL: TASK066_N_PREDICT must be >= 1\n");
+            return 2;
+        }
+    }
+
+    const char * diag = std::getenv("TASK066_DIAG");
+    const bool do_localize = diag && std::strcmp(diag, "localize") == 0;
+    const bool do_fa_ablation = diag && std::strcmp(diag, "fa-ablation") == 0;
+
+    const int32_t ub_a = 8;
+    const int32_t ub_b = 1024;
+    const int32_t b_a = 512;
+    const int32_t b_b = 1024;
+
+    fprintf(stderr,
+            "product_lock: ngl=%d ctk=%s ctv=%s fa=%s cram=%d t=%d tb=%d np=%d ctx=%d\n",
+            params.n_gpu_layers, ggml_type_name(params.cache_type_k),
+            ggml_type_name(params.cache_type_v),
+            params.flash_attn_type == LLAMA_FLASH_ATTN_TYPE_DISABLED ? "off" : "on",
+            params.cache_ram_mib,
+            params.cpuparams.n_threads, params.cpuparams_batch.n_threads,
+            params.n_parallel, (int) params.n_ctx);
+    fprintf(stderr, "ubatch_pair: A b=%d ub=%d  B b=%d ub=%d  n_predict=%d diag=%s\n",
+            b_a, ub_a, b_b, ub_b, n_predict, diag && diag[0] ? diag : "<none>");
+    if (const char * mm = std::getenv("GGML_METAL_MUL_MM_MIN"); mm && mm[0]) {
+        fprintf(stderr, "GGML_METAL_MUL_MM_MIN=%s\n", mm);
+    } else {
+        fprintf(stderr, "GGML_METAL_MUL_MM_MIN=<unset:default 7>\n");
+    }
+
+    const bool require_gpu = []() {
+        const char * e = std::getenv("TASK066_REQUIRE_GPU");
+        return e && e[0] == '1';
+    }();
+
+    ggml_backend_load_all();
+    llama_backend_init();
+
+    if (require_gpu) {
+        bool has_gpu = false;
+        for (size_t i = 0; i < ggml_backend_dev_count(); ++i) {
+            auto * dev = ggml_backend_dev_get(i);
+            if (dev && ggml_backend_dev_type(dev) == GGML_BACKEND_DEVICE_TYPE_GPU) {
+                has_gpu = true;
+                break;
+            }
+        }
+        if (!has_gpu) {
+            fprintf(stderr, "HOST_SKIP: TASK066_REQUIRE_GPU=1 but no GPU backend\n");
+            return 77;
+        }
+    }
+
+    params.n_batch = b_b;
+    params.n_ubatch = ub_b;
+    common_init_result_ptr init = common_init_from_params(params);
+    llama_model * model = init->model();
+    if (!model) {
+        fprintf(stderr, "FAIL: model load\n");
+        return 1;
+    }
+
+    const llama_vocab * vocab = llama_model_get_vocab(model);
+    std::vector<llama_token> tokens;
+    tokens.resize(params.prompt.size() + 16);
+    const int32_t n_tok = llama_tokenize(
+            vocab, params.prompt.c_str(), (int32_t) params.prompt.size(),
+            tokens.data(), (int32_t) tokens.size(),
+            /*add_special=*/true, /*parse_special=*/true);
+    if (n_tok < 0) {
+        tokens.resize(size_t(-n_tok));
+        const int32_t n2 = llama_tokenize(
+                vocab, params.prompt.c_str(), (int32_t) params.prompt.size(),
+                tokens.data(), (int32_t) tokens.size(), true, true);
+        if (n2 < 0) {
+            fprintf(stderr, "FAIL: tokenize\n");
+            return 1;
+        }
+        tokens.resize(size_t(n2));
+    } else {
+        tokens.resize(size_t(n_tok));
+    }
+
+    if (tokens.size() < 4) {
+        fprintf(stderr, "FAIL: prompt too short (%zu toks)\n", tokens.size());
+        return 2;
+    }
+
+    const int64_t need_ctx = (int64_t) tokens.size() + (int64_t) n_predict + 8;
+    if ((int64_t) params.n_ctx < need_ctx) {
+        fprintf(stderr,
+                "FAIL: n_ctx=%d too small for prompt=%zu + n_predict=%d (need >= %lld)\n",
+                (int) params.n_ctx, tokens.size(), n_predict, (long long) need_ctx);
+        return 2;
+    }
+
+    if (do_localize) {
+        printf("UBATCH-S8-S1024-LOCALIZE (evidence only; C1/C2 gates unchanged)\n");
+        printf("  model=%s n_prompt_tokens=%zu\n", params.model.path.c_str(), tokens.size());
+        if (!run_localize(model, params, tokens)) {
+            return 1;
+        }
+        printf("RESULT LOCALIZE_OK (re-run without TASK066_DIAG for C1/C2 RED/GREEN)\n");
+        return 0;
+    }
+    if (do_fa_ablation) {
+        printf("UBATCH-S8-S1024-FA-ABLATION (evidence only; product FA-on+turbo4 untouched)\n");
+        printf("  model=%s n_prompt_tokens=%zu\n", params.model.path.c_str(), tokens.size());
+        if (!run_fa_ablation(model, params, tokens)) {
+            return 1;
+        }
+        printf("RESULT FA_ABLATION_OK\n");
+        return 0;
+    }
+
+    // C2 — fast TDD corner from localize H7 (stamp 20261106T214747Z):
+    // n=32, same -b=32, ub=8 (4 steps) vs ub=32 (1 step). H6 n=16 was exact.
+    {
+        const int32_t n32 = 32;
+        if ((int32_t) tokens.size() < n32) {
+            fprintf(stderr, "FAIL: prompt needs >= 32 tokens for C2 (got %zu)\n", tokens.size());
+            return 2;
+        }
+        printf("UBATCH-S8-S1024-C2 prefill logits n=32 ub=8 vs ub=32 (fast localize H7)\n");
+        printf("  model=%s\n", params.model.path.c_str());
+        const logits_result c2a = run_prefill_logits(model, params, tokens, n32, 32, 8);
+        const logits_result c2b = run_prefill_logits(model, params, tokens, n32, 32, 32);
+        if (!c2a.ok || !c2b.ok) {
+            return 1;
+        }
+        const int32_t n_vocab = llama_vocab_n_tokens(vocab);
+        const logits_cmp c2 = compare_logits(c2a.logits.data(), c2b.logits.data(), n_vocab);
+        print_cmp("C2", c2);
+        if (!c2.exact) {
+            printf("RESULT FAIL (RED) — C2 n=32 ubatch multi-step vs one-shot; "
+                   "066.5/066.6 TDD gate open (skip C1 until C2 GREEN)\n");
+            return 1;
+        }
+        printf("C2 PASS — n=32 ub=8 vs ub=32 bit-exact; continuing to C1 product gate\n");
+    }
+
+    printf("UBATCH-S8-S1024-C1 greedy token-stream bit-exact\n");
+    printf("  model=%s\n", params.model.path.c_str());
+    printf("  n_prompt_tokens=%zu n_predict=%d n_vocab=%d\n",
+           tokens.size(), n_predict, llama_vocab_n_tokens(vocab));
+    printf("HYPOTHESIS: greedy ids diverge under ubatch 8 vs 1024 (ladder DIFF@text class)\n");
+
+    const gen_result a = run_greedy_ubatch(model, params, tokens, n_predict, b_a, ub_a);
+    if (!a.ok) {
+        return 1;
+    }
+    const gen_result b = run_greedy_ubatch(model, params, tokens, n_predict, b_b, ub_b);
+    if (!b.ok) {
+        return 1;
+    }
+
+    const int32_t diff_i = first_token_diff(a.tokens, b.tokens);
+    printf("  gen_len_a=%zu gen_len_b=%zu first_token_diff=%d\n",
+           a.tokens.size(), b.tokens.size(), diff_i);
+    if (diff_i >= 0 && diff_i < (int32_t) a.tokens.size() && diff_i < (int32_t) b.tokens.size()) {
+        printf("  tok_a=%d tok_b=%d\n", a.tokens[size_t(diff_i)], b.tokens[size_t(diff_i)]);
+    }
+
+    if (diff_i >= 0) {
+        printf("RESULT FAIL (RED) — greedy token stream not bit-exact S8 vs S1024; "
+               "066.5/066.6 TDD gate open\n");
+        return 1;
+    }
+
+    printf("RESULT PASS (GREEN) — greedy S8 vs S1024 identical for n_predict=%d on this prompt\n",
+           n_predict);
+    printf("note: GREEN here does not waive longer n_predict / full ladder; raise TASK066_N_PREDICT\n");
+    return 0;
+}

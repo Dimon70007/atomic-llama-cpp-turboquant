@@ -1,10 +1,63 @@
 # TASK-066.6 — CB integration + invariance autotest gates (draft Steps 2–3)
 
-**Status:** ⬜ (partial progress: `SUITE=mul-mat-residual` now fails closed on N∈{256,512,1024} vs N=8)  
-**Depends on:** [TASK-066.5](TASK-066.5-fusion-table-parity.md)  
-**Next:** [TASK-066.7-mul-mat-residual.md](TASK-066.7-mul-mat-residual.md) only if S8 vs S1024 still large  
+**Status:** 🔓 **active** (partial: residual suite GREEN after 066.7; product ladder still DIFF; `SUITE=fullgraph` RED N=1 vs N=2)  
+**Depends on:** [TASK-066.5](TASK-066.5-fusion-table-parity.md) (or parallel invariance corner if RED already exists)  
+**Next:** short ladder re-confirm after GREEN gates; MTP still blocked  
 **Source:** [task066-hist/draft_mtp_research_task-066.md](task066-hist/draft_mtp_research_task-066.md) Steps 2–3  
-**Autotest:** `test-mul-mat-batch-invariance --residual` — golden N=8; widths 9/16/32/256/512/1024 (RED on large as of 2026-11-06)
+**Autotest:** `SUITE=mul-mat-residual` GREEN (066.7); **primary product gate now** `SUITE=ubatch-s8-s1024` (greedy token-stream S8 vs S1024; TDD RED expected on HEAD after confirm).  
+**Confirm ref:** `logs/task066-ubatch-ladder-20261106T212703Z` S1024 vs S8 DIFF @byte 182  
+
+### Patch / fixture audit (2026-11-06)
+
+| Claim | Evidence | Verdict |
+|-------|----------|---------|
+| Prior `SUITE=fullgraph` “RED” in status matrix | Log `failed to find a memory slot for batch of size 2048` with `CTX=2048` | **FIXTURE_FAIL**, not N=1 vs N=2 logit proof. Runner now classifies this. |
+| `mul-mat-residual` KEEP | residual suite PASS under `MUL_MM_MIN=7` | Still valid; does **not** imply ladder identical |
+| Ladder DIFF under product min=7 | stamp `212703Z` | Unlocks this suite; do not treat upstream #31688 / 066.3 alone as Done |
+
+### Localize matrix (stamp `logs/task066-ubatch-localize-20261106T214747Z`)
+
+Product KV `q8_0`/`turbo4` (FA force-on with turbo). `MUL_MM_MIN` default 7.
+
+| Row | Compare | exact | Notes |
+|-----|---------|-------|-------|
+| H1 | n=512, b=512, **ub=8 vs ub=512** | **0** | Pure ubatch; mad≈20.7 |
+| H2 | n=512, product-shaped b/ub | **0** | Same as H1 |
+| H3 | full prefill 1696, product pair | **0** | Matches C1 `first_token_diff=0` |
+| H4 | H1 with FA=off request | **0** | Invalid ablation — turbo re-enables FA |
+| H5 | n=8, ub=8 vs ub=8 | **1** | Sanity |
+| H6 | n=16, ub=8 (2 steps) vs ub=16 | **1** | Still bit-exact |
+| H7 | n=32, ub=8 (4 steps) vs ub=32 | **0** | **Minimal RED** (mad≈3.36) |
+
+**Conclusion:** residual class is **multi-step ubatch vs one-shot** of the same token count; threshold between 16 (GREEN) and 32 (RED). Not explained by mul-mat residual alone. Next: FIRST_DIFF_TENSOR / op-class on H7; do not disable multi-CB as a “fix”.
+
+**Fast gate:** C2 in `test-ubatch-s8-s1024-row0-parity` = H7 (runs before product C1).
+
+### Lever: `GGML_METAL_MUL_MM_MIN` on C2 (stamp `logs/task066-ubatch-c2-levers-20261106T215032Z`)
+
+| min | C2 exact | mad | argmax |
+|-----|----------|-----|--------|
+| 1 | 0 | ≈3.36 | 569 vs 236761 |
+| 7 (default) | 0 | ≈3.36 | same |
+| 32 | 0 | ≈5.36 | **same argmax** |
+
+**NO_EFFECT** on C2 decision — 066.7 mm KEEP is orthogonal to this residual class.
+
+### FA / KV ablation on C2 (stamp `logs/task066-ubatch-fa-ablation-20261106T215517Z`)
+
+`TASK066_DIAG=fa-ablation` — **localization only**. Product path stays **FA-on + ctv=turbo4**.
+
+| Row | ctk / ctv / FA | C2 exact | mad | Notes |
+|-----|----------------|----------|-----|-------|
+| A0 | q8_0 / turbo4 / on | **0** | ≈3.36 | product RED (argmax 569 vs 236761) |
+| A1 | q8_0 / **f16** / on | **1** | 0 | turbo4→f16 alone clears C2 under FA-on |
+| A2 | q8_0 / f16 / **off** | **1** | 0 | true FA-off (non-turbo V) |
+| A3 | f16 / f16 / off | **1** | 0 | |
+| A4 | f16 / f16 / on | **0** | ≈0.017 | soft drift; **same argmax** |
+
+**Read (agreed):** base residual is **inside FA under multi-step ubatch** (A4: f16/f16+FA-on still `exact=0`, soft mad, same argmax). **KV quantization (turbo4) amplifies** that FA error into decision-level DIFF (A0). A1 (FA-on+f16) bit-exact on C2 does **not** mean “fix = drop turbo”; product stays FA-on+turbo4 — fix the FA multi-step invariance, then re-check turbo amplification. FA-off GREEN is localization only.
+
+Fail-closed: `TASK066_FA=off` without non-turbo `TASK066_CTV` → exit 2 (llama would force FA back on).
 
 ## Goal
 
