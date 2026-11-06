@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <limits>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 
 // TASK-066.7: mul_mm break-even. Default 7 → ne11>=8 uses mul_mm (incl. ubatch S8),
@@ -3050,21 +3051,50 @@ bool ggml_metal_op_flash_attn_ext_use_vec(const ggml_tensor * op) {
     assert(op->op == GGML_OP_FLASH_ATTN_EXT);
 
     const int64_t ne00 = op->src[0]->ne[0]; // head size
-    const int64_t ne01 = op->src[0]->ne[1]; // batch size
+    const int64_t ne01 = op->src[0]->ne[1]; // batch size (queries)
 
-    // use vec kernel if the batch size is small and if the head size is supported
-    // EXPERIMENT: force non-vec for turbo3 on pre-M5 hardware.
-    // The vec kernel uses nl=8 (4 elements per dequant call) which has 4x more
-    // loop iterations than the non-vec nl=2 path. On M2 Pro, this loop overhead
-    // dominates — the non-vec path may be faster even for batch=1.
-    const ggml_type ktype = op->src[1]->type;
-    if (ktype == GGML_TYPE_TURBO2_0 || ktype == GGML_TYPE_TURBO3_0 || ktype == GGML_TYPE_TURBO4_0) {
-        const char * force_nonvec = getenv("TURBO_FORCE_NONVEC");
-        if (force_nonvec && force_nonvec[0] == '1') {
-            return false;  // force non-vec path
+    // TASK-066 C2 / Thinking Machines batch-invariance:
+    // Legacy gate `(ne01 < 20)` made product ubatch ub=8 take FA-vec while
+    // ub=32/1024 took FA-tile → different reduction kernels for the same
+    // prefill (H6 n=16 both-vec GREEN; H7/C2 n=32 ub8 vs ub32 RED).
+    // Default: always tile. Opt into legacy shape-based vec with GGML_METAL_FA_VEC=1
+    // (perf A/B / #25618 vec-nsg corners only — not product path).
+    const char * allow_vec = getenv("GGML_METAL_FA_VEC");
+    const bool allow_shape_vec = allow_vec && allow_vec[0] == '1';
+
+    bool use_vec = false;
+    if (allow_shape_vec) {
+        // use vec kernel if the batch size is small and if the head size is supported
+        // EXPERIMENT: force non-vec for turbo3 on pre-M5 hardware.
+        // The vec kernel uses nl=8 (4 elements per dequant call) which has 4x more
+        // loop iterations than the non-vec nl=2 path. On M2 Pro, this loop overhead
+        // dominates — the non-vec path may be faster even for batch=1.
+        const ggml_type ktype = op->src[1]->type;
+        if (ktype == GGML_TYPE_TURBO2_0 || ktype == GGML_TYPE_TURBO3_0 || ktype == GGML_TYPE_TURBO4_0) {
+            const char * force_nonvec = getenv("TURBO_FORCE_NONVEC");
+            if (force_nonvec && force_nonvec[0] == '1') {
+                use_vec = false;
+            } else {
+                use_vec = (ne01 < 20) && (ne00 % 32 == 0);
+            }
+        } else {
+            use_vec = (ne01 < 20) && (ne00 % 32 == 0);
         }
     }
-    return (ne01 < 20) && (ne00 % 32 == 0);
+
+    const char * dispatch_log = getenv("GGML_METAL_FA_DISPATCH");
+    if (dispatch_log && dispatch_log[0] == '1') {
+        const ggml_type type_k = op->src[1]->type;
+        const ggml_type type_v = op->src[2]->type;
+        fprintf(stderr,
+                "GGML_METAL_FA_DISPATCH: path=%s ne00=%lld ne01=%lld ne11=%lld K=%s V=%s allow_vec=%d\n",
+                use_vec ? "vec" : "tile",
+                (long long) ne00, (long long) ne01, (long long) op->src[1]->ne[1],
+                ggml_type_name(type_k), ggml_type_name(type_v),
+                allow_shape_vec ? 1 : 0);
+    }
+
+    return use_vec;
 }
 
 // TurboFlash: two-pass fused asymmetric attention for turbo3 V decode

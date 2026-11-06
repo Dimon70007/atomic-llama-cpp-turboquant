@@ -221,6 +221,77 @@ bool check_c1(
     return ok_all;
 }
 
+// C7 — multi-step ubatch vs one-shot (product C2 class at FA-op level).
+// n_total queries causal over KV=n_total: one FA(nq=n_total) vs floor(n_total/ub)
+// steps of FA(nq=ub) with growing KV. Bit-exact required (no ε).
+// Pre-fix (legacy ne01<20 vec): n=16/ub=8 both-vec often GREEN; n=32/ub=8 vec vs
+// tile RED. After TASK-066 always-tile: both must be GREEN.
+bool check_c7_multistep_ubatch(
+        ggml_backend_t backend,
+        int64_t n_total,
+        int64_t ub,
+        ggml_type type_k,
+        ggml_type type_v,
+        const char * label,
+        int & fails) {
+    GGML_ASSERT(n_total > 0 && ub > 0 && (n_total % ub) == 0);
+    printf("C7 multistep-ubatch [%s] n=%lld ub=%lld K=%s V=%s\n",
+           label, (long long) n_total, (long long) ub,
+           ggml_type_name(type_k), ggml_type_name(type_v));
+
+    std::vector<float> k(static_cast<size_t>(kHead * n_total), 0.0f);
+    std::vector<float> v(static_cast<size_t>(kHead * n_total), 0.0f);
+    std::vector<float> q(static_cast<size_t>(kHead * n_total), 0.0f);
+    fill_sin(k, 0.21f);
+    fill_sin(v, 0.67f);
+    fill_sin(q, 0.43f);
+
+    const fa_run oneshot = run_fa(
+            backend, n_total, n_total, q, k, v, /*causal_mask=*/true, type_k, type_v);
+
+    std::vector<float> multi(static_cast<size_t>(kHead * n_total * kHeads), 0.0f);
+    for (int64_t step = 0; step < n_total / ub; ++step) {
+        const int64_t q0 = step * ub;
+        const int64_t nkv = q0 + ub;
+        std::vector<float> q_step(static_cast<size_t>(kHead * ub), 0.0f);
+        std::vector<float> k_step(static_cast<size_t>(kHead * nkv), 0.0f);
+        std::vector<float> v_step(static_cast<size_t>(kHead * nkv), 0.0f);
+        for (int64_t i = 0; i < ub; ++i) {
+            for (int64_t d = 0; d < kHead; ++d) {
+                q_step[size_t(i * kHead + d)] = q[size_t((q0 + i) * kHead + d)];
+            }
+        }
+        for (int64_t i = 0; i < nkv; ++i) {
+            for (int64_t d = 0; d < kHead; ++d) {
+                k_step[size_t(i * kHead + d)] = k[size_t(i * kHead + d)];
+                v_step[size_t(i * kHead + d)] = v[size_t(i * kHead + d)];
+            }
+        }
+        const fa_run step_out = run_fa(
+                backend, ub, nkv, q_step, k_step, v_step, /*causal_mask=*/true,
+                type_k, type_v, /*q_pos0_base=*/q0);
+        GGML_ASSERT(step_out.out.size() == size_t(kHead * ub * kHeads));
+        memcpy(
+                multi.data() + size_t(q0 * kHead * kHeads),
+                step_out.out.data(),
+                step_out.out.size() * sizeof(float));
+    }
+
+    bool exact = oneshot.out.size() == multi.size() &&
+            memcmp(oneshot.out.data(), multi.data(), oneshot.out.size() * sizeof(float)) == 0;
+    double mad = 0.0;
+    const size_t n = std::min(oneshot.out.size(), multi.size());
+    for (size_t i = 0; i < n; ++i) {
+        mad = std::max(mad, std::abs(double(oneshot.out[i]) - double(multi[i])));
+    }
+    printf("  exact=%d mad=%.6g %s\n", exact ? 1 : 0, mad, exact ? "PASS" : "FAIL");
+    if (!exact) {
+        ++fails;
+        return false;
+    }
+    return true;
+}
+
 bool check_c2_boundary(
         ggml_backend_t backend,
         int64_t decode_kv,
@@ -291,6 +362,9 @@ void run_pair_suite(
     check_c2_boundary(backend, 2047, 3, type_k, type_v, label, fails);
     check_c2_boundary(backend, 4096, 2, type_k, type_v, label, fails);
     check_c2_boundary(backend, 4095, 3, type_k, type_v, label, fails);
+    // C7: product-class multi-step ubatch (H6 n=16 / H7=C2 n=32).
+    check_c7_multistep_ubatch(backend, 16, 8, type_k, type_v, label, fails);
+    check_c7_multistep_ubatch(backend, 32, 8, type_k, type_v, label, fails);
 }
 
 } // namespace
@@ -350,9 +424,9 @@ int main() {
             backend, GGML_TYPE_Q8_0, GGML_TYPE_Q8_0, "q8_0/q8_0", widths, /*full*/ false, fails);
 
     if (fails != 0) {
-        printf("RESULT FAIL fails=%d\n", fails);
+        printf("RESULT FAIL fails=%d (C1/C2/C4/C7)\n", fails);
         return 1;
     }
-    printf("RESULT PASS (C1+C2+C4; C5=N/A logged; C6 external)\n");
+    printf("RESULT PASS (C1+C2+C4+C7; C5=N/A logged; C6 external)\n");
     return 0;
 }

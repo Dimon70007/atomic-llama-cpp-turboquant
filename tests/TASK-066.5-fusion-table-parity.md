@@ -8,10 +8,10 @@
 
 ### TDD entry (before any further fuse/ops edit)
 
-1. Prove product-class RED: `SUITE=ubatch-s8-s1024` — **C2** n=32 ub=8 vs ub=32 (fast) then **C1** greedy S8 vs S1024.
-2. Localize evidence: n=16 multi-step still exact; n=32 diverges — not mul-mat residual alone; FA-off N/A under turbo4.
-3. Only then add encoder≠`fusion_max` / FIRST_DIFF_TENSOR on H7 / unify hand-rolled fuses.
-4. Re-check every 066 patch against C2 RED (upstream ports can be wrong).
+1. ~~Prove product-class RED: C2~~ → **C2 GREEN** after FA always-tile (2026-11-07); primary open gate is **C1** greedy S8 vs S1024 (HELP `first_token_diff` 0→8).
+2. ~~Localize: n=16 GREEN / n=32 RED~~ → root cause was FA **vec vs tile** on `ne01<20`; closed in ops, not fusion table.
+3. Next fuse work: encoder≠`fusion_max` only if C1 still RED after tile + evidence points at CB/fuse (FIRST_DIFF_TENSOR on C1).
+4. Re-check every 066 patch against **C2 GREEN** + C1 (do not regress C2).
 
 ## Goal
 

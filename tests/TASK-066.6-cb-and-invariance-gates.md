@@ -1,11 +1,11 @@
 # TASK-066.6 — CB integration + invariance autotest gates (draft Steps 2–3)
 
-**Status:** 🔓 **active** (partial: residual suite GREEN after 066.7; product ladder still DIFF; `SUITE=fullgraph` RED N=1 vs N=2)  
+**Status:** 🔓 **active** (C2 GREEN via FA always-tile 2026-11-07; C1/ladder still RED HELP; residual GREEN)  
 **Depends on:** [TASK-066.5](TASK-066.5-fusion-table-parity.md) (or parallel invariance corner if RED already exists)  
-**Next:** short ladder re-confirm after GREEN gates; MTP still blocked  
+**Next:** C1 / ladder residual after C2 close; MTP still blocked  
 **Source:** [task066-hist/draft_mtp_research_task-066.md](task066-hist/draft_mtp_research_task-066.md) Steps 2–3  
-**Autotest:** `SUITE=mul-mat-residual` GREEN (066.7); **primary product gate now** `SUITE=ubatch-s8-s1024` (greedy token-stream S8 vs S1024; TDD RED expected on HEAD after confirm).  
-**Confirm ref:** `logs/task066-ubatch-ladder-20261106T212703Z` S1024 vs S8 DIFF @byte 182  
+**Autotest:** `SUITE=mul-mat-residual` GREEN; **C2** in `SUITE=ubatch-s8-s1024` **GREEN**; **C1** still RED (`first_token_diff=8`). FA C7 multi-step in `SUITE=fa`.  
+**Confirm ref:** `212703Z` ladder; post-tile C2/C1 in `logs/task066-c2-after-tile-*`  
 
 ### Patch / fixture audit (2026-11-06)
 
@@ -55,15 +55,28 @@ Product KV `q8_0`/`turbo4` (FA force-on with turbo). `MUL_MM_MIN` default 7.
 | A3 | f16 / f16 / off | **1** | 0 | |
 | A4 | f16 / f16 / on | **0** | ≈0.017 | soft drift; **same argmax** |
 
-**Read (agreed):** base residual is **inside FA under multi-step ubatch** (A4: f16/f16+FA-on still `exact=0`, soft mad, same argmax). **KV quantization (turbo4) amplifies** that FA error into decision-level DIFF (A0). A1 (FA-on+f16) bit-exact on C2 does **not** mean “fix = drop turbo”; product stays FA-on+turbo4 — fix the FA multi-step invariance, then re-check turbo amplification. FA-off GREEN is localization only.
+**Read (agreed, pre-fix):** base residual **inside FA** under multi-step ubatch; turbo4 amplifies. Product stays FA-on+turbo4.
 
 Fail-closed: `TASK066_FA=off` without non-turbo `TASK066_CTV` → exit 2 (llama would force FA back on).
+
+### Fix landed: FA always-tile (2026-11-07)
+
+**Cause:** `use_vec` iff `ne01 < 20` → ub=8 **vec** vs ub≥20 **tile** (H6 both-vec GREEN; H7/C2 mixed RED).
+
+**Change:** default always tile (`GGML_METAL_FA_VEC=1` restores legacy shape-vec for A/B). Autotest **C7** multi-step ubatch in `test-flash-attn-batch-invariance` (RED under legacy vec → GREEN default).
+
+| Gate | After fix |
+|------|-----------|
+| C7 / `SUITE=fa` | GREEN |
+| C2 (product n=32 ub8 vs ub32) | **GREEN** bit-exact |
+| A0–A4 ablation | all **exact=1** (turbo4 no longer amplifies on C2) |
+| C1 greedy S8 vs S1024 | RED HELP `first_token_diff` 0→8 |
 
 ### Web research (FA-on fix patterns)
 
 SSOT dump: [`task066-hist/TASK-066-fa-batch-invariance-web-research.md`](task066-hist/TASK-066-fa-batch-invariance-web-research.md).
 
-Shortlist: Thinking Machines fixed split-KV / consistent KV layout before attn; #25618 Metal **nsg pin** (fork already pins FA-vec `nsg=1` — C2 still RED ⇒ look beyond vec-only / prefill tile path); Vulkan #26358 no GQA pack for `neq1>1`; avoid shape-keyed FA tuning that changes reduction by `ne01`.
+Applied: no shape-keyed FA kernel pick by `ne01` (TM / #7903 class). Remaining C1 may need fixed split-KV / fuse (#26358 / 066.5) — not re-litigate vec nsg pin.
 
 ## Goal
 
