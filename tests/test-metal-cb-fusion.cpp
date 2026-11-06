@@ -1,10 +1,11 @@
-// TASK-066 follow-up / ggml-org/llama.cpp#31688 — Metal CB split vs ADD fusion.
+// TASK-066.2 / ggml-org/llama.cpp#31688 + #28164 — Metal CB split vs fuse table.
 //
-// TDD RED gate for tests/TASK-066-cb-fusion-followup.md:
-//   - ggml_metal_fusion_max must span ADD fuse groups the same way the Metal
-//     encoder does (filtered empty / VIEW / RESHAPE nodes, consecutive in idxs).
-//   - CB-boundary walk (same as ggml-metal-context.m) must never land inside a
-//     fuse group.
+// Invariants (see tests/TASK-066.1-audit-notes.md + TASK-066.2-compose-autotests.md):
+//   I1  fusion_max spans encoder-relevant fuse groups (ADD / RMS_NORM+MUL+ADD / SNAKE).
+//   I2  CB align walk never lands inside such a group (same loop as ggml-metal-context.m).
+//   I3  Empty-ne tensors: fusion_max matches upstream pr28164 (ggml_is_empty => pack alone).
+//   I4  MUL_MAT+ADD: STRUCTURAL may pack 2 for CB; FULL/encoder use_mma is false in this fork
+//       (do not claim encoder fuse).
 //
 // Built only with GGML_METAL and static backends (needs ggml_metal_fusion_max).
 // No GPU required.
@@ -13,6 +14,7 @@
 #include "ggml-cpp.h"
 
 #include "../ggml/src/ggml-impl.h"
+#include "../ggml/src/ggml-metal/ggml-metal-common.h"
 #include "../ggml/src/ggml-metal/ggml-metal-fusion.h"
 
 #include <cstdio>
@@ -390,8 +392,7 @@ bool case_snake(int & fails) {
     return true;
 }
 
-// A4 fuse-table gate: MUL_MAT + ADD residual bias (upstream table pattern).
-// CB helper must span both nodes even though the staged ADD-only heuristic returns 1.
+// I4: STRUCTURAL CB packing for MUL_MAT+ADD (may_use_mma) vs FULL encoder (use_mma==false).
 bool case_mul_mat_add(int & fails) {
     constexpr int64_t K = 64;
     constexpr int64_t M = 32;
@@ -415,15 +416,103 @@ bool case_mul_mat_add(int & fails) {
                      "expected consecutive MUL_MAT, ADD");
     }
 
-    const int want = 2;
+    check(ggml_metal_op_mul_mat_may_use_mma(mm), fails, "mul_mat_add.may_use_mma",
+          "STRUCTURAL packing expects may_use_mma for F32 src1");
+    check(!ggml_metal_op_mul_mat_use_mma(mm), fails, "mul_mat_add.use_mma_false",
+          "fork stub: FULL/encoder must NOT claim MMA+ADD fuse (066.1 PARTIAL)");
+
+    const int want = 2; // STRUCTURAL over-pack for CB align
     const int got  = ggml_metal_fusion_max(gf, i0);
-    check(got == want, fails, "mul_mat_add.fusion_max",
+    check(got == want, fails, "mul_mat_add.fusion_max_structural",
           "fusion_max=" + std::to_string(got) + " want=" + std::to_string(want) +
-          " (A4 fuse table / MUL_MAT+ADD)");
+          " (CB STRUCTURAL pack; not encoder FULL fuse)");
 
     const int aligned = align_past_target(gf, i1);
     check(aligned >= i1 + 1, fails, "mul_mat_add.align",
           "aligned=" + std::to_string(aligned) + " want>=" + std::to_string(i1 + 1));
+    return true;
+}
+
+// I3 / Gap A (066.1): upstream pr28164 fusion_max returns 1 when the start node is
+// ggml_is_empty. A lone empty ADD is ambiguous (both paths return 1). Two chained
+// empty ADDs expose the fork filter gap: without ggml_is_empty, STRUCTURAL ADD_CHAIN
+// can pack 2; upstream packs the empty start alone.
+bool case_empty_ne_start(int & fails) {
+    auto h = make_ctx();
+    ggml_context * ctx = h.ctx.get();
+    ggml_cgraph * gf = h.gf;
+
+    ggml_tensor * x  = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 0);
+    ggml_tensor * b0 = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 0);
+    ggml_tensor * b1 = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 0);
+    ggml_tensor * a0 = ggml_add(ctx, x, b0);
+    ggml_tensor * a1 = ggml_add(ctx, a0, b1);
+    ggml_build_forward_expand(gf, a1);
+
+    const int i0 = find_node(gf, a0);
+    const int i1 = find_node(gf, a1);
+    if (i0 < 0 || i1 < 0) {
+        return check(false, fails, "empty_ne_start.find", "ADD nodes missing");
+    }
+    if (!ggml_is_empty(a0) || !ggml_is_empty(a1)) {
+        return check(false, fails, "empty_ne_start.is_empty",
+                     "fixture must be ggml_is_empty for Gap A");
+    }
+    if (ggml_op_is_empty(a0->op)) {
+        return check(false, fails, "empty_ne_start.op",
+                     "fixture needs non-empty op (ADD) with empty shape");
+    }
+
+    const int got = ggml_metal_fusion_max(gf, i0);
+    check(got == 1, fails, "empty_ne_start.fusion_max",
+          "fusion_max=" + std::to_string(got) +
+          " want=1 (upstream pr28164: ggml_is_empty start => pack alone; "
+          "got>1 means fork omitted empty filter / ADD_CHAIN over-pack)");
+    GGML_UNUSED(i1);
+    return true;
+}
+
+// I1: table STRUCTURAL match for RMS_NORM+MUL+ADD via ggml_metal_fusion_next.
+bool case_fusion_next_norm_mul_add(int & fails) {
+    constexpr int64_t n = 64;
+    auto h = make_ctx();
+    ggml_context * ctx = h.ctx.get();
+    ggml_cgraph * gf = h.gf;
+
+    ggml_tensor * x = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n);
+    ggml_tensor * w = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n);
+    ggml_tensor * b = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n);
+
+    ggml_tensor * rn  = ggml_rms_norm(ctx, x, 1e-5f);
+    ggml_tensor * mul = ggml_mul(ctx, rn, w);
+    ggml_tensor * add = ggml_add(ctx, mul, b);
+    ggml_build_forward_expand(gf, add);
+
+    const int i0 = find_node(gf, rn);
+    if (i0 < 0) {
+        return check(false, fails, "fusion_next_norm.find", "RMS_NORM missing");
+    }
+
+    int idxs[8];
+    int n_idxs = 0;
+    for (int i = i0; i < gf->n_nodes && n_idxs < 8; ++i) {
+        if (!ggml_op_is_empty(gf->nodes[i]->op) && !ggml_is_empty(gf->nodes[i])) {
+            idxs[n_idxs++] = i;
+        }
+    }
+    int len = 0;
+    const ggml_metal_fusion * fus =
+        ggml_metal_fusion_next(gf, idxs, n_idxs, 0, GGML_METAL_FUSION_STRUCTURAL, &len);
+    check(fus != nullptr && len == 3, fails, "fusion_next_norm.len",
+          "len=" + std::to_string(len) + " fus=" + std::to_string(fus != nullptr));
+    if (fus) {
+        check(ggml_metal_fusion_get_id(fus) == GGML_METAL_FUSION_NORM_MUL_ADD, fails,
+              "fusion_next_norm.id", "unexpected fusion id");
+    }
+
+    const int got = ggml_metal_fusion_max(gf, i0);
+    check(got == 3, fails, "fusion_next_norm.fusion_max",
+          "fusion_max=" + std::to_string(got) + " want=3");
     return true;
 }
 
@@ -488,9 +577,8 @@ bool case_two_groups_with_gap(int & fails) {
 } // namespace
 
 int main() {
-    printf("CONTRACT: ggml_metal_fusion_max matches encoder / fuse-table spans "
-           "(ADD, RMS_NORM/MUL/ADD, SNAKE, MUL_MAT+ADD; filtered empty ops); "
-           "CB align never bisects a fuse group (TASK-066-cb-fusion-followup Track A)\n");
+    printf("CONTRACT TASK-066.2: I1 encoder-class spans; I2 CB align; "
+           "I3 empty-ne==upstream pack-alone; I4 MUL_MAT+ADD STRUCTURAL pack / use_mma false\n");
 
     int fails = 0;
     case_add_view_add(fails);
@@ -501,11 +589,13 @@ int main() {
     case_norm_view_mul_add(fails);
     case_snake(fails);
     case_mul_mat_add(fails);
+    case_empty_ne_start(fails);
+    case_fusion_next_norm_mul_add(fails);
 
     if (fails != 0) {
-        printf("FAILED: %d check(s) — expected RED until follow-up Track A (A1-A4)\n", fails);
+        printf("FAILED: %d check(s) — RED until 066.3 fixes (see TASK-066.1-audit-notes)\n", fails);
         return 1;
     }
-    printf("OK: metal CB fusion align\n");
+    printf("OK: metal CB fusion align (TASK-066.2)\n");
     return 0;
 }

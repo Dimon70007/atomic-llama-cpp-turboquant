@@ -1296,17 +1296,18 @@ const ggml_metal_fusion * ggml_metal_fusion_next(
 // transparent) node sequence that the compute phase uses, so the returned count is the raw index
 // span from idx to the last matched node (intermediate views are packed along).
 int ggml_metal_fusion_max(const ggml_cgraph * gf, int idx) {
-    // a view node cannot start a pattern - pack it alone
-    if (ggml_op_is_empty(gf->nodes[idx]->op)) {
+    // TASK-066.3 / ggml-org/llama.cpp#28164: empty-ne tensors pack alone (same as VIEW ops).
+    // Without ggml_is_empty, STRUCTURAL ADD_CHAIN can over-pack empty starts (066.1 Gap A /
+    // SUITE=cb-fusion empty_ne_start RED).
+    if (ggml_op_is_empty(gf->nodes[idx]->op) || ggml_is_empty(gf->nodes[idx])) {
         return 1;
     }
 
-    // collect the non-view node indices starting at idx; 0-element tensors are included so
-    // that empty graphs pack like their non-empty counterparts (see ggml_metal_fusion_filter_ops)
+    // collect non-empty, non-view node indices starting at idx
     int idxs[GGML_METAL_FUSION_MAX];
     int n_idxs = 0;
     for (int i = idx; i < gf->n_nodes && n_idxs < GGML_METAL_FUSION_MAX; i++) {
-        if (!ggml_op_is_empty(gf->nodes[i]->op)) {
+        if (!ggml_op_is_empty(gf->nodes[i]->op) && !ggml_is_empty(gf->nodes[i])) {
             idxs[n_idxs++] = i;
         }
     }

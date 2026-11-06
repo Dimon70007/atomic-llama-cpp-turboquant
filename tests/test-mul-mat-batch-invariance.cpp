@@ -61,6 +61,13 @@ double max_abs_diff_row0(const std::vector<float> & serial, const std::vector<fl
     return mad;
 }
 
+size_t mul_mat_scratch_bytes(int64_t n) {
+    // acts + outs for large ne11 (product ladder band up to 1024)
+    const size_t acts = size_t(kK) * size_t(n) * sizeof(float);
+    const size_t outs = size_t(kM) * size_t(n) * sizeof(float);
+    return 2 * 1024 * 1024 + acts + outs;
+}
+
 std::vector<float> run_mul_mat(
         ggml_backend_t backend,
         ggml_type wtype,
@@ -68,7 +75,8 @@ std::vector<float> run_mul_mat(
         const std::vector<uint8_t> & w_bytes,
         const std::vector<float> & act_f32) {
     ggml_init_params params = {
-        /*.mem_size   =*/ ggml_tensor_overhead() * 64 + ggml_graph_overhead_custom(128, false) + 512 * 1024,
+        /*.mem_size   =*/ ggml_tensor_overhead() * 64 + ggml_graph_overhead_custom(128, false) +
+                             mul_mat_scratch_bytes(n),
         /*.mem_buffer =*/ nullptr,
         /*.no_alloc   =*/ true,
     };
@@ -103,7 +111,8 @@ std::vector<float> run_mul_mat_id(
         const std::vector<int32_t> & ids) {
     // weights: [k, m, n_experts]; acts: [k, n_expert_used, n_tokens]; ids: [n_expert_used, n_tokens]
     ggml_init_params params = {
-        /*.mem_size   =*/ ggml_tensor_overhead() * 64 + ggml_graph_overhead_custom(128, false) + 512 * 1024,
+        /*.mem_size   =*/ ggml_tensor_overhead() * 64 + ggml_graph_overhead_custom(128, false) +
+                             mul_mat_scratch_bytes(n_tokens) * 2,
         /*.mem_buffer =*/ nullptr,
         /*.no_alloc   =*/ true,
     };
@@ -161,6 +170,56 @@ bool check_c1_c4_mul_mat(
         const double mad = max_abs_diff_row0(serial, batch, n);
         printf("  N=%lld exact=%d max_abs_diff=%.6g %s\n",
                (long long) n, exact ? 1 : 0, mad, exact ? "PASS" : "FAIL");
+        if (!exact) {
+            ok_all = false;
+            ++fails;
+        }
+    }
+    return ok_all;
+}
+
+// Residual / product-ladder class: row0(N) bit-exact to row0(golden_n=8), not N=1.
+// Covers ubatch-class drift {9,16,32,256,512,1024} vs S8 (TASK-066.6 / mul-mat-residual).
+bool check_c1_c4_mul_mat_vs_golden(
+        ggml_backend_t backend,
+        ggml_type wtype,
+        const char * label,
+        int64_t golden_n,
+        const std::vector<int64_t> & widths,
+        int & fails) {
+    printf("C1/C4 MUL_MAT vs golden N=%lld [%s] type=%s k=%lld m=%lld\n",
+           (long long) golden_n, label, ggml_type_name(wtype), (long long) kK, (long long) kM);
+
+    std::vector<float> w_f32(size_t(kK * kM), 0.0f);
+    fill_sin(w_f32, 0.31f);
+    const std::vector<uint8_t> w_q = quantize_weights(wtype, w_f32, kK);
+
+    std::vector<float> x_row0(size_t(kK), 0.0f);
+    fill_sin(x_row0, 0.71f);
+
+    auto fill_batch = [&](int64_t n) {
+        std::vector<float> xn(size_t(kK * n), 0.0f);
+        for (int64_t j = 0; j < n; ++j) {
+            for (int64_t i = 0; i < kK; ++i) {
+                xn[size_t(j * kK + i)] = (j == 0)
+                    ? x_row0[size_t(i)]
+                    : 0.11f * std::sin(float(j * kK + i) * 0.029f + 1.3f);
+            }
+        }
+        return xn;
+    };
+
+    const auto golden = run_mul_mat(backend, wtype, golden_n, w_q, fill_batch(golden_n));
+    // row0 of golden is first kM floats (same layout as serial N=1 in row0_bit_identical)
+    std::vector<float> golden_row0(golden.begin(), golden.begin() + size_t(kM));
+
+    bool ok_all = true;
+    for (int64_t n : widths) {
+        const auto batch = run_mul_mat(backend, wtype, n, w_q, fill_batch(n));
+        const bool exact = row0_bit_identical(golden_row0, batch, n);
+        const double mad = max_abs_diff_row0(golden_row0, batch, n);
+        printf("  N=%lld vs N=%lld exact=%d max_abs_diff=%.6g %s\n",
+               (long long) n, (long long) golden_n, exact ? 1 : 0, mad, exact ? "PASS" : "FAIL");
         if (!exact) {
             ok_all = false;
             ++fails;
@@ -240,6 +299,85 @@ bool check_c5_mul_mat_id(
     return ok_all;
 }
 
+bool check_c5_mul_mat_id_vs_golden(
+        ggml_backend_t backend,
+        ggml_type wtype,
+        const char * label,
+        int64_t golden_n,
+        const std::vector<int64_t> & widths,
+        int & fails) {
+    constexpr int64_t n_experts = 4;
+    constexpr int64_t n_expert_used = 2;
+    printf("C5 MUL_MAT_ID vs golden ne21=%lld [%s] type=%s experts=%lld used=%lld\n",
+           (long long) golden_n, label, ggml_type_name(wtype),
+           (long long) n_experts, (long long) n_expert_used);
+
+    std::vector<float> w_f32(size_t(kK * kM * n_experts), 0.0f);
+    fill_sin(w_f32, 0.44f);
+    const std::vector<uint8_t> w_q = quantize_weights(wtype, w_f32, kK);
+
+    auto make_ids = [&](int64_t n) {
+        std::vector<int32_t> ids(size_t(n_expert_used * n), 0);
+        for (int64_t t = 0; t < n; ++t) {
+            ids[size_t(0 + t * n_expert_used)] = 0;
+            ids[size_t(1 + t * n_expert_used)] = 1;
+        }
+        return ids;
+    };
+
+    std::vector<float> x_tok0(size_t(kK * n_expert_used), 0.0f);
+    fill_sin(x_tok0, 0.61f);
+
+    auto fill_acts = [&](int64_t n) {
+        std::vector<float> xn(size_t(kK * n_expert_used * n), 0.0f);
+        for (int64_t t = 0; t < n; ++t) {
+            for (int64_t e = 0; e < n_expert_used; ++e) {
+                for (int64_t i = 0; i < kK; ++i) {
+                    const size_t dst = size_t(((t * n_expert_used) + e) * kK + i);
+                    const size_t src = size_t((e * kK) + i);
+                    xn[dst] = (t == 0)
+                        ? x_tok0[src]
+                        : 0.09f * std::sin(float(dst) * 0.031f + 2.0f);
+                }
+            }
+        }
+        return xn;
+    };
+
+    const auto golden = run_mul_mat_id(
+            backend, wtype, golden_n, n_experts, n_expert_used, w_q, fill_acts(golden_n), make_ids(golden_n));
+    GGML_ASSERT(golden.size() >= size_t(kM * n_expert_used));
+    std::vector<float> golden_tok0(golden.begin(), golden.begin() + size_t(kM * n_expert_used));
+
+    bool ok_all = true;
+    for (int64_t n : widths) {
+        const auto batch = run_mul_mat_id(
+                backend, wtype, n, n_experts, n_expert_used, w_q, fill_acts(n), make_ids(n));
+        GGML_ASSERT(batch.size() == size_t(kM * n_expert_used * n));
+        bool exact = true;
+        double mad = 0.0;
+        for (int64_t e = 0; e < n_expert_used; ++e) {
+            for (int64_t r = 0; r < kM; ++r) {
+                const size_t si = size_t(r + e * kM);
+                const size_t bi = size_t(r + e * kM); // token 0
+                const float a = golden_tok0[si];
+                const float b = batch[bi];
+                mad = std::max(mad, double(std::fabs(a - b)));
+                if (memcmp(&a, &b, sizeof(float)) != 0) {
+                    exact = false;
+                }
+            }
+        }
+        printf("  ne21=N=%lld vs %lld exact=%d max_abs_diff=%.6g %s\n",
+               (long long) n, (long long) golden_n, exact ? 1 : 0, mad, exact ? "PASS" : "FAIL");
+        if (!exact) {
+            ok_all = false;
+            ++fails;
+        }
+    }
+    return ok_all;
+}
+
 } // namespace
 
 int main(int argc, char ** argv) {
@@ -278,17 +416,20 @@ int main(int argc, char ** argv) {
     int fails = 0;
 
     if (residual) {
-        // B5 / TASK-066-mul-mat-batch-inventory.md: widths past the mul_mv_ext 2..8 pin.
-        printf("APPLICABLE B5 residual: ne11 in {9,16,32} row0 bit-exact (Q8_0 + IQ4_XS)\n");
-        const std::vector<int64_t> widths = {9, 16, 32};
-        check_c1_c4_mul_mat(backend, GGML_TYPE_Q8_0, "q8_0-residual", widths, fails);
-        check_c1_c4_mul_mat(backend, GGML_TYPE_IQ4_XS, "iq4_xs-residual", widths, fails);
-        check_c5_mul_mat_id(backend, GGML_TYPE_Q8_0, "q8_0-moe-residual", widths, fails);
+        // B5 + product ladder class: row0(N) vs golden N=8 (ubatch S8).
+        // Widths: former residual {9,16,32} plus {256,512,1024} (S8 vs S1024 track).
+        printf("APPLICABLE residual: ne11 in {9,16,32,256,512,1024} row0 bit-exact vs golden N=8 "
+               "(Q8_0 + IQ4_XS; MoE ne21 same set)\n");
+        constexpr int64_t golden_n = 8;
+        const std::vector<int64_t> widths = {9, 16, 32, 256, 512, 1024};
+        check_c1_c4_mul_mat_vs_golden(backend, GGML_TYPE_Q8_0, "q8_0-residual-vs8", golden_n, widths, fails);
+        check_c1_c4_mul_mat_vs_golden(backend, GGML_TYPE_IQ4_XS, "iq4_xs-residual-vs8", golden_n, widths, fails);
+        check_c5_mul_mat_id_vs_golden(backend, GGML_TYPE_Q8_0, "q8_0-moe-residual-vs8", golden_n, widths, fails);
         if (fails != 0) {
-            printf("RESULT FAIL fails=%d (B5 residual; see TASK-066-mul-mat-batch-inventory.md)\n", fails);
+            printf("RESULT FAIL fails=%d (residual vs N=8; see TASK-066-mul-mat-batch-inventory.md)\n", fails);
             return 1;
         }
-        printf("RESULT PASS (B5 residual ne11={9,16,32})\n");
+        printf("RESULT PASS (residual ne11={9,16,32,256,512,1024} vs N=8)\n");
         return 0;
     }
 

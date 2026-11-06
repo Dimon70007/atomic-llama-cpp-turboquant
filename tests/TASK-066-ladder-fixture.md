@@ -1,6 +1,7 @@
 # TASK-066 — nomtp ubatch ladder fixture
 
-Product Stage 0/1 stamp knobs for [TASK-066-execution-plan.md](TASK-066-execution-plan.md).  
+Product ladder knobs for active track [README-TASK066.md](README-TASK066.md) / [TASK-066.4-short-model-s8-s1024.md](TASK-066.4-short-model-s8-s1024.md)  
+(hist plan: [task066-hist/TASK-066-execution-plan.md](task066-hist/TASK-066-execution-plan.md)).  
 Unit suites stay separate (`SUITE=followup`); this fixture is for Metal Terminal / operator runs.
 
 In-repo files: [fixtures/task066/](fixtures/task066/).
@@ -49,7 +50,7 @@ Short Pierre/Dolokhov duel excerpt + RU summary instruction. Ladder runner defau
 | `cache-ram` | `0` (**required**) | CLI default is **8192 MiB** and OOMs 24 GB with this model; product yaml uses 4096 |
 | `ctx-checkpoints` | `32` | product |
 | `batch` / `ubatch` | **default:** `-b = max(N, 512)`, `-ub N` (`TASK066_BATCH_MODE=floor`) | `-b 1` breaks ~2k prefill |
-| **Product ubatch** | floor **256**, target **512**; owned large **1024/2048** | S16 diagnostic only under `MUL_MM_MIN=32`; Stage 1 `{256,512,1024,2048}` vs S8 **WAIVEd** ([TASK-066-stage1-waive.md](TASK-066-stage1-waive.md)) |
+| **Product ubatch** | floor **256**, target **512**; large **1024/2048** | S16 diagnostic under `MUL_MM_MIN=32`; hist WAIVE not Done — see [TASK-066.0-overview.md](TASK-066.0-overview.md) |
 | equal / max stamps | optional A/B | |
 | cli turn | `--conversation --single-turn --simple-io --no-warmup` + stdin `/dev/null` | `--simple-io` required so generation lands in `cli.log` / `generation.txt` |
 

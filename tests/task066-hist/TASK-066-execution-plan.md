@@ -2,7 +2,9 @@
 
 > **For agentic workers:** implement task-by-task; checkboxes track progress. Decisions locked from [draft_mtp_research_task-066_answers.md](draft_mtp_research_task-066_answers.md). Do not re-open resolved forks without updating that file.
 
-**Goal:** Lower Metal nomtp ubatch noise enough that the fixed fixture stops "floating" at `temperature=0`, with residual noise documented (WAIVE). MTP vs nomtp is a **separate follow-up** after that stand is usable.
+> **SUPERSEDED for active work (2026-11-06):** Stage 1 WAIVE below is **not** Done. Use parent `linux_to_mac/tasks/TASK-066-nomtp-ubatch-s8-s1024.md` (audit `#31688` → compose autotests → PASS → short S8 vs S1024; MTP blocked). This file remains historical checklist evidence.
+
+**Goal (historical):** Lower Metal nomtp ubatch noise enough that the fixed fixture stops "floating" at `temperature=0`, with residual noise documented (WAIVE). MTP vs nomtp is a **separate follow-up** after that stand is usable.
 
 **Architecture:** Snapshot a short ubatch ladder (same-ubatch repeats first), env-gate `ne11_mm_min` (32 vs upstream 8), keep landed CB/fuse (#28164/#31688), then audit/port skinny-mm / split-K (#27441) as needed. Unit `followup-all` stays code regression; product ladder is a separate gate.
 

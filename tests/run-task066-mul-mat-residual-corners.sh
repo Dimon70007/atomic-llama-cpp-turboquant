@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# TASK-066 follow-up B5 — Metal MUL_MAT residual batch widths (ne11 in 9/16/32).
-# See tests/TASK-066-mul-mat-batch-inventory.md.
+# TASK-066 — Metal MUL_MAT residual: ne11 in {9,16,32,256,512,1024} row0 vs golden N=8.
+# See tests/TASK-066-mul-mat-batch-inventory.md / TASK-066.6.
 #
 # Usage:
 #   ./tests/run-task066-mul-mat-residual-corners.sh [OUT_DIR]
@@ -44,7 +44,7 @@ if [[ ! -x "${TEST_BIN}" ]]; then
   exit 1
 fi
 
-echo "==> B5 residual (test-mul-mat-batch-invariance --residual)"
+echo "==> residual vs N=8 (test-mul-mat-batch-invariance --residual)"
 set +e
 "${TEST_BIN}" --residual 2>&1 | tee "${OUT_DIR}/residual.log"
 RC=${PIPESTATUS[0]}
@@ -52,15 +52,17 @@ set -e
 echo "residual_exit=${RC}" | tee "${OUT_DIR}/residual.exit"
 
 {
-  echo "track=B5"
+  echo "track=B5+ladder-band"
   echo "inventory=tests/TASK-066-mul-mat-batch-inventory.md"
+  echo "golden_n=8"
+  echo "widths=9,16,32,256,512,1024"
   echo "residual_exit=${RC}"
   if [[ "${RC}" -eq 0 ]]; then
     echo "VERDICT=PASS"
   elif [[ "${RC}" -eq 77 ]]; then
     echo "VERDICT=SKIP (no Metal)"
   else
-    echo "VERDICT=FAIL (B5 residual RED)"
+    echo "VERDICT=FAIL (residual vs N=8 RED)"
   fi
 } | tee "${OUT_DIR}/summary.txt"
 
@@ -70,5 +72,5 @@ fi
 if [[ "${RC}" -ne 0 ]]; then
   exit "${RC}"
 fi
-echo "OK: TASK-066 mul-mat residual B5"
+echo "OK: TASK-066 mul-mat residual vs N=8"
 exit 0
