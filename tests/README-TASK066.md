@@ -3,10 +3,10 @@
 Self-contained in **this** llama.cpp / ggml fork. Other developers: start here.
 
 **Branch:** `task066-metal-batch-invariance`  
-**Active track:** **[066.5](TASK-066.5-fusion-table-parity.md)** / **[066.6](TASK-066.6-cb-and-invariance-gates.md)** — C2 FA multi-step **GREEN** (always-tile); C1/ladder still RED (HELP tok0→8).  
+**Active track:** **[066.9](TASK-066.9-fa-batch-invariance.md)** Phase A (nomtp FA / C1) — priority; Phase B MTP gated. Also **[066.5](TASK-066.5-fusion-table-parity.md)** / **[066.6](TASK-066.6-cb-and-invariance-gates.md)** if C1 localize → fuse.  
 **PR fidelity:** **[TASK-066-pr-audit-registry.md](TASK-066-pr-audit-registry.md)** (re-check after every Metal edit + suites).  
 **Done behind:** **[066.7 KEEP](TASK-066.7-mul-mat-residual.md)** + **[066.8 R&D DELIVERED](TASK-066.8-fp-comparison-metrics-rd.md)** + FA always-tile (C2).  
-**Ladder confirm:** post-tile `231804Z` S1024 vs S8 DIFF@329 (HELP vs `212703Z`@182); C1 `first_token_diff=8`. MTP blocked. Hist Stage 1 WAIVE ≠ Done.
+**Ladder confirm:** post-tile `231804Z` S1024 vs S8 DIFF@329 (HELP vs `212703Z`@182); C1 `first_token_diff=8`. MTP blocked until 066.9 Phase A DoD. Hist Stage 1 WAIVE ≠ Done.
 
 ## Evidence hierarchy (hard)
 
@@ -27,6 +27,7 @@ Self-contained in **this** llama.cpp / ggml fork. Other developers: start here.
 | **066.6** | [TASK-066.6-cb-and-invariance-gates.md](TASK-066.6-cb-and-invariance-gates.md) | after 066.5 / parallel invariance | 🔓 **active** (residual suite already extended; `fullgraph` still RED) |
 | **066.7** | [TASK-066.7-mul-mat-residual.md](TASK-066.7-mul-mat-residual.md) | 066.4 done; residual was RED | 🟢 **KEEP** |
 | **066.8** | [TASK-066.8-fp-comparison-metrics-rd.md](TASK-066.8-fp-comparison-metrics-rd.md) ([lit](task066-hist/TASK-066.8-lit-notes.md)) | 066.7 KEEP | 🟢 **R&D DELIVERED** |
+| **066.9** | [TASK-066.9-fa-batch-invariance.md](TASK-066.9-fa-batch-invariance.md) ([draft](task066-hist/draft_mtp_research_task-066_fa.md)) | C2 GREEN + 066.7 | 🔓 **Phase A** (MTP = Phase B gated) |
 
 Overview locks / DoD / out-of-scope: [TASK-066.0-overview.md](TASK-066.0-overview.md).  
 Latest suite GREEN/RED snapshot: [TASK-066-status-matrix-20261106.md](TASK-066-status-matrix-20261106.md).

@@ -1,9 +1,10 @@
 # TASK-066 — Upstream / fork PR audit registry
 
-**Updated:** 2026-11-07 (FA always-tile)  
+**Updated:** 2026-11-07 (066.9 FA track unlocked)  
 **Index:** [README-TASK066.md](README-TASK066.md)  
 **Artifacts:** `logs/upstream-prs/{pr28164,pr31688,pr30100,pr27781}.diff`  
-**Product findings:** ladder confirm + C2 + FA ablation (below).
+**Product findings:** ladder confirm + C2 + FA ablation (below).  
+**Active FA track:** [TASK-066.9-fa-batch-invariance.md](TASK-066.9-fa-batch-invariance.md) — Phase A nomtp; Phase B MTP gated.
 
 ## Frozen product findings (2026-11-06/07)
 
@@ -45,12 +46,15 @@
 | **#27441** skinny mm | Small-batch mm tiles | ❌ CLOSED | Do not blind-reapply | residual / ladder |
 | **066.7** float-tile + `MUL_MM_MIN=7` | Unify S8+ on mm | 🟢 KEEP | Orthogonal to C2 | `SUITE=mul-mat-residual` |
 | **TASK-066 FA always-tile** | No `ne01<20` vec/tile flip | ✅ Default tile | C7 RED→GREEN + C2 GREEN | `SUITE=fa` C7 + C2 |
-| **#26358** / TM fixed split-KV | Further prefill invariance | ⬜ Open if C1 stays RED | C1 still DIFF@tok8 after tile unify | C1 / ladder |
+| **066.9 Phase A** | Nomtp C1 / ladder FA residual | 🔓 Active | After always-tile; C1 still RED HELP | C1 + C2 lock |
+| **066.9 Phase B** | MTP verify widths 1..4 (#28108 spirit) | ⏸ Gated on Phase A DoD | Draft: [task066-hist/draft_mtp_research_task-066_fa.md](task066-hist/draft_mtp_research_task-066_fa.md) | MTP FA autotest (TBD) |
+| **#26358** / TM fixed split-KV | Further prefill invariance | ⬜ Open if C1 stays RED | Owned under **066.9 Phase A** | C1 / ladder |
+| **#28108** (CUDA hist) | Unify FA tile for verify Q widths | ⬜ Metal port in Phase B | Not for Phase A | MTP FA corner |
 
 ## Gaps (not “failed apply”)
 
-1. **C2 closed** via always-tile; **C1 / ladder text** still open (HELP first_token_diff 0→8) — next: larger-prefill / fuse / other op class, not re-open vec pin.
-2. **Encoder still hand-rolls fuse** vs `fusion_next` — 066.1 PARTIAL; 066.5 active.
+1. **C2 closed** via always-tile; **C1 / ladder** → **[066.9 Phase A](TASK-066.9-fa-batch-invariance.md)** (not re-open vec pin; MTP Phase B gated).
+2. **Encoder still hand-rolls fuse** vs `fusion_next` — 066.1 PARTIAL; 066.5 if localize → fuse.
 3. **#30100 / #27441** — deferred / closed.
 
 ## Re-audit protocol

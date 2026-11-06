@@ -2,7 +2,7 @@
 
 **Status:** 🔓 **active** (C2 GREEN via FA always-tile 2026-11-07; C1/ladder still RED HELP; residual GREEN)  
 **Depends on:** [TASK-066.5](TASK-066.5-fusion-table-parity.md) (or parallel invariance corner if RED already exists)  
-**Next:** C1 / ladder residual after C2 close; MTP still blocked  
+**Next:** C1 / ladder → **[066.9 Phase A](TASK-066.9-fa-batch-invariance.md)**; MTP → 066.9 Phase B (gated)  
 **Source:** [task066-hist/draft_mtp_research_task-066.md](task066-hist/draft_mtp_research_task-066.md) Steps 2–3  
 **Autotest:** `SUITE=mul-mat-residual` GREEN; **C2** in `SUITE=ubatch-s8-s1024` **GREEN**; **C1** still RED (`first_token_diff=8`). FA C7 multi-step in `SUITE=fa`.  
 **Confirm ref:** `212703Z` ladder; post-tile C2/C1 in `logs/task066-c2-after-tile-*`  
