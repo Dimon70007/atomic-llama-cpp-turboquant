@@ -56,11 +56,17 @@ Any combination of `f16`/`q8_0`/`turbo2`/`turbo3`/`turbo4` for K and V is suppor
 
 `-ctv turbo4.8` / `turbo3.8`: q8 head+tail brackets, mid turbo4/turbo3. See `docs/KV-cache-quantization.md`.
 
+**Regression:** `test-q8-brackets-schedule` is in `ctest -L main` (CI/PR).
+Long-ctx KL e2e is **manual only** (`tests/run-task068-q8-brackets-kl.sh`;
+not registered in ctest) - see `docs/KV-cache-quantization.md` Regression
+gates for how to reproduce KV drift vs brackets.
+
 ### Test gates (all must pass before touching quant/backend code)
 
 - `test-turbo-quant` - turbo3 basis MSE=0/Cosine=1.0, turbo4 Cosine=0.9956
 - `test-quantize-fns` - includes TQ3_1S/TQ4_1S and rotated-domain buffer sizing
 - `test-backend-ops` - full sweep on CPU + CUDA0 (23k+ cases on the RTX 5090 dev box); rejects 0/0 as FAIL
+- `test-q8-brackets-schedule` - turbo3.8/turbo4.8 layer schedule + fail-closed env (`ctest -L main`)
 - `llama-bench` with `-ctk/-ctv turboN`; type parser accepts `tq3_1s`/`tq4_1s`
 
 ### What the test gates do and do not cover

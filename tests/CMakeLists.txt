@@ -444,6 +444,14 @@ llama_build(test-fullgraph-decode-row0-parity.cpp)
 llama_build(test-ubatch-s8-s1024-row0-parity.cpp)
 
 
+# TASK-068 ST-6.1: q8 head/tail bracket schedule (CPU; no model).
+# Links libllama for llama_kv_cache_q8_brackets_* (declared locally in the test).
+# LABELS main via llama_build_and_test (default) - included in `ctest -L main`.
+llama_build_and_test(test-q8-brackets-schedule.cpp)
+
+# TASK-068 ST-6.2 gated KL ladder is NOT registered in ctest.
+# Operator / reviewer script only: tests/run-task068-q8-brackets-kl.sh
+# (see docs/KV-cache-quantization.md "Regression gates").
 
 llama_build_and_test(test-model-load-cancel.cpp LABEL "model")
 llama_build_and_test(test-autorelease.cpp       LABEL "model")

@@ -70,12 +70,73 @@ Named `-ctv` / `quant_v` aliases enable a fixed V schedule (K stays as requested
 | `turbo4.8`  | front q8 + mid **turbo4** + tail q8         |
 | `turbo3.8`  | front q8 + mid **turbo3** + tail q8         |
 
-Widths: `N = min(TAIL, n_layer-HEAD-1)`, `M_eff = min(HEAD, n_layer-N-1)`. Unset HEAD/TAIL → defaults **2/8** with a loud log. Plain `turbo3`/`turbo4` stay uniform (brackets do not auto-enable). Block KV streaming refuses mixed per-layer types (same as `TURBO_LAYER_ADAPTIVE`).
+Uniform aggressive V (`turbo3` / `turbo4`) is fine on short prompts (~2k
+tokens). Under **MTP speculative decoding** with a **long prompt
+(roughly >= 70k tokens)**, quantization error accumulates in the KV cache
+and shows up as **factual LM errors** (wrong actors / outcomes in long
+summaries), even when short fixtures still look correct.
+
+`turbo3.8` / `turbo4.8` keep the **head** (user question / instructions)
+and the **tail** layers at `q8_0`, and compress only the **middle** with
+`turbo3` or `turbo4`. That cuts mid-depth KV traffic while protecting the
+layers that matter most for instruction fidelity and late-context readout.
+Turning MTP off is **not** the intended product fix for this class of drift.
+
+```text
+[ front M_eff x q8_0 ][ mid x turbo4 ][ tail N x q8_0 ]   # -ctv turbo4.8
+[ front M_eff x q8_0 ][ mid x turbo3 ][ tail N x q8_0 ]   # -ctv turbo3.8
+```
+
+Widths: `N = min(TAIL, n_layer-HEAD-1)`, `M_eff = min(HEAD, n_layer-N-1)`.
+At least one mid layer must remain. Unset HEAD/TAIL -> defaults **2/8**
+with a loud log. Plain `turbo3`/`turbo4` stay **uniform** (brackets do
+**not** auto-enable). If `TURBO_LAYER_ADAPTIVE` is set with a bracket
+alias, the server **aborts** (legacy modes `0-7` stay on plain `turbo*`
+only). Block KV streaming refuses mixed per-layer types (same as
+`TURBO_LAYER_ADAPTIVE`). When `n_layer == 0` (MTP draft stub), the KV
+**ctor** skips brackets so the draft context can still start; calling
+`llama_kv_cache_q8_brackets_type_v` with `n_layer == 0` **throws**.
 
 ```bash
 llama-server -m model.gguf -c 8192 -ngl 99 -ctk q8_0 -ctv turbo4.8
 # optional:
 # TURBO_LAYER_HEAD=1 TURBO_LAYER_TAIL=8
+```
+
+#### Regression gates (TASK-068)
+
+**CI / PR (`ctest -L main`):** only the CPU schedule unit is in the default suite.
+
+```bash
+ctest --test-dir build -L main -R test-q8-brackets-schedule --output-on-failure
+```
+
+`test-q8-brackets-schedule` locks HEAD/TAIL defaults (incl. HEAD=0/1, min 1+1),
+mid turbo3|turbo4, ADAPTIVE abort, `n_layer==0` throw on `type_v` (ctor still
+skips MTP draft stubs), width overflow, and bad env ints.
+
+**Manual e2e (not in ctest):** long-ctx KL ladder for reviewers who need to
+reproduce the drift class and see why brackets help.
+
+| | Uniform `-ctv turbo4` / `turbo3` | `-ctv turbo3.8` / `turbo4.8` |
+|--|----------------------------------|------------------------------|
+| Short prompt (~2k) | Often looks fine | Same |
+| Long prompt + MTP (~>=70k) | KV V error accumulates -> factual LM mistakes | q8 head/tail protect instructions + late layers; mid stays compressed |
+| Fork measurable proxy | Higher Mean KLD vs `-ctv q8_0` logits base | **Lower** Mean KLD vs same q8_V base |
+
+Factual MTP KEEP (narrative duel / Voyna-class) is product evidence, not this
+script. The fork script only proves distribution drift on long prefill:
+
+```bash
+# NOT part of ctest -L main. Requires GGUF + free GPU. No silent defaults.
+cmake --build build --target llama-perplexity
+export TASK068_MODEL=/path/to/model.gguf
+export TASK068_CTX=16384   # recommend >=16384; raise toward product long-ctx when VRAM allows
+# optional: TASK068_PROMPT=/path/to/prompt.txt
+# Exclusive Metal/CUDA: stop other llama-server / minillm first.
+./tests/run-task068-q8-brackets-kl.sh ./build/bin/llama-perplexity
+# Pass: Mean KLD(turbo3.8) < Mean KLD(turbo4) vs q8_V base (exit 0).
+# Missing env or GPU busy: exit 77 (skip).
 ```
 
 Upstream attention rotation is off by default: TurboQuant manages rotation
