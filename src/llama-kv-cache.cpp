@@ -15,6 +15,7 @@
 #include <limits>
 #include <map>
 #include <stdexcept>
+#include <string>
 
 static bool ggml_is_power_of_2(int n) {
     return (n & (n - 1)) == 0;
@@ -176,6 +177,88 @@ ggml_type llama_kv_cache_turbo_layer_adaptive_type_v(
     return type_v;
 }
 
+bool llama_kv_cache_q8_brackets_active(void) {
+    const char * env = getenv("TURBO_LAYER_Q8_BRACKETS");
+    return env != nullptr && env[0] != '\0' && env[0] != '0';
+}
+
+// Resolve HEAD/TAIL widths for q8 brackets. Defaults 2/8 when env unset.
+// Throws on ADAPTIVE conflict or widths that cannot fit n_layer.
+// When head_req_out/tail_req_out non-null, writes the requested (pre-clamp) values.
+static void llama_kv_cache_q8_brackets_widths(
+        uint32_t n_layer,
+        uint32_t & m_eff,
+        uint32_t & n_tail,
+        uint32_t * head_req_out = nullptr,
+        uint32_t * tail_req_out = nullptr) {
+    if (getenv("TURBO_LAYER_ADAPTIVE")) {
+        throw std::runtime_error(
+            "TURBO_LAYER_ADAPTIVE is not supported with -ctv turbo3.8|turbo4.8 "
+            "(use TURBO_LAYER_HEAD / TURBO_LAYER_TAIL instead)");
+    }
+
+    auto env_u32_or = [](const char * name, uint32_t def) -> uint32_t {
+        const char * e = getenv(name);
+        if (!e || e[0] == '\0') {
+            return def;
+        }
+        char * end = nullptr;
+        const long v = std::strtol(e, &end, 10);
+        if (end == e || v < 0 || v > 0x7fffffffL) {
+            throw std::runtime_error(std::string(name) + " must be a non-negative integer");
+        }
+        return (uint32_t) v;
+    };
+
+    const uint32_t head_req = env_u32_or("TURBO_LAYER_HEAD", 2);
+    const uint32_t tail_req = env_u32_or("TURBO_LAYER_TAIL", 8);
+    if (head_req_out) {
+        *head_req_out = head_req;
+    }
+    if (tail_req_out) {
+        *tail_req_out = tail_req;
+    }
+
+    if (head_req >= n_layer || tail_req >= n_layer) {
+        throw std::runtime_error(
+            "TURBO_LAYER_HEAD/TAIL must be < n_layer for q8 brackets "
+            "(head=" + std::to_string(head_req) + " tail=" + std::to_string(tail_req) +
+            " n_layer=" + std::to_string(n_layer) + ")");
+    }
+    if (head_req + tail_req >= n_layer) {
+        throw std::runtime_error(
+            "TURBO_LAYER_HEAD+TAIL leave no mid layer for q8 brackets "
+            "(head=" + std::to_string(head_req) + " tail=" + std::to_string(tail_req) +
+            " n_layer=" + std::to_string(n_layer) + ")");
+    }
+
+    n_tail = std::min(tail_req, n_layer - head_req - 1);
+    m_eff  = std::min(head_req, n_layer - n_tail - 1);
+
+    if (m_eff + n_tail >= n_layer) {
+        throw std::runtime_error(
+            "q8 brackets widths do not fit n_layer after clamp "
+            "(M_eff=" + std::to_string(m_eff) + " N=" + std::to_string(n_tail) +
+            " n_layer=" + std::to_string(n_layer) + ")");
+    }
+}
+
+ggml_type llama_kv_cache_q8_brackets_type_v(
+        ggml_type type_v, uint32_t il, uint32_t n_layer) {
+    if (!llama_kv_cache_q8_brackets_active()) {
+        return type_v;
+    }
+
+    uint32_t m_eff = 0;
+    uint32_t n_tail = 0;
+    llama_kv_cache_q8_brackets_widths(n_layer, m_eff, n_tail);
+
+    if (il < m_eff || il >= n_layer - n_tail) {
+        return GGML_TYPE_Q8_0;
+    }
+    return type_v;
+}
+
 llama_kv_cache::llama_kv_cache(
         const llama_model & model,
         const llama_hparams & hparams,
@@ -317,13 +400,56 @@ llama_kv_cache::llama_kv_cache(
     //   6 = V-only: last 8 V=turbo4, rest V=turbo2 (K unchanged)
     //   7 = Boundary V (recommended): first2+last2 V=q8_0, rest V=turbo2 (K unchanged)
     //
+    // q8 head/tail brackets (-ctv turbo3.8|turbo4.8 via TURBO_LAYER_Q8_BRACKETS):
+    //   front M_eff x q8_0, mid x type_v, tail N x q8_0
+    //   widths: TURBO_LAYER_HEAD / TURBO_LAYER_TAIL (defaults 2/8)
+    //   incompatible with TURBO_LAYER_ADAPTIVE (abort)
+    //
     // Resolved once per construction rather than as a function-local static:
     // a process that constructs caches for more than one type_v in turn (e.g.
     // llama-bench sweeping --cache-type-v) must not have the first
     // construction's mode silently pin the strategy for every later one.
-    const int kv_adaptive_mode = llama_kv_cache_turbo_layer_adaptive_mode(type_v, hparams.n_layer());
-    if (kv_adaptive_mode != 0 && kv_stream_stage_bytes != 0 && !hparams.no_alloc) {
-        throw std::runtime_error("block KV streaming (--kv-stream-arena-mib) requires uniform KV types across all layers; TURBO_LAYER_ADAPTIVE is not supported");
+    // Process-wide TURBO_LAYER_Q8_BRACKETS is set by -ctv turbo3.8|turbo4.8.
+    // MTP draft heads / measure passes can report n_layer=0 — skip brackets
+    // there (uniform mid type_v) instead of aborting the whole server load.
+    bool kv_q8_brackets = llama_kv_cache_q8_brackets_active();
+    uint32_t kv_q8_m_eff = 0;
+    uint32_t kv_q8_n_tail = 0;
+    if (kv_q8_brackets && hparams.n_layer() == 0) {
+        LLAMA_LOG_WARN(
+            "llama_kv_cache: q8 brackets skipped (n_layer=0; draft/measure stub)\n");
+        kv_q8_brackets = false;
+    }
+    if (kv_q8_brackets) {
+        uint32_t head_req = 0;
+        uint32_t tail_req = 0;
+        llama_kv_cache_q8_brackets_widths(
+            hparams.n_layer(), kv_q8_m_eff, kv_q8_n_tail, &head_req, &tail_req);
+        if (kv_q8_n_tail < tail_req || kv_q8_m_eff < head_req) {
+            LLAMA_LOG_WARN(
+                "llama_kv_cache: q8 brackets clamped HEAD %u->%u TAIL %u->%u (n_layer=%u)\n",
+                head_req, kv_q8_m_eff, tail_req, kv_q8_n_tail, hparams.n_layer());
+        } else if (!getenv("TURBO_LAYER_HEAD") || !getenv("TURBO_LAYER_TAIL")) {
+            LLAMA_LOG_INFO(
+                "llama_kv_cache: q8 brackets using default HEAD/TAIL "
+                "(HEAD=%u TAIL=%u; override via TURBO_LAYER_HEAD / TURBO_LAYER_TAIL)\n",
+                kv_q8_m_eff, kv_q8_n_tail);
+        }
+        LLAMA_LOG_INFO(
+            "llama_kv_cache: q8 brackets enabled: front %u x q8_0, mid %u x %s, tail %u x q8_0\n",
+            kv_q8_m_eff,
+            hparams.n_layer() - kv_q8_m_eff - kv_q8_n_tail,
+            ggml_type_name(type_v),
+            kv_q8_n_tail);
+    }
+
+    const int kv_adaptive_mode = kv_q8_brackets
+        ? 0
+        : llama_kv_cache_turbo_layer_adaptive_mode(type_v, hparams.n_layer());
+    if ((kv_adaptive_mode != 0 || kv_q8_brackets) && kv_stream_stage_bytes != 0 && !hparams.no_alloc) {
+        throw std::runtime_error(
+            "block KV streaming (--kv-stream-arena-mib) requires uniform KV types across all layers; "
+            "TURBO_LAYER_ADAPTIVE / q8 brackets (-ctv turbo3.8|turbo4.8) are not supported");
     }
 
     if (kv_adaptive_mode > 0) {
@@ -564,13 +690,19 @@ llama_kv_cache::llama_kv_cache(
         const bool has_k = true;
         const bool has_v = !is_mla;
 
-        // Layer-adaptive: use higher precision for quality-sensitive layers.
-        // See kv_adaptive_mode above for the mode legend and env var.
+        // Layer-adaptive / q8 brackets: see kv_adaptive_mode / kv_q8_* above.
         const ggml_type layer_type_k = llama_kv_cache_turbo_layer_adaptive_type_k(
                 kv_adaptive_mode, type_k, type_v, il, hparams.n_layer());
-        const ggml_type layer_type_v = llama_kv_cache_turbo_layer_adaptive_type_v(
-                kv_adaptive_mode, type_k, type_v, il, hparams.n_layer());
-        if (il == 0) {
+        ggml_type layer_type_v;
+        if (kv_q8_brackets) {
+            layer_type_v = (il < kv_q8_m_eff || il >= hparams.n_layer() - kv_q8_n_tail)
+                ? GGML_TYPE_Q8_0
+                : type_v;
+        } else {
+            layer_type_v = llama_kv_cache_turbo_layer_adaptive_type_v(
+                    kv_adaptive_mode, type_k, type_v, il, hparams.n_layer());
+        }
+        if (il == 0 && !kv_q8_brackets) {
             const bool v_is_turbo = (type_v == GGML_TYPE_TURBO3_0 || type_v == GGML_TYPE_TURBO4_0 || type_v == GGML_TYPE_TURBO2_0);
             if (v_is_turbo && hparams.n_layer() >= 8) {
                 switch (kv_adaptive_mode) {

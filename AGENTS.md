@@ -43,13 +43,18 @@ Any combination of `f16`/`q8_0`/`turbo2`/`turbo3`/`turbo4` for K and V is suppor
 
 | Variable                    | Default | Effect |
 |-----------------------------|---------|--------|
-| `TURBO_LAYER_ADAPTIVE`      | `0`     | Layer-adaptive KV precision; `7` = Boundary V (edge layers q8_0, middle turbo) |
+| `TURBO_LAYER_ADAPTIVE`      | `0`     | Layer-adaptive KV precision on plain turbo*; `7` = Boundary V. Abort if set with `-ctv turbo3.8\|turbo4.8` |
+| `TURBO_LAYER_HEAD`          | `2`     | q8 brackets: first-layer count with V=q8_0 (optional) |
+| `TURBO_LAYER_TAIL`          | `8`     | q8 brackets: last-layer count with V=q8_0 (optional) |
+| `TURBO_LAYER_Q8_BRACKETS`   | unset   | Armed by `-ctv turbo3.8\|turbo4.8` (operator should not set) |
 | `TURBO_AUTO_ASYMMETRIC`     | `1`     | Auto-select asymmetric K/V types for large-GQA models |
 | `TURBO_SPARSE_V`            | `1`     | Sparse-V dequant skip in flash attention |
 | `GGML_TQ_NATIVE`            | unset    | `1` opts out of load-time TQ->q8_0 conversion, uses fused native TQ kernels (saves ~1.7x VRAM on decode-heavy workloads) |
 | `GGML_CUDA_FUSE_CHAIN`      | unset    | `0` disables the elementwise chain fusion (SILU/GELU/ADD/MUL/SCALE/CLAMP runs into one kernel, `ggml_cuda_fuse_elem_chain`) |
 | `GGML_CUDA_Q8CACHE`         | unset    | `0` disables the per-graph shared-quantize cache in mmvq (gate and up projections reuse one q8_1 copy of the activation) |
 | `LLAMA_ATTN_ROT_K/V_OVERRIDE` | off   | Optional upstream attention rotation (TurboQuant manages its own rotation) |
+
+`-ctv turbo4.8` / `turbo3.8`: q8 head+tail brackets, mid turbo4/turbo3. See `docs/KV-cache-quantization.md`.
 
 ### Test gates (all must pass before touching quant/backend code)
 

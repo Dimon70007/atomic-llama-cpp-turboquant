@@ -516,14 +516,21 @@ llama_context::llama_context(const llama_model & model, llama_context_params par
             const ggml_type stream_type_k =
                 llama_kv_cache_resolve_stream_type_k(model, hparams, params.type_k, params.type_v);
 
-            // TURBO_LAYER_ADAPTIVE (see llama-kv-cache.cpp) can give individual
-            // layers a different K/V precision than the rest of the cache -
-            // including auto-enabling itself with no env var at all whenever
-            // type_v is turbo2 on an >=8-layer model. The streamed page pool
-            // has one page size and one buffer type for the whole arena, so a
-            // model that would actually get non-uniform per-layer types must
-            // be refused here, before ever touching the CUDA runtime, rather
-            // than silently packing wrongly-shaped rows into shared pages.
+            // TURBO_LAYER_ADAPTIVE / q8 brackets (see llama-kv-cache.cpp) can
+            // give individual layers a different K/V precision than the rest of
+            // the cache - including auto-enabling Boundary V with no env var
+            // whenever type_v is turbo2 on an >=8-layer model. The streamed
+            // page pool has one page size and one buffer type for the whole
+            // arena, so a model that would actually get non-uniform per-layer
+            // types must be refused here, before ever touching the CUDA
+            // runtime, rather than silently packing wrongly-shaped rows into
+            // shared pages.
+            if (llama_kv_cache_q8_brackets_active()) {
+                throw std::runtime_error(
+                    "block KV streaming does not support per-layer mixed KV precision "
+                    "(q8 brackets via -ctv turbo3.8|turbo4.8); "
+                    "the streamed page pool assumes uniform per-layer geometry");
+            }
             const int kv_stream_adaptive_mode =
                 llama_kv_cache_turbo_layer_adaptive_mode(params.type_v, hparams.n_layer());
             if (kv_stream_adaptive_mode != 0) {
