@@ -14,6 +14,14 @@ Releases before `b10269-1.5.0` predate this file; see the git history.
 
 ### Added
 
+- **TASK-066.9 Phase C MTP knobs matrix:** `tests/task066_mtp_knob_matrix.json` +
+  `tests/task066_mtp_knob_matrix.py` + `tests/run-task066-mtp-knob-matrix.sh` compose the
+  MTP-vs-nomtp ladder across `n_max∈{1,2,3,4}` × `p_min∈{0.85,0.9,0.95}` (ub=512 locks).
+  Shared nomtp baseline once (`TASK066_CELL_MODES`); stamp+Pareto recommend vs product KEEP
+  `(2,0.95)`; no YAML auto-promote. Ladder gains `TASK066_CELL_MODES=both|nomtp|mtp`.
+  Stamp `logs/task066-mtp-knob-matrix-20261107T043032Z` — all cells HARD+duel 2/2;
+  speed-Pareto candidate `n4-p085` (tg≈13.05); **operator KEEP** product `(2,0.95)` for
+  acceptance≈0.88 (YAML untouched).
 - **TASK-066.9 Phase B e2e (docs+runner+stamp):** `run-task066-mtp-vs-nomtp-ladder.sh` supports
   `TASK066_SAMPLE_MODE=product|greedy`, product `p_min=0.95` / Unsloth sampling; HARD gate =
   engagement + non-empty gen; MTP↔nomtp DIFF is telemetry (not FAIL) unless

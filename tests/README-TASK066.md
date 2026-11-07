@@ -3,10 +3,10 @@
 Self-contained in **this** llama.cpp / ggml fork. Other developers: start here.
 
 **Branch:** `task066-metal-batch-invariance`  
-**Active track:** **[066.9](TASK-066.9-fa-batch-invariance.md)** — **A1+A2+B Done** (matmul KEEP + product e2e `041336Z`).  
+**Active track:** **[066.9](TASK-066.9-fa-batch-invariance.md)** — **A1+A2+B+C Done** (Phase C `043032Z`; **operator KEEP** `(2,0.95)`).  
 **PR fidelity:** **[TASK-066-pr-audit-registry.md](TASK-066-pr-audit-registry.md)** (re-check after every Metal edit + suites).  
-**Done:** **[066.7 KEEP](TASK-066.7-mul-mat-residual.md)** + **[066.8](TASK-066.8-fp-comparison-metrics-rd.md)** + FA always-tile + **066.5 ISWA** + **A2** + **B** (`MUL_MM_MIN` **0**; `--mtp-verify`; product MTP e2e).  
-**Priority:** `A1 → A2 → B (MTP)`. Hist Stage 1 WAIVE ≠ Done.
+**Done:** **[066.7 KEEP](TASK-066.7-mul-mat-residual.md)** + **[066.8](TASK-066.8-fp-comparison-metrics-rd.md)** + FA always-tile + **066.5 ISWA** + **A2** + **B** + **C** knobs matrix.  
+**Priority:** `A1 → A2 → B (MTP) → C (knobs Pareto)`. Hist Stage 1 WAIVE ≠ Done.
 
 ## Evidence hierarchy (hard)
 
@@ -27,7 +27,7 @@ Self-contained in **this** llama.cpp / ggml fork. Other developers: start here.
 | **066.6** | [TASK-066.6-cb-and-invariance-gates.md](TASK-066.6-cb-and-invariance-gates.md) | after 066.5 / parallel | 🟢 C2/C7 + C3 via 066.5 |
 | **066.7** | [TASK-066.7-mul-mat-residual.md](TASK-066.7-mul-mat-residual.md) | 066.4 done; residual was RED | 🟢 **KEEP** |
 | **066.8** | [TASK-066.8-fp-comparison-metrics-rd.md](TASK-066.8-fp-comparison-metrics-rd.md) ([lit](task066-hist/TASK-066.8-lit-notes.md)) | 066.7 KEEP | 🟢 **R&D DELIVERED** |
-| **066.9** | [TASK-066.9-fa-batch-invariance.md](TASK-066.9-fa-batch-invariance.md) ([draft](task066-hist/draft_mtp_research_task-066_fa.md)) | C2 GREEN + 066.7 | 🟢 A1+A2+B Done (matmul + e2e `041336Z`) |
+| **066.9** | [TASK-066.9-fa-batch-invariance.md](TASK-066.9-fa-batch-invariance.md) ([draft](task066-hist/draft_mtp_research_task-066_fa.md)) | C2 GREEN + 066.7 | 🟢 A1+A2+B+C (`043032Z`; KEEP `(2,0.95)`) |
 
 Overview locks / DoD / out-of-scope: [TASK-066.0-overview.md](TASK-066.0-overview.md).  
 Latest suite GREEN/RED snapshot: [TASK-066-status-matrix-20261106.md](TASK-066-status-matrix-20261106.md).
@@ -58,6 +58,10 @@ BUILD_DIR=build-task066-cb-ws SUITE=mul-mat-residual ./tests/run-task066-metal-c
 # Product nomtp ladder — ONLY after mul-mat-residual PASS
 TASK066_UBATCH_LIST="8 256 512 1024" TASK066_REPEAT_LARGE="" \
   BUILD_DIR=build-task066-cb-ws ./tests/run-task066-ubatch-ladder.sh
+
+# 066.9 Phase C — MTP knobs quality/speed (n_max × p_min; stamp+recommend; no YAML auto-promote)
+unset GGML_METAL_MUL_MM_MIN
+BUILD_DIR=build-task066-cb-ws ./tests/run-task066-mtp-knob-matrix.sh
 ```
 
 Configure + build (Metal): see below. Parent product repo may call `make minillm-task066-metal-corners` — that is optional sugar; this fork must stay runnable alone.

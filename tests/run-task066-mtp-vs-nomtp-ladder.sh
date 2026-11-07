@@ -21,6 +21,7 @@
 #   TASK066_SPEC_DRAFT_N_MAX — default 2 (product; verify width N=3)
 #   TASK066_SPEC_DRAFT_P_MIN — default 0.95 (product quality KEEP; greedy mode ignores)
 #   TASK066_SAMPLE_MODE — product|greedy (default product)
+#   TASK066_CELL_MODES — both|nomtp|mtp (default both). Phase C matrix uses nomtp once + mtp per knob.
 #   TASK066_REQUIRE_IDENTICAL=1 — hard-fail on MTP vs nomtp DIFF (greedy lossless only)
 #   TASK066_N_PREDICT, TASK066_CTX, TASK066_CRAM, TASK066_CTXCP, BATCH_* — same as ubatch ladder
 #   DRY_RUN=1, REBUILD=1, TASK066_ALLOW_SHARED_METAL=1, TASK066_STOP_ON_FAIL=1
@@ -82,6 +83,7 @@ CTXCP="${TASK066_CTXCP:-32}"
 SPEC_N_MAX="${TASK066_SPEC_DRAFT_N_MAX:-2}"
 SPEC_P_MIN="${TASK066_SPEC_DRAFT_P_MIN:-0.95}"
 SAMPLE_MODE="${TASK066_SAMPLE_MODE:-product}"
+CELL_MODES="${TASK066_CELL_MODES:-both}"
 REQUIRE_IDENTICAL="${TASK066_REQUIRE_IDENTICAL:-0}"
 STOP_ON_FAIL="${TASK066_STOP_ON_FAIL:-1}"
 
@@ -90,6 +92,11 @@ fail() { echo "FAIL: $*" >&2; exit 2; }
 case "${SAMPLE_MODE}" in
   product|greedy) ;;
   *) fail "TASK066_SAMPLE_MODE must be product|greedy (got ${SAMPLE_MODE})" ;;
+esac
+
+case "${CELL_MODES}" in
+  both|nomtp|mtp) ;;
+  *) fail "TASK066_CELL_MODES must be both|nomtp|mtp (got ${CELL_MODES})" ;;
 esac
 
 [[ -f "${MODEL}" ]] || fail "model not found: ${MODEL}
@@ -312,6 +319,10 @@ run_cell() {
   if [[ "${DRY_RUN:-0}" == "1" ]]; then
     echo "DRY_RUN skip ub=${ub} mode=${mode}" | tee "${dir}/dry_run.txt"
     printf '(dry-run stub ubatch=%s mode=%s)\n' "${ub}" "${mode}" > "${gen}"
+    echo "exit=0" > "${dir}/exit.txt"
+    if [[ "${mode}" == "mtp" ]]; then
+      echo "draft acceptance = 0.00000 (dry-run stub)" > "${dir}/mtp-evidence.txt"
+    fi
     return 0
   fi
 
@@ -373,6 +384,7 @@ run_cell() {
   echo "batch_mode=${BATCH_MODE} batch_floor=${BATCH_FLOOR}"
   echo "ubatch_list=${UBATCH_LIST}"
   echo "sample_mode=${SAMPLE_MODE}"
+  echo "cell_modes=${CELL_MODES}"
   echo "spec_draft_n_max=${SPEC_N_MAX}"
   echo "spec_draft_p_min=${SPEC_P_MIN}"
   echo "require_identical=${REQUIRE_IDENTICAL}"
@@ -388,8 +400,12 @@ if [[ -z "${GGML_METAL_MUL_MM_MIN:-}" ]]; then
 fi
 
 for ub in ${UBATCH_LIST}; do
-  run_cell "${ub}" nomtp
-  run_cell "${ub}" mtp
+  if [[ "${CELL_MODES}" == "both" || "${CELL_MODES}" == "nomtp" ]]; then
+    run_cell "${ub}" nomtp
+  fi
+  if [[ "${CELL_MODES}" == "both" || "${CELL_MODES}" == "mtp" ]]; then
+    run_cell "${ub}" mtp
+  fi
 done
 
 MATRIX="${OUT_DIR}/matrix.md"
@@ -412,28 +428,36 @@ IDENTICAL_N=0
   echo "|------|-------|-----|"
   for ub in ${UBATCH_LIST}; do
     b="$(batch_for "${ub}")"
-    echo "| S${ub} nomtp | ${b} | \`cells/ub$(printf '%04d' "${ub}")-nomtp/generation.txt\` |"
-    echo "| S${ub} mtp | ${b} | \`cells/ub$(printf '%04d' "${ub}")-mtp/generation.txt\` |"
+    if [[ "${CELL_MODES}" == "both" || "${CELL_MODES}" == "nomtp" ]]; then
+      echo "| S${ub} nomtp | ${b} | \`cells/ub$(printf '%04d' "${ub}")-nomtp/generation.txt\` |"
+    fi
+    if [[ "${CELL_MODES}" == "both" || "${CELL_MODES}" == "mtp" ]]; then
+      echo "| S${ub} mtp | ${b} | \`cells/ub$(printf '%04d' "${ub}")-mtp/generation.txt\` |"
+    fi
   done
   echo
   echo "## Auto first-disagree (MTP vs nomtp) — telemetry"
   echo
   echo "| compare | result |"
   echo "|---------|--------|"
-  for ub in ${UBATCH_LIST}; do
-    g_n="$(cell_dir "${ub}" nomtp)/generation.txt"
-    g_m="$(cell_dir "${ub}" mtp)/generation.txt"
-    fd="$(first_disagree "${g_m}" "${g_n}")"
-    echo "| S${ub} mtp vs nomtp | ${fd} |"
-    if [[ "${fd}" == "identical" ]]; then
-      IDENTICAL_N=$((IDENTICAL_N + 1))
-    elif [[ "${fd}" == DIFF* ]]; then
-      DIFF_N=$((DIFF_N + 1))
+  if [[ "${CELL_MODES}" == "both" ]]; then
+    for ub in ${UBATCH_LIST}; do
+      g_n="$(cell_dir "${ub}" nomtp)/generation.txt"
+      g_m="$(cell_dir "${ub}" mtp)/generation.txt"
+      fd="$(first_disagree "${g_m}" "${g_n}")"
+      echo "| S${ub} mtp vs nomtp | ${fd} |"
+      if [[ "${fd}" == "identical" ]]; then
+        IDENTICAL_N=$((IDENTICAL_N + 1))
+      elif [[ "${fd}" == DIFF* ]]; then
+        DIFF_N=$((DIFF_N + 1))
+      fi
+    done
+    # Cross-ubatch nomtp reference if both present
+    if echo " ${UBATCH_LIST} " | grep -q ' 8 ' && echo " ${UBATCH_LIST} " | grep -q ' 16 '; then
+      echo "| S16 nomtp vs S8 nomtp | $(first_disagree "$(cell_dir 16 nomtp)/generation.txt" "$(cell_dir 8 nomtp)/generation.txt") |"
     fi
-  done
-  # Cross-ubatch nomtp reference if both present
-  if echo " ${UBATCH_LIST} " | grep -q ' 8 ' && echo " ${UBATCH_LIST} " | grep -q ' 16 '; then
-    echo "| S16 nomtp vs S8 nomtp | $(first_disagree "$(cell_dir 16 nomtp)/generation.txt" "$(cell_dir 8 nomtp)/generation.txt") |"
+  else
+    echo "| (skipped) | CELL_MODES=${CELL_MODES} — cross-mode DIFF deferred to Phase C orchestrator |"
   fi
   echo
   echo "## Capture check"
@@ -441,6 +465,12 @@ IDENTICAL_N=0
   empty_n=0
   for ub in ${UBATCH_LIST}; do
     for mode in nomtp mtp; do
+      if [[ "${CELL_MODES}" == "nomtp" && "${mode}" != "nomtp" ]]; then
+        continue
+      fi
+      if [[ "${CELL_MODES}" == "mtp" && "${mode}" != "mtp" ]]; then
+        continue
+      fi
       g="$(cell_dir "${ub}" "${mode}")/generation.txt"
       if [[ ! -s "${g}" ]]; then
         echo "- EMPTY S${ub} ${mode}"
@@ -457,21 +487,31 @@ IDENTICAL_N=0
   echo "## MTP engagement"
   echo
   miss_ev=0
-  for ub in ${UBATCH_LIST}; do
-    ev="$(cell_dir "${ub}" mtp)/mtp-evidence.txt"
-    if [[ -s "${ev}" ]]; then
-      echo "- S${ub} mtp: OK (\`cells/ub$(printf '%04d' "${ub}")-mtp/mtp-evidence.txt\`)"
-    else
-      echo "- S${ub} mtp: MISSING evidence"
-      miss_ev=$((miss_ev + 1))
-    fi
-  done
+  if [[ "${CELL_MODES}" == "both" || "${CELL_MODES}" == "mtp" ]]; then
+    for ub in ${UBATCH_LIST}; do
+      ev="$(cell_dir "${ub}" mtp)/mtp-evidence.txt"
+      if [[ -s "${ev}" ]]; then
+        echo "- S${ub} mtp: OK (\`cells/ub$(printf '%04d' "${ub}")-mtp/mtp-evidence.txt\`)"
+      else
+        echo "- S${ub} mtp: MISSING evidence"
+        miss_ev=$((miss_ev + 1))
+      fi
+    done
+  else
+    echo "- (skipped) CELL_MODES=nomtp"
+  fi
   echo
   echo "## Quality glance (duel KEEP phrases; not bit-exact)"
   echo
   # ST-3.2l-2q KEEP: Pierre hits Dolokhov + Dolokhov misses. Soft signal (not bit-exact phrases).
   for ub in ${UBATCH_LIST}; do
     for mode in nomtp mtp; do
+      if [[ "${CELL_MODES}" == "nomtp" && "${mode}" != "nomtp" ]]; then
+        continue
+      fi
+      if [[ "${CELL_MODES}" == "mtp" && "${mode}" != "mtp" ]]; then
+        continue
+      fi
       g="$(cell_dir "${ub}" "${mode}")/generation.txt"
       hits=0
       # UTF-8 Cyrillic — do not force LC_ALL=C (breaks casefold / matches).

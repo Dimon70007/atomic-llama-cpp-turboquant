@@ -1,18 +1,18 @@
 # TASK-066.9 — FA batch-invariance (nomtp-first, MTP second)
 
-**Status:** 🟢 Phase A1 **DONE**; 🟢 **Phase A2 DONE**; 🟢 **Phase B matmul KEEP** + 🟢 **product e2e stamp** (`041336Z`)  
+**Status:** 🟢 Phase A1 **DONE**; 🟢 **Phase A2 DONE**; 🟢 **Phase B** (matmul + e2e `041336Z`); 🟢 **Phase C** stamp `043032Z` — **operator KEEP** `(2,0.95)` (high acceptance; YAML untouched)  
 **Depends on:** [066.7 KEEP](TASK-066.7-mul-mat-residual.md); C2 GREEN (FA always-tile); research below  
-**Next:** optional greedy lossless A/B / more ubatch cells — not blocking  
+**Next:** optional only (greedy A/B / ubatch matrix / commit) — not blocking  
 **Research:** [task066-hist/draft_mtp_research_task-066_fa.md](task066-hist/draft_mtp_research_task-066_fa.md), [task066-hist/TASK-066-fa-batch-invariance-web-research.md](task066-hist/TASK-066-fa-batch-invariance-web-research.md)  
 **Index:** [README-TASK066.md](README-TASK066.md) · [PR audit](TASK-066-pr-audit-registry.md)
 
 ## Priority (hard)
 
 ```text
-Phase A1 (nomtp C2/C3/C1 + ISWA)  →  Phase A2 (jinja-ladder residual)  →  Phase B (MTP / #28108)
+Phase A1 (nomtp C2/C3/C1 + ISWA)  →  Phase A2 (jinja-ladder residual)  →  Phase B (MTP / #28108)  →  Phase C (knobs Pareto)
 ```
 
-A2 found during Phase A confirm; closed 2026-11-07. MTP still needs **explicit start**.
+A2 found during Phase A confirm; closed 2026-11-07. Phase B closed same day. Phase C = quality/speed knobs only (invariance already KEEP).
 
 ---
 
@@ -180,6 +180,55 @@ Stamp: `logs/task066-mtp-vs-nomtp-20261107T041336Z`.
 
 - Raising `MUL_MM_MIN` to hide mm; FA-off/f16 as product fix; ε-PASS
 - Treating product-sample MTP↔nomtp text DIFF as RED
+
+---
+
+## Phase C — MTP knobs quality/speed matrix
+
+**Status:** 🟢 **DONE** (stamp + recommend; YAML not auto-promoted)  
+**Depends on:** Phase B e2e HARD PASS  
+**Stamp:** [`logs/task066-mtp-knob-matrix-20261107T043032Z`](../logs/task066-mtp-knob-matrix-20261107T043032Z/)  
+**Goal:** After B proved MTP engagement works with product locks, sweep **only** speculative knobs for Pareto quality vs decode speed. Bit-exact MTP↔nomtp is **not** a goal.
+
+### Axes / locks
+
+| Knob | Values |
+|------|--------|
+| `spec_draft_n_max` | `{1,2,3,4}` |
+| `spec_draft_p_min` | `{0.85,0.9,0.95}` |
+| ubatch / FA / ctv / sampling / `MUL_MM_MIN` | **fixed** as Phase B product e2e (`ub=512`, FA-on, turbo4, product sample, default 0) |
+
+Config: [`task066_mtp_knob_matrix.json`](task066_mtp_knob_matrix.json)  
+Runner: [`run-task066-mtp-knob-matrix.sh`](run-task066-mtp-knob-matrix.sh) → [`task066_mtp_knob_matrix.py`](task066_mtp_knob_matrix.py) → composes [`run-task066-mtp-vs-nomtp-ladder.sh`](run-task066-mtp-vs-nomtp-ladder.sh)
+
+### Metrics / ranking
+
+1. **HARD:** engagement + non-empty + no OOM (per cell)
+2. **quality:** `duel_hits` 0–2 (same glance as Phase B)
+3. **speed:** last `tg` tok/s from `cli.log`
+4. **acceptance:** `draft acceptance`
+5. **telemetry:** first-disagree vs **one** shared nomtp baseline
+6. **Recommend:** prefer `duel_hits==2`, then higher `tg`, then higher acceptance; compare to product KEEP `(2, 0.95)`. YAML promote **only** after operator ack.
+
+### DoD
+
+- [x] Stamp `logs/task066-mtp-knob-matrix-20261107T043032Z/` with `matrix.md` + `summary.md`
+- [x] Explicit recommend: speed-Pareto candidate was **`n4-p085`** (tg≈13.05, acc≈0.72) vs KEEP `n2-p095` (tg≈12.29, acc≈0.88); all 12 cells duel **2/2** HARD OK
+- [x] No auto rewrite of product `gemma4_26b_a4b_mtp_metal.yaml`
+- [x] **Operator ack 2026-11-07:** **KEEP product** `(n_max=2, p_min=0.95)` — prioritize acceptance; do not promote speed-Pareto knobs
+
+```bash
+cd atomic-llama-cpp-turboquant
+unset GGML_METAL_MUL_MM_MIN
+BUILD_DIR=build-task066-cb-ws ./tests/run-task066-mtp-knob-matrix.sh
+# DRY_RUN=1; --from-run <id> for resume
+```
+
+### Explicit non-goals
+
+- Ubatch matrix; greedy lossless A/B; YAML auto-promote; raising `MUL_MM_MIN`
+
+**Operator note:** ranking is speed-primary among duel=2/2. Lower `p_min` / higher `n_max` wins tg but drops acceptance. **Locked:** product stays `(2,0.95)` for high acceptance; MTP knobs now behave as documented (Phase B+C victory).
 
 ---
 
