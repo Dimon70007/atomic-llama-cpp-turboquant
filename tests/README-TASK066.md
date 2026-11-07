@@ -99,7 +99,7 @@ cmake --build build --parallel \
 | `b1-shared-kv` | `run-task066-b1-shared-kv-audit.sh` | shared-KV audit |
 | `mtp-acc-trace` | `run-task066-mtp-acc-trace-checklist.sh` | ACC_TRACE log attach |
 | `mtp-e2e` | `run-task066-mtp-e2e-corners.sh` | MTP e2e (blocked for now) |
-| `mul-mat-residual` | `run-task066-mul-mat-residual-corners.sh` | ne11 residual |
+| `mul-mat-residual` | `run-task066-mul-mat-residual-corners.sh` | mul_mm policy unit (CPU) + ne11 residual |
 | `ubatch-s8-s1024` | `run-task066-ubatch-s8-s1024-corners.sh` | greedy S8 vs S1024 (product ladder class; needs MODEL+CTX) |
 | `followup` | `run-task066-followup-all.sh` | Track A+B one-shot |
 | `all` | umbrella | fa…moe-router |

@@ -14,6 +14,9 @@ Releases before `b10269-1.5.0` predate this file; see the git history.
 
 ### Added
 
+- **TASK-066.9 A2 mul_mm policy unit:** header `ggml-metal-mul-mm-policy.h` + CPU test
+  `test-metal-mul-mm-policy` (no Metal). Locks `GGML_METAL_MUL_MM_MIN_DEFAULT=1` and rem
+  cross-kernel hazard (`1708%8=4` under min=7). Runs first in `SUITE=mul-mat-residual`.
 - **TASK-066.9 Phase A2 C1j gate:** `test-ubatch-s8-s1024-row0-parity` applies jinja chat template
   (`enable_thinking=false`) then greedy S8 vs S1024 after raw C1. `TASK066_DIAG=c1j` for fast loop.
   Covers ladder class that raw C1 misses (1708 tok prompt).

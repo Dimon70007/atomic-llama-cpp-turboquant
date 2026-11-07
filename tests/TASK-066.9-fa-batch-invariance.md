@@ -118,6 +118,8 @@ Product default `GGML_METAL_MUL_MM_MIN` **7 → 1** (`ne11≥2` → float-tile m
 
 **C1j** in `test-ubatch-s8-s1024-row0-parity`: apply model jinja chat template (`enable_thinking=false`) then greedy S8 vs S1024. `TASK066_DIAG=c1j` for fast loop. RED@min7 → GREEN@min1 same change set.
 
+**CPU policy unit** `test-metal-mul-mm-policy` + header `ggml-metal-mul-mm-policy.h`: locks `GGML_METAL_MUL_MM_MIN_DEFAULT=1` and `hazard(1708,8,7)` / `!hazard(…,1)`. Runs first in `SUITE=mul-mat-residual` (no GPU) — bad merge that restores min=7 fails here before Metal residual.
+
 ### Phase A2 DoD
 
 - [x] Named root cause (last-ubatch rem cross-kernel mv/mm; not jinja CLI bug per se)  
