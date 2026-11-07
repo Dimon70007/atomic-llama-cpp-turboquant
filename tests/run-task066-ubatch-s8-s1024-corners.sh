@@ -10,7 +10,8 @@
 #   TASK066_CTX       — required (>= prompt + n_predict); ladder uses 3072
 #   TASK066_PROMPT    — optional; default tests/fixtures/task066/...prompt.txt
 #   TASK066_N_PREDICT — optional; default 64 (binary); raise if GREEN but ladder DIFF
-#   TASK066_DIAG=localize|fa-ablation — evidence-only matrices (exit 0)
+#   TASK066_DIAG=localize|fa-ablation|c3-bisect|c3-thresh — evidence-only (exit 0)
+#   TASK066_BISECT_FILTER / TASK066_BISECT_HASH_ONLY — c3-bisect knobs
 #   TASK066_FA=off + TASK066_CTV=f16 — true FA-off diag (refuse turbo KV); NOT product waiver
 #   BUILD_DIR, REBUILD=1, TASK066_REQUIRE_GPU (default 1 on Darwin)
 #

@@ -1,8 +1,8 @@
 # TASK-066.9 — FA batch-invariance (nomtp-first, MTP second)
 
-**Status:** 🔓 **Phase A localize DONE** → next lever **[066.5](TASK-066.5-fusion-table-parity.md)** (C3-n1344); Phase B MTP still gated  
+**Status:** 🟢 Phase A localize **DONE** + **C3/C1 GREEN** via [066.5](TASK-066.5-fusion-table-parity.md) ISWA `size_swa`; Phase B MTP still gated  
 **Depends on:** [066.7 KEEP](TASK-066.7-mul-mat-residual.md); C2 GREEN (FA always-tile); research below  
-**Next code:** 066.5 fuse/CB on C3-n1344 — **not** more FA shape pins; Phase B only after Phase A DoD + explicit start  
+**Next:** Phase B only after explicit start; optional jinja-CLI ladder S8 residual (HELP)  
 **Research:** [task066-hist/draft_mtp_research_task-066_fa.md](task066-hist/draft_mtp_research_task-066_fa.md), [task066-hist/TASK-066-fa-batch-invariance-web-research.md](task066-hist/TASK-066-fa-batch-invariance-web-research.md)  
 **Index:** [README-TASK066.md](README-TASK066.md) · [PR audit](TASK-066-pr-audit-registry.md)
 
@@ -47,15 +47,15 @@ Stamps: `logs/task066-localize-threshold-20261106T233840Z`, `…-bisect-20261106
 | **H9faOFF** q8/f16 FA-off | **RED** (mad≈4.8, argmax DIFF) | **Not FA-only** |
 | FA C7 op ≤256 | GREEN | Isolated FA multi-step ≠ C3 residual |
 
-**Named residual class:** long-prefill **multi-step ubatch** for **`n≥1344`** (lock **`n=1280` GREEN**). Survives **FA-off** → next levers **non-FA** ([066.5](TASK-066.5-fusion-table-parity.md) fusion/CB / FIRST_DIFF_TENSOR / other ops). FA may still add drift when on; **FA-only KEEP forbidden**.
+**Named residual class (pre-fix):** long-prefill **multi-step ubatch** for **`n≥1344`** (lock **`n=1280` GREEN**). Survives **FA-off** → was **non-FA**. Root after bisect/thresh: **ISWA `size_swa` ∝ `n_ubatch`** (Gemma4 n_swa=1024 → ub=8 capacity 1280). Fixed in [066.5](TASK-066.5-fusion-table-parity.md). FA-only KEEP still forbidden.
 
 ### C. Autotest gates (`SUITE=ubatch-s8-s1024`)
 
 | Gate | Meaning | Status |
 |------|---------|--------|
 | **C2** | n=32 ub=8 vs ub=32 | **GREEN** (must not regress) |
-| **C3** | n=1280 GREEN lock; **n=1344 RED** until fix | **RED** primary TDD (~60s) |
-| **C1** | greedy S8 vs S1024 | deferred until C3 GREEN |
+| **C3** | n=1280 GREEN lock; **n=1344** bit-exact after ISWA fix | **GREEN** (`066.5`) |
+| **C1** | greedy S8 vs S1024 | **GREEN** (n_predict=64) |
 
 ### D. Spec / wiring delivered
 
@@ -87,10 +87,9 @@ Every Metal/ops/fusion edit: autotest RED→GREEN same change set; re-run `cb-fu
 
 ### Open
 
-1. **066.5 / CB:** FIRST_DIFF_TENSOR / fuse-table on n=1344 ub=8 vs one-shot → C3-n1344 RED→GREEN.  
+1. Optional: jinja/`--conversation` ladder S8 vs S1024 DIFF@22 (`012625Z`) — outside C1.  
 2. Other non-FA ops only with new RED corner.  
-3. FA levers **only if** new corner RED under FA-on and GREEN under FA-off.  
-4. Confirm: C3 GREEN → C1 → ladder vs `231804Z`.
+3. FA levers **only if** new corner RED under FA-on and GREEN under FA-off.
 
 ### Anti-patterns
 
@@ -100,9 +99,9 @@ Every Metal/ops/fusion edit: autotest RED→GREEN same change set; re-run `cb-fu
 ### Phase A DoD
 
 - [x] C2 GREEN; residual class named (**non-FA** long-prefill multi-step)  
-- [ ] C3-n1344 GREEN → C1 GREEN  
-- [ ] Ladder confirm vs `231804Z`  
-- [ ] Autotest diff per lever  
+- [x] C3-n1344 GREEN → C1 GREEN (066.5 ISWA `size_swa`)  
+- [x] Ladder confirm vs `231804Z` — **HELP** (`012625Z`: S512≡S1024; S8 DIFF@22 jinja CLI)  
+- [x] Autotest diff per lever (C3 RED→GREEN)  
 
 ---
 
@@ -121,8 +120,8 @@ Every Metal/ops/fusion edit: autotest RED→GREEN same change set; re-run `cb-fu
 
 | Task | Relation |
 |------|----------|
-| **066.5** | **Next implementation** — C3-n1344 |
-| 066.6 | C2/C7 landed; long residual → 066.9/066.5 |
+| **066.5** | **KEEP** — ISWA `size_swa`; C3+C1 GREEN |
+| 066.6 | C2/C7 + C3 via 066.5 |
 | 066.7 / 066.8 | KEEP / R&D behind |
 | Hist Stage 1 WAIVE | ≠ Done |
 
@@ -136,6 +135,6 @@ BUILD_DIR=build-task066-cb-ws SUITE=fa ./tests/run-task066-metal-corners.sh
 TASK066_MODEL=.scratch/gemma-4-26b-a4b/gemma-4-26B-A4B-it-UD-IQ4_XS.gguf \
 TASK066_CTX=3072 BUILD_DIR=build-task066-cb-ws \
   SUITE=ubatch-s8-s1024 ./tests/run-task066-metal-corners.sh
-# Expect: C2 GREEN, C3-n1280 GREEN, C3-n1344 RED until 066.5 fix
-# Diag: TASK066_DIAG=localize | fa-ablation
+# Expect: C2 GREEN, C3-n1280 GREEN, C3-n1344 GREEN, C1 GREEN
+# Diag: TASK066_DIAG=localize | fa-ablation | c3-bisect | c3-thresh
 ```

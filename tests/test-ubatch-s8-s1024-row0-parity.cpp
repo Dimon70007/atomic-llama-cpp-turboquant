@@ -12,6 +12,12 @@
 //   TASK066_DIAG=localize     — ubatch step / threshold matrix (product KV)
 //   TASK066_DIAG=fa-ablation  — C2 (n=32 ub8 vs ub32) under FA/KV variants:
 //       product turbo4+FA-on; f16+FA-on; f16+FA-off (true FA-off — turbo forces FA)
+//   TASK066_DIAG=c3-bisect    — FIRST_DIFF_TENSOR on last ubatch graph:
+//       n=1280 control (expect none) + n=1344 (expect first named drift);
+//       cb_eval only on final decode; store last-token F32/F16 slices only.
+//       Optional TASK066_BISECT_FILTER=regex; TASK066_BISECT_HASH_ONLY=1.
+//   TASK066_DIAG=c3-thresh    — logits-only exact matrix around n_kv 256-pad
+//       boundary (1280 GREEN lock vs 1288..1536).
 //   TASK066_FA=off requires TASK066_CTV=<non-turbo> (e.g. f16); else fail-closed.
 //   FA-off / non-turbo runs are LOCALIZATION ONLY — product path stays FA-on+turbo4.
 //
@@ -26,11 +32,14 @@
 #include "ggml-backend.h"
 #include "ggml.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <map>
+#include <regex>
 #include <string>
 #include <vector>
 
@@ -235,6 +244,520 @@ int32_t first_token_diff(const std::vector<llama_token> & a, const std::vector<l
 void print_cmp(const char * label, const logits_cmp & c) {
     printf("DIAG %s: exact=%d mad=%.8g first_diff_i=%lld argmax_a=%d argmax_b=%d\n",
            label, c.exact ? 1 : 0, c.mad, (long long) c.first_diff_i, c.argmax_a, c.argmax_b);
+}
+
+// --- C3 bisect (066.5): last-ubatch cb_eval + last-token named F32/F16 slices ---
+
+struct tensor_snap {
+    std::string name;
+    std::string op;
+    int64_t     ne[4] = {0, 0, 0, 0};
+    int         token_dim = -1;
+    size_t      n_row0 = 0;
+    uint64_t    hash = 0;
+    std::vector<float> row0;  // last-token slice (or empty if hash-only)
+};
+
+struct capture_state {
+    bool active = false;
+    bool keep_row0 = true;
+    int32_t n_tokens = 0;  // final ubatch token count; used to pick token dim
+    std::vector<std::regex> filters;
+    std::vector<tensor_snap> snaps;
+    std::vector<uint8_t> scratch;
+};
+
+uint64_t fnv1a_f32(const float * data, size_t n) {
+    uint64_t h = 14695981039346656037ull;
+    for (size_t i = 0; i < n; ++i) {
+        uint32_t bits = 0;
+        std::memcpy(&bits, &data[i], sizeof(bits));
+        for (int b = 0; b < 4; ++b) {
+            h ^= (bits >> (8 * b)) & 0xffu;
+            h *= 1099511628211ull;
+        }
+    }
+    return h;
+}
+
+bool name_matches(const capture_state & st, const char * name) {
+    if (st.filters.empty()) {
+        return true;
+    }
+    if (!name || !name[0]) {
+        return false;
+    }
+    for (const auto & re : st.filters) {
+        if (std::regex_search(name, re)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool is_anon_tensor_name(const std::string & name) {
+    return name.rfind("node_", 0) == 0;
+}
+
+int find_token_dim(const ggml_tensor * t, int32_t n_tokens) {
+    if (!t || n_tokens < 1) {
+        return -1;
+    }
+    // Prefer highest dim among 1..3 that equals n_tokens. Q/K/V reshape is
+    // typically [head_dim, n_head, n_tokens]; when n_tokens == n_head (e.g. 8)
+    // the lowest match would wrongly pick the head axis.
+    for (int d = 3; d >= 1; --d) {
+        if (t->ne[d] == (int64_t) n_tokens) {
+            return d;
+        }
+    }
+    if (t->ne[0] == (int64_t) n_tokens) {
+        return 0;
+    }
+    return -1;
+}
+
+float read_elem(const uint8_t * base, const ggml_tensor * t, size_t off) {
+    if (t->type == GGML_TYPE_F32) {
+        float v = 0.0f;
+        std::memcpy(&v, base + off, sizeof(v));
+        return v;
+    }
+    ggml_fp16_t h;
+    std::memcpy(&h, base + off, sizeof(h));
+    return ggml_fp16_to_fp32(h);
+}
+
+void extract_last_token(const ggml_tensor * t, capture_state & st, tensor_snap & snap) {
+    snap.row0.clear();
+    snap.token_dim = find_token_dim(t, st.n_tokens);
+    if (snap.token_dim < 0) {
+        // No token dim — skip bulky full capture (memory / time).
+        return;
+    }
+
+    const int td = snap.token_dim;
+    const int64_t last = t->ne[td] - 1;
+    const size_t es = ggml_type_size(t->type);
+    if (es == 0) {
+        return;
+    }
+
+    // Host path: read in-place. Device path: pull only last-token elements
+    // (never full n=1344 tensors — those can be multi-GB on MoE FA).
+    const bool host = t->buffer && ggml_backend_buffer_is_host(t->buffer);
+    const uint8_t * host_base = host ? static_cast<const uint8_t *>(t->data) : nullptr;
+
+    for (int64_t i3 = 0; i3 < t->ne[3]; ++i3) {
+        for (int64_t i2 = 0; i2 < t->ne[2]; ++i2) {
+            for (int64_t i1 = 0; i1 < t->ne[1]; ++i1) {
+                for (int64_t i0 = 0; i0 < t->ne[0]; ++i0) {
+                    const int64_t coords[4] = {i0, i1, i2, i3};
+                    if (coords[td] != last) {
+                        continue;
+                    }
+                    const size_t off =
+                            size_t(i3) * t->nb[3] + size_t(i2) * t->nb[2] +
+                            size_t(i1) * t->nb[1] + size_t(i0) * t->nb[0];
+                    float v = 0.0f;
+                    if (host) {
+                        v = read_elem(host_base, t, off);
+                    } else {
+                        uint8_t tmp[8] = {0};
+                        ggml_backend_tensor_get(t, tmp, off, es);
+                        v = read_elem(tmp, t, 0);
+                    }
+                    snap.row0.push_back(v);
+                }
+            }
+        }
+    }
+    snap.n_row0 = snap.row0.size();
+    if (snap.n_row0 == 0) {
+        return;
+    }
+    snap.hash = fnv1a_f32(snap.row0.data(), snap.n_row0);
+    if (!st.keep_row0) {
+        snap.row0.clear();
+        snap.row0.shrink_to_fit();
+    }
+}
+
+bool capture_cb(struct ggml_tensor * t, bool ask, void * user_data) {
+    auto * st = static_cast<capture_state *>(user_data);
+    if (!st->active) {
+        return false;
+    }
+    if (!t || t->name[0] == '\0') {
+        return false;
+    }
+    if (is_anon_tensor_name(t->name)) {
+        return false;
+    }
+    if (t->type != GGML_TYPE_F32 && t->type != GGML_TYPE_F16) {
+        return false;
+    }
+    if (!name_matches(*st, t->name)) {
+        return false;
+    }
+    if (ask) {
+        return true;
+    }
+
+    tensor_snap snap;
+    snap.name = t->name;
+    snap.op = ggml_op_desc(t);
+    for (int i = 0; i < 4; ++i) {
+        snap.ne[i] = t->ne[i];
+    }
+    // Internal ubatch: each micro-batch rebuilds the graph starting at embd.
+    // Keep only the last micro-batch's named tensors; refresh n_tokens from embd.
+    if (std::strcmp(t->name, "embd") == 0) {
+        if (!st->snaps.empty()) {
+            st->snaps.clear();
+        }
+        // embd layout [n_embd, n_tokens, ...]
+        if (t->ne[1] > 0) {
+            st->n_tokens = (int32_t) t->ne[1];
+        }
+    }
+    extract_last_token(t, *st, snap);
+    if (snap.n_row0 == 0) {
+        return true;
+    }
+    st->snaps.push_back(std::move(snap));
+    return true;
+}
+
+double mad_vectors(const std::vector<float> & a, const std::vector<float> & b) {
+    const size_t n = std::min(a.size(), b.size());
+    double mad = 0.0;
+    for (size_t i = 0; i < n; ++i) {
+        mad = std::max(mad, std::fabs(double(a[i]) - double(b[i])));
+    }
+    if (a.size() != b.size()) {
+        mad = std::max(mad, 1.0);
+    }
+    return mad;
+}
+
+bool slices_bit_exact(const tensor_snap & a, const tensor_snap & b, double & mad_out) {
+    mad_out = -1.0;
+    if (!a.row0.empty() && !b.row0.empty()) {
+        mad_out = mad_vectors(a.row0, b.row0);
+        if (a.row0.size() != b.row0.size()) {
+            return false;
+        }
+        for (size_t i = 0; i < a.row0.size(); ++i) {
+            uint32_t ua = 0;
+            uint32_t ub = 0;
+            std::memcpy(&ua, &a.row0[i], sizeof(ua));
+            std::memcpy(&ub, &b.row0[i], sizeof(ub));
+            if (ua != ub) {
+                return false;
+            }
+        }
+        return true;
+    }
+    return a.hash == b.hash && a.n_row0 == b.n_row0;
+}
+
+void report_c3_bisect(const char * label,
+                      const std::vector<tensor_snap> & multi,
+                      const std::vector<tensor_snap> & oneshot) {
+    printf("BISECT[%s]: multi_tensors=%zu oneshot_tensors=%zu\n",
+           label, multi.size(), oneshot.size());
+    printf("BISECT_NOTE: last-token slices of named tensors; skip anon node_*; "
+           "multi=ub8 oneshot=ub=n\n");
+
+    std::map<std::string, std::vector<size_t>> oneshot_by_name;
+    for (size_t i = 0; i < oneshot.size(); ++i) {
+        oneshot_by_name[oneshot[i].name].push_back(i);
+    }
+    std::map<std::string, size_t> oneshot_cursor;
+
+    size_t named_multi = 0;
+    size_t named_compared = 0;
+    size_t named_missing = 0;
+    size_t named_occ_mismatch = 0;
+    std::vector<std::string> prior_exact;
+    std::string first_missing;
+    std::string first_value_diff;
+    bool reported_value = false;
+
+    const size_t head = std::min<size_t>(multi.size(), 12);
+    if (head > 0) {
+        printf("BISECT_HEAD:");
+        for (size_t i = 0; i < head; ++i) {
+            printf(" %s/%s", multi[i].name.c_str(), multi[i].op.c_str());
+        }
+        printf("\n");
+    }
+
+    for (size_t si = 0; si < multi.size(); ++si) {
+        const auto & a = multi[si];
+        named_multi++;
+
+        auto it = oneshot_by_name.find(a.name);
+        if (it == oneshot_by_name.end()) {
+            named_missing++;
+            if (first_missing.empty()) {
+                first_missing = a.name;
+                printf("FIRST_MISSING_NAMED=%s\n", a.name.c_str());
+                printf("  op=%s ne_multi=[%lld,%lld,%lld,%lld] token_dim=%d\n",
+                       a.op.c_str(),
+                       (long long) a.ne[0], (long long) a.ne[1],
+                       (long long) a.ne[2], (long long) a.ne[3], a.token_dim);
+            }
+            continue;
+        }
+
+        size_t & cur = oneshot_cursor[a.name];
+        if (cur >= it->second.size()) {
+            named_occ_mismatch++;
+            if (first_missing.empty()) {
+                first_missing = a.name + "#occ";
+                printf("FIRST_MISSING_NAMED=%s (occurrence beyond oneshot count=%zu)\n",
+                       a.name.c_str(), it->second.size());
+            }
+            continue;
+        }
+        const size_t vi = it->second[cur++];
+        const auto & b = oneshot[vi];
+        named_compared++;
+
+        double mad = -1.0;
+        const bool values_equal = slices_bit_exact(a, b, mad);
+
+        if (!values_equal && !reported_value) {
+            reported_value = true;
+            first_value_diff = a.name;
+            printf("FIRST_DIFF_TENSOR=%s\n", a.name.c_str());
+            printf("  op=%s ne_multi=[%lld,%lld,%lld,%lld] ne_oneshot=[%lld,%lld,%lld,%lld]\n",
+                   a.op.c_str(),
+                   (long long) a.ne[0], (long long) a.ne[1],
+                   (long long) a.ne[2], (long long) a.ne[3],
+                   (long long) b.ne[0], (long long) b.ne[1],
+                   (long long) b.ne[2], (long long) b.ne[3]);
+            printf("  n_flat=%zu/%zu hash_multi=%016llx hash_oneshot=%016llx mad=%.8g "
+                   "token_dim_m=%d token_dim_o=%d\n",
+                   a.n_row0, b.n_row0,
+                   (unsigned long long) a.hash, (unsigned long long) b.hash, mad,
+                   a.token_dim, b.token_dim);
+            printf("  multi_idx=%zu oneshot_idx=%zu\n", si, vi);
+            printf("CLASS=last-token-value-divergence\n");
+            if (!prior_exact.empty()) {
+                printf("  prior_exact_named:");
+                const size_t ctx_n = std::min<size_t>(prior_exact.size(), 8);
+                for (size_t j = prior_exact.size() - ctx_n; j < prior_exact.size(); ++j) {
+                    printf(" %s", prior_exact[j].c_str());
+                }
+                printf("\n");
+            }
+            break;
+        }
+        prior_exact.push_back(a.name);
+    }
+
+    printf("BISECT_NAMED: multi_named=%zu compared=%zu missing=%zu occ_mismatch=%zu\n",
+           named_multi, named_compared, named_missing, named_occ_mismatch);
+    if (!first_missing.empty()) {
+        printf("FIRST_MISSING_NAMED_SUMMARY=%s\n", first_missing.c_str());
+    }
+    if (reported_value) {
+        printf("FIRST_DIFF_TENSOR_SUMMARY=%s\n", first_value_diff.c_str());
+        return;
+    }
+    if (!first_missing.empty()) {
+        printf("FIRST_DIFF_TENSOR=%s\n", first_missing.c_str());
+        printf("CLASS=named-tensor-missing-on-oneshot\n");
+        return;
+    }
+    printf("FIRST_DIFF_TENSOR=<none-in-named-set>\n");
+    printf("CLASS=logits-only-or-anon-only-residual\n");
+}
+
+struct bisect_prefill_result {
+    std::vector<float> logits;
+    std::vector<tensor_snap> snaps;
+    bool ok = false;
+};
+
+bool decode_prefix_last_capture(
+        llama_context * ctx,
+        const std::vector<llama_token> & tokens,
+        int32_t n_prefix,
+        capture_state * cap) {
+    const int32_t n_batch = std::max(1, (int32_t) llama_n_batch(ctx));
+    int32_t i = 0;
+    while (i < n_prefix) {
+        const int32_t n = std::min(n_batch, n_prefix - i);
+        const bool is_last = (i + n >= n_prefix);
+        llama_batch batch = llama_batch_init(n, 0, 1);
+        for (int32_t j = 0; j < n; ++j) {
+            const bool want_logits = (i + j + 1 == n_prefix);
+            common_batch_add(batch, tokens[size_t(i + j)], i + j, { 0 }, want_logits);
+        }
+        if (cap && is_last) {
+            cap->active = true;
+            // Internal ubatch width (not outer llama_batch n) — last-token dim.
+            cap->n_tokens = std::max(1, (int32_t) llama_n_ubatch(ctx));
+            cap->snaps.clear();
+        }
+        const int rc = llama_decode(ctx, batch);
+        if (cap && is_last) {
+            cap->active = false;
+        }
+        llama_batch_free(batch);
+        if (rc != 0) {
+            fprintf(stderr, "FAIL: prefix decode rc=%d at i=%d n=%d (n_batch=%d n_ubatch=%d)\n",
+                    rc, i, n, (int) llama_n_batch(ctx), (int) llama_n_ubatch(ctx));
+            return false;
+        }
+        i += n;
+    }
+    return true;
+}
+
+bisect_prefill_result run_prefill_bisect(
+        llama_model * model,
+        common_params params,
+        const std::vector<llama_token> & prompt_tokens,
+        int32_t n_prefix,
+        int32_t n_batch,
+        int32_t n_ubatch,
+        capture_state * cap) {
+    bisect_prefill_result out;
+    params.n_batch = n_batch;
+    params.n_ubatch = n_ubatch;
+    params.warmup = false;
+    if (cap) {
+        params.cb_eval = capture_cb;
+        params.cb_eval_user_data = cap;
+    }
+
+    auto cparams = common_context_params_to_llama(params);
+    cparams.n_seq_max = 1;
+    if (cap) {
+        cparams.cb_eval = capture_cb;
+        cparams.cb_eval_user_data = cap;
+    }
+    llama_context_ptr ctx{llama_init_from_model(model, cparams)};
+    if (!ctx) {
+        fprintf(stderr, "FAIL: ctx init b=%d ub=%d\n", n_batch, n_ubatch);
+        return out;
+    }
+    if (n_prefix < 2 || n_prefix > (int32_t) prompt_tokens.size()) {
+        fprintf(stderr, "FAIL: bad n_prefix=%d (prompt=%zu)\n", n_prefix, prompt_tokens.size());
+        return out;
+    }
+    if (!decode_prefix_last_capture(ctx.get(), prompt_tokens, n_prefix, cap)) {
+        return out;
+    }
+    if (cap) {
+        out.snaps = cap->snaps;
+    }
+    const float * logits = llama_get_logits(ctx.get());
+    if (!logits) {
+        fprintf(stderr, "FAIL: logits null after prefill b=%d ub=%d\n", n_batch, n_ubatch);
+        return out;
+    }
+    const int32_t n_vocab = llama_vocab_n_tokens(llama_model_get_vocab(model));
+    out.logits.assign(logits, logits + n_vocab);
+    out.ok = true;
+    return out;
+}
+
+bool run_c3_thresh(
+        llama_model * model,
+        common_params params,
+        const std::vector<llama_token> & tokens) {
+    const int32_t n_vocab = llama_vocab_n_tokens(llama_model_get_vocab(model));
+    // 1280 = 5*256 (pad-stable); 1288 first step into pad-to-1536 bucket.
+    const int32_t ns[] = {1280, 1288, 1312, 1344, 1408, 1536};
+    printf("UBATCH-S8-S1024-C3-THRESH (logits-only; n_kv pad hypothesis)\n");
+    printf("  model=%s n_prompt_tokens=%zu\n", params.model.path.c_str(), tokens.size());
+    for (int32_t n : ns) {
+        if (n > (int32_t) tokens.size()) {
+            printf("DIAG C3_THRESH_n%d: SKIP (prompt short)\n", n);
+            continue;
+        }
+        const logits_result a = run_prefill_logits(model, params, tokens, n, n, 8);
+        const logits_result b = run_prefill_logits(model, params, tokens, n, n, n);
+        if (!a.ok || !b.ok) {
+            printf("DIAG C3_THRESH_n%d: FAIL_RUN a.ok=%d b.ok=%d\n", n, a.ok ? 1 : 0, b.ok ? 1 : 0);
+            return false;
+        }
+        const logits_cmp c = compare_logits(a.logits.data(), b.logits.data(), n_vocab);
+        char label[64];
+        snprintf(label, sizeof(label), "C3_THRESH_n%d", n);
+        print_cmp(label, c);
+    }
+    printf("C3_THRESH_DONE: n=1280 should stay exact; first RED names pad-bucket edge\n");
+    return true;
+}
+
+bool run_c3_bisect(
+        llama_model * model,
+        common_params params,
+        const std::vector<llama_token> & tokens) {
+    const int32_t n_vocab = llama_vocab_n_tokens(llama_model_get_vocab(model));
+    constexpr int32_t n_ok = 1280;
+    constexpr int32_t n_bad = 1344;
+    if ((int32_t) tokens.size() < n_bad) {
+        fprintf(stderr, "FAIL: c3-bisect needs >= %d prompt tokens (got %zu)\n",
+                n_bad, tokens.size());
+        return false;
+    }
+
+    capture_state cap_proto;
+    if (const char * filt = std::getenv("TASK066_BISECT_FILTER"); filt && filt[0]) {
+        try {
+            cap_proto.filters.emplace_back(filt);
+        } catch (const std::regex_error & e) {
+            fprintf(stderr, "FAIL: TASK066_BISECT_FILTER invalid regex: %s\n", e.what());
+            return false;
+        }
+        fprintf(stderr, "bisect_filter=%s\n", filt);
+    }
+    if (const char * ho = std::getenv("TASK066_BISECT_HASH_ONLY"); ho && ho[0] == '1') {
+        cap_proto.keep_row0 = false;
+        fprintf(stderr, "bisect_hash_only=1\n");
+    }
+
+    auto one_pair = [&](const char * label, int32_t n) -> bool {
+        // Match C3/H10 pure pair: same outer n_batch=n, ub=8 vs ub=n (internal
+        // ubatch). cb_eval stays armed for the single llama_decode; capture_cb
+        // resets on each micro-batch embd so only the last ubatch remains.
+        printf("C3_BISECT n=%d multi b=%d ub=8 vs oneshot b=%d ub=%d "
+               "(last-ubatch named last-token)\n",
+               n, n, n, n);
+        capture_state cap_a = cap_proto;
+        capture_state cap_b = cap_proto;
+        const bisect_prefill_result a =
+                run_prefill_bisect(model, params, tokens, n, /*n_batch=*/n, /*n_ubatch=*/8, &cap_a);
+        const bisect_prefill_result b =
+                run_prefill_bisect(model, params, tokens, n, /*n_batch=*/n, /*n_ubatch=*/n, &cap_b);
+        if (!a.ok || !b.ok) {
+            printf("DIAG %s: FAIL_RUN a.ok=%d b.ok=%d\n", label, a.ok ? 1 : 0, b.ok ? 1 : 0);
+            return false;
+        }
+        const logits_cmp c = compare_logits(a.logits.data(), b.logits.data(), n_vocab);
+        print_cmp(label, c);
+        report_c3_bisect(label, a.snaps, b.snaps);
+        return true;
+    };
+
+    printf("UBATCH-S8-S1024-C3-BISECT (evidence only; C1/C2/C3 gates unchanged)\n");
+    printf("  model=%s n_prompt_tokens=%zu\n", params.model.path.c_str(), tokens.size());
+    if (!one_pair("C3_BISECT_n1280_control", n_ok)) {
+        return false;
+    }
+    if (!one_pair("C3_BISECT_n1344", n_bad)) {
+        return false;
+    }
+    printf("C3_BISECT_DONE: use FIRST_DIFF_TENSOR_SUMMARY on n1344; n1280 should be <none>\n");
+    return true;
 }
 
 bool is_turbo_kv_type(ggml_type t) {
@@ -512,6 +1035,8 @@ int main(int argc, char ** argv) {
     const char * diag = std::getenv("TASK066_DIAG");
     const bool do_localize = diag && std::strcmp(diag, "localize") == 0;
     const bool do_fa_ablation = diag && std::strcmp(diag, "fa-ablation") == 0;
+    const bool do_c3_bisect = diag && std::strcmp(diag, "c3-bisect") == 0;
+    const bool do_c3_thresh = diag && std::strcmp(diag, "c3-thresh") == 0;
 
     const int32_t ub_a = 8;
     const int32_t ub_b = 1024;
@@ -616,6 +1141,20 @@ int main(int argc, char ** argv) {
             return 1;
         }
         printf("RESULT FA_ABLATION_OK\n");
+        return 0;
+    }
+    if (do_c3_bisect) {
+        if (!run_c3_bisect(model, params, tokens)) {
+            return 1;
+        }
+        printf("RESULT C3_BISECT_OK (re-run without TASK066_DIAG for C1/C2/C3 RED/GREEN)\n");
+        return 0;
+    }
+    if (do_c3_thresh) {
+        if (!run_c3_thresh(model, params, tokens)) {
+            return 1;
+        }
+        printf("RESULT C3_THRESH_OK\n");
         return 0;
     }
 

@@ -15,15 +15,20 @@ Releases before `b10269-1.5.0` predate this file; see the git history.
 ### Added
 
 - **TASK-066.5/066.6 TDD gate:** `test-ubatch-s8-s1024-row0-parity` + `SUITE=ubatch-s8-s1024` —
-  C2 fast RED (n=32 ub=8 vs ub=32 logits) + C1 product greedy S8 vs S1024. Diag:
-  `TASK066_DIAG=localize|fa-ablation`; true FA-off needs `TASK066_CTV=f16` (fail-closed with turbo).
-  Requires `TASK066_MODEL` + `TASK066_CTX`. Not in `SUITE=all`.
+  C2 + C3 (n=1280/1344) + C1 product greedy S8 vs S1024. Diag:
+  `TASK066_DIAG=localize|fa-ablation|c3-bisect|c3-thresh`; true FA-off needs `TASK066_CTV=f16`
+  (fail-closed with turbo). Requires `TASK066_MODEL` + `TASK066_CTX`. Not in `SUITE=all`.
 - **TASK-066.8 R&D (docs + telemetry):** mathematical FP comparison metrics for ubatch S1/S8/S256/S1024
   and batch-invariance literature notes; `test-mul-mat-batch-invariance` dual-reports `max_ulp`
   beside `mad` while **bit-exact** remains the PASS gate.
 
 ### Fixed
 
+- **TASK-066.5 ISWA `size_swa` batch-invariance (C3-n1344):** stop sizing the SWA KV cache from
+  this context’s `n_ubatch` (`n_swa+n_ubatch` made ub=8 → 1280 cells vs large-ub ≫1280). Prefill
+  past 1280 then slid only on the small cache → multi-ubatch vs one-shot logits diverged
+  (`c3-thresh` n=1288 first RED; `FIRST_DIFF=kqv_out`). Headroom is now `size_base` so every `-ub`
+  shares capacity. `SUITE=ubatch-s8-s1024` C3+C1 GREEN; ladder HELP (`012625Z` S512≡S1024).
 - **TASK-066 fullgraph runner:** classify prefix/KV-slot failures as `FIXTURE_FAIL` (not logit RED);
   prior status-matrix “fullgraph RED” with `CTX=2048`/`-b 2048` was fixture misuse.
 

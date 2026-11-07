@@ -3,10 +3,10 @@
 Self-contained in **this** llama.cpp / ggml fork. Other developers: start here.
 
 **Branch:** `task066-metal-batch-invariance`  
-**Active track:** **[066.5](TASK-066.5-fusion-table-parity.md)** on **C3-n1344** (next). **[066.9](TASK-066.9-fa-batch-invariance.md)** Phase A localize **frozen** (always-tile C2 + non-FA C3); Phase B MTP gated.  
+**Active track:** **[066.9](TASK-066.9-fa-batch-invariance.md) Phase B MTP** (gated — need explicit start). **[066.5](TASK-066.5-fusion-table-parity.md)** **KEEP** (ISWA `size_swa`; C3+C1 GREEN).  
 **PR fidelity:** **[TASK-066-pr-audit-registry.md](TASK-066-pr-audit-registry.md)** (re-check after every Metal edit + suites).  
-**Done behind:** **[066.7 KEEP](TASK-066.7-mul-mat-residual.md)** + **[066.8 R&D DELIVERED](TASK-066.8-fp-comparison-metrics-rd.md)** + FA always-tile (C2) + 066.9 localize.  
-**Ladder confirm:** post-tile `231804Z` S1024 vs S8 DIFF@329 (HELP vs `212703Z`@182); C1 `first_token_diff=8`. MTP blocked until 066.9 Phase A DoD. Hist Stage 1 WAIVE ≠ Done.
+**Done behind:** **[066.7 KEEP](TASK-066.7-mul-mat-residual.md)** + **[066.8 R&D DELIVERED](TASK-066.8-fp-comparison-metrics-rd.md)** + FA always-tile (C2) + 066.9 localize + **066.5 ISWA**.  
+**Ladder:** post-ISWA `012625Z` S512≡S1024; S8 vs S1024 DIFF@22 under jinja CLI (HELP vs `231804Z`@329). C1 raw greedy GREEN. MTP blocked until explicit Phase B start. Hist Stage 1 WAIVE ≠ Done.
 
 ## Evidence hierarchy (hard)
 
@@ -23,11 +23,11 @@ Self-contained in **this** llama.cpp / ggml fork. Other developers: start here.
 | **066.2** | [TASK-066.2-compose-autotests.md](TASK-066.2-compose-autotests.md) | 066.1 | ✅ |
 | **066.3** | [TASK-066.3-fix-until-autotest-pass.md](TASK-066.3-fix-until-autotest-pass.md) | 066.2 | ✅ Gap A HELP |
 | **066.4** | [TASK-066.4-short-model-s8-s1024.md](TASK-066.4-short-model-s8-s1024.md) | 066.3 PASS | ✅ NO_EFFECT |
-| **066.5** | [TASK-066.5-fusion-table-parity.md](TASK-066.5-fusion-table-parity.md) | 066.9 localize (H9faOFF) | 🔓 **active — next** (C3-n1344) |
-| **066.6** | [TASK-066.6-cb-and-invariance-gates.md](TASK-066.6-cb-and-invariance-gates.md) | after 066.5 / parallel | 🔓 C2/C7 done; long residual → 066.5/066.9 |
+| **066.5** | [TASK-066.5-fusion-table-parity.md](TASK-066.5-fusion-table-parity.md) | 066.9 localize (H9faOFF) | 🟢 **KEEP** (ISWA `size_swa`; C3+C1) |
+| **066.6** | [TASK-066.6-cb-and-invariance-gates.md](TASK-066.6-cb-and-invariance-gates.md) | after 066.5 / parallel | 🟢 C2/C7 + C3 via 066.5 |
 | **066.7** | [TASK-066.7-mul-mat-residual.md](TASK-066.7-mul-mat-residual.md) | 066.4 done; residual was RED | 🟢 **KEEP** |
 | **066.8** | [TASK-066.8-fp-comparison-metrics-rd.md](TASK-066.8-fp-comparison-metrics-rd.md) ([lit](task066-hist/TASK-066.8-lit-notes.md)) | 066.7 KEEP | 🟢 **R&D DELIVERED** |
-| **066.9** | [TASK-066.9-fa-batch-invariance.md](TASK-066.9-fa-batch-invariance.md) ([draft](task066-hist/draft_mtp_research_task-066_fa.md)) | C2 GREEN + 066.7 | 🟢 Phase A localize **frozen**; 🔓 C3 open via 066.5; Phase B gated |
+| **066.9** | [TASK-066.9-fa-batch-invariance.md](TASK-066.9-fa-batch-invariance.md) ([draft](task066-hist/draft_mtp_research_task-066_fa.md)) | C2 GREEN + 066.7 | 🟢 Phase A DoD (C3→C1); Phase B MTP gated |
 
 Overview locks / DoD / out-of-scope: [TASK-066.0-overview.md](TASK-066.0-overview.md).  
 Latest suite GREEN/RED snapshot: [TASK-066-status-matrix-20261106.md](TASK-066-status-matrix-20261106.md).
