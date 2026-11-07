@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# TASK-066 ST-3.2d — MoE mul_mv_id row0 localizer (patch-C TDD gate for MoE hypothesis).
+# TASK-066 ST-3.2d - MoE mul_mv_id row0 localizer (patch-C TDD gate for MoE hypothesis).
 # Lives in the turboquant / llama.cpp tree (not linux_to_mac).
 #
 # Usage:
 #   ./tests/run-task066-moe-corners.sh [OUT_DIR]
 # Env:
-#   BUILD_DIR — cmake build dir (default: <repo>/build)
-#   REBUILD=1 — rebuild test-moe-row0-parity before run
+#   BUILD_DIR - cmake build dir (default: <repo>/build)
+#   REBUILD=1 - rebuild test-moe-row0-parity before run
 
 set -euo pipefail
 
@@ -19,7 +19,7 @@ TEST_BIN="${BUILD_DIR}/bin/test-moe-row0-parity"
 
 if [[ ! -d "${BUILD_DIR}" ]]; then
   echo "FAIL: BUILD_DIR missing: ${BUILD_DIR}" >&2
-  echo "Configure/build this fork first (cmake -B build …), then re-run." >&2
+  echo "Configure/build this fork first (cmake -B build ...), then re-run." >&2
   exit 1
 fi
 
@@ -29,7 +29,7 @@ if [[ "${REBUILD:-0}" == "1" ]] || [[ ! -x "${TEST_BIN}" ]]; then
     | tee "${OUT_DIR}/rebuild.log"
 fi
 
-echo "==> MOE-C1..C5 (test-moe-row0-parity) IQ4_XS / Q8_0 × top-8 × hetero"
+echo "==> MOE-C1..C5 (test-moe-row0-parity) IQ4_XS / Q8_0 x top-8 x hetero"
 set +e
 "${TEST_BIN}" 2>&1 | tee "${OUT_DIR}/moe-row0.log"
 RC=${PIPESTATUS[0]}

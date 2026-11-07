@@ -1,4 +1,4 @@
-# Metal batch-invariance — product e2e (not ctest)
+# Metal batch-invariance - product e2e (not ctest)
 
 Operator scripts for long MTP vs nomtp duels and the `n_max x p_min` knobs
 matrix. Autotest corners stay under `tests/` and default `ctest -L main`.

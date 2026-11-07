@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# TASK-066 follow-up B4 — E2E MTP vs greedy / verify-width bit-exact gate.
+# TASK-066 follow-up B4 - E2E MTP vs greedy / verify-width bit-exact gate.
 #
 # Stand-in localizer (same residual class as product MTP verify width):
-#   test-fullgraph-decode-row0-parity — after prefix, decode N=1 vs N=2 row0
+#   test-fullgraph-decode-row0-parity - after prefix, decode N=1 vs N=2 row0
 #   logits must be bit-exact (temperature=0 class). Expected RED until Track A
 #   (+ B1 if shared-KV) land. See TASK-066-cb-fusion-followup.md B4.
 #
@@ -32,7 +32,7 @@ set -e
 echo "fullgraph_exit=${RC}" | tee -a "${OUT_DIR}/summary.txt"
 
 if [[ "${RC}" -ne 0 ]]; then
-  echo "VERDICT=FAIL (B4 RED until fullgraph / MTP≡greedy class is green)" | tee -a "${OUT_DIR}/summary.txt"
+  echo "VERDICT=FAIL (B4 RED until fullgraph / MTP==greedy class is green)" | tee -a "${OUT_DIR}/summary.txt"
   exit "${RC}"
 fi
 

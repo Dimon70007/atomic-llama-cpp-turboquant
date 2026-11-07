@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# TASK-066 follow-up B1 — shared KV / catch-up decode audit (#27781).
+# TASK-066 follow-up B1 - shared KV / catch-up decode audit (#27781).
 #
 # Fail-closed RED until llama_memory_has_shared_cells (or equivalent #27781 port)
 # is present. After the #27781 port, this gate should PASS.
@@ -7,7 +7,7 @@
 # Usage:
 #   ./tests/run-task066-b1-shared-kv-audit.sh [OUT_DIR]
 # Env:
-#   TASK066_B1_WAIVE=1 — record PARTIAL as accepted (exit 0); default refuse
+#   TASK066_B1_WAIVE=1 - record PARTIAL as accepted (exit 0); default refuse
 
 set -euo pipefail
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# TASK-066 — Metal mul_mat / mul_mat_id corner suite (C1/C4/C5; C6 smoke).
+# TASK-066 - Metal mul_mat / mul_mat_id corner suite (C1/C4/C5; C6 smoke).
 # Lives in the turboquant / llama.cpp tree (not linux_to_mac).
 #
 # Usage:

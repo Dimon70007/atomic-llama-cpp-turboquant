@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# TASK-066 — Metal MUL_MAT residual: ne11 in {9,16,32,256,512,1024} row0 vs golden N=8.
+# TASK-066 - Metal MUL_MAT residual: ne11 in {9,16,32,256,512,1024} row0 vs golden N=8.
 # See tests/TASK-066-mul-mat-batch-inventory.md / TASK-066.6.
 #
 # Usage:
@@ -17,7 +17,7 @@ mkdir -p "${OUT_DIR}"
 TEST_BIN="${BUILD_DIR}/bin/test-mul-mat-batch-invariance"
 POLICY_BIN="${BUILD_DIR}/bin/test-metal-mul-mm-policy"
 
-# 066.7 residual vs N=8; 066.9 B product default min=0 (ne11>=1 → float-tile mul_mm).
+# 066.7 residual vs N=8; 066.9 B product default min=0 (ne11>=1 -> float-tile mul_mm).
 if [[ -n "${GGML_METAL_MUL_MM_MIN:-}" && "${GGML_METAL_MUL_MM_MIN}" != "0" ]]; then
   {
     echo "track=B5+066.7+066.9B"
@@ -36,7 +36,7 @@ fi
 
 NCPU="$(sysctl -n hw.ncpu 2>/dev/null || nproc)"
 
-# 066.9 A2 — CPU policy unit first (no Metal). Catches DEFAULT=7 / rem hazard on merge.
+# 066.9 A2 - CPU policy unit first (no Metal). Catches DEFAULT=7 / rem hazard on merge.
 if [[ "${REBUILD:-0}" == "1" ]] || [[ ! -x "${POLICY_BIN}" ]]; then
   echo "==> rebuild test-metal-mul-mm-policy"
   cmake --build "${BUILD_DIR}" --target test-metal-mul-mm-policy --parallel "${NCPU}" \
@@ -56,7 +56,7 @@ if [[ "${POLICY_RC}" -ne 0 ]]; then
   {
     echo "track=B5+066.7+066.9A2"
     echo "policy_exit=${POLICY_RC}"
-    echo "VERDICT=FAIL (mul_mm policy unit RED — check GGML_METAL_MUL_MM_MIN_DEFAULT / rem hazard)"
+    echo "VERDICT=FAIL (mul_mm policy unit RED - check GGML_METAL_MUL_MM_MIN_DEFAULT / rem hazard)"
   } | tee "${OUT_DIR}/summary.txt"
   echo "FAIL: mul_mm policy unit RED (see ${OUT_DIR}/policy.log)" >&2
   exit "${POLICY_RC}"
@@ -101,7 +101,7 @@ echo "mtp_verify_exit=${MTP_RC}" | tee "${OUT_DIR}/mtp-verify.exit"
   elif [[ "${RC}" -eq 77 || "${MTP_RC}" -eq 77 ]]; then
     echo "VERDICT=SKIP (no Metal)"
   elif [[ "${MTP_RC}" -ne 0 ]]; then
-    echo "VERDICT=FAIL (MTP verify N=1 vs {2,3,4} RED — Phase B)"
+    echo "VERDICT=FAIL (MTP verify N=1 vs {2,3,4} RED - Phase B)"
   else
     echo "VERDICT=FAIL (residual vs N=8 RED)"
   fi

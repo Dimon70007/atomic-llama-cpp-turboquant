@@ -1,4 +1,4 @@
-# Nomtp ubatch ladder — reference knobs (not a live minillm profile).
+# Nomtp ubatch ladder - reference knobs (not a live minillm profile).
 # Fast path: examples/metal-batch-invariance/run-ubatch-ladder.sh + llama-cli
 #   (prompt/notes: benchmarks/metal-batch-invariance/).
 # KV locked q8_0/turbo4 (product). Ladder sampling is greedy (temp=0), unlike live yaml.

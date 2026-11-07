@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# TASK-066 — long-KV FA row0 localizer (patch-C TDD gate for FA hypothesis).
+# TASK-066 - long-KV FA row0 localizer (patch-C TDD gate for FA hypothesis).
 # Lives in the turboquant / llama.cpp tree (not linux_to_mac).
 #
 # Usage:
 #   ./tests/run-task066-longctx-corners.sh [OUT_DIR]
 # Env:
-#   BUILD_DIR — cmake build dir (default: <repo>/build)
-#   REBUILD=1 — rebuild test-longctx-row0-parity before run
+#   BUILD_DIR - cmake build dir (default: <repo>/build)
+#   REBUILD=1 - rebuild test-longctx-row0-parity before run
 
 set -euo pipefail
 
@@ -19,7 +19,7 @@ TEST_BIN="${BUILD_DIR}/bin/test-longctx-row0-parity"
 
 if [[ ! -d "${BUILD_DIR}" ]]; then
   echo "FAIL: BUILD_DIR missing: ${BUILD_DIR}" >&2
-  echo "Configure/build this fork first (cmake -B build …), then re-run." >&2
+  echo "Configure/build this fork first (cmake -B build ...), then re-run." >&2
   exit 1
 fi
 

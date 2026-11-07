@@ -1,11 +1,11 @@
-// TASK-066 ST-3.2d — MoE mul_mv_id row0 localizer (P5 residual after FA long-KV GREEN).
+// TASK-066 ST-3.2d - MoE mul_mv_id row0 localizer (P5 residual after FA long-KV GREEN).
 //
 // C5 (test-mul-mat-batch-invariance) only covered Q8_0, 4 experts / top-2, uniform ids.
 // Product Gemma-4-26B-A4B is IQ4_XS, 128 experts / top-8 (+ shared MLP outside this op).
 // Hypothesis: IQ4_XS mul_mv_id with Gemma-like used-expert count and heterogeneous routing
 // across verify tokens (N=2..8) can break bit-exact row0 vs serial N=1.
 //
-// TDD: RED → patch C candidate on MoE surface; GREEN → MoE micro-op not the residual
+// TDD: RED -> patch C candidate on MoE surface; GREEN -> MoE micro-op not the residual
 // (next: logits / first-diff instrumentation). Host-skip 77 without Metal/GPU.
 
 #include "ggml.h"
@@ -23,7 +23,7 @@
 namespace {
 
 struct moe_shape {
-    int64_t k;               // ne00 (inner) — must be IQ4_XS-aligned (multiple of 256)
+    int64_t k;               // ne00 (inner) - must be IQ4_XS-aligned (multiple of 256)
     int64_t m;               // ne01 (rows)
     int64_t n_experts;       // ne02
     int64_t n_expert_used;   // ne20
@@ -56,7 +56,7 @@ std::vector<float> run_mul_mat_id(
         const std::vector<float> & act_f32,
         const std::vector<int32_t> & ids) {
     // weights: [k, m, n_experts]; acts: [k, n_expert_used, n_tokens]; ids: [n_expert_used, n_tokens]
-    // Use no_alloc + backend buffers — product-ish K=2816 × experts can exceed ctx RAM.
+    // Use no_alloc + backend buffers - product-ish K=2816 x experts can exceed ctx RAM.
     const size_t mem = ggml_tensor_overhead() * 64 + ggml_graph_overhead_custom(128, false) + 64 * 1024;
     ggml_init_params params = {
         /*.mem_size   =*/ mem,
@@ -104,7 +104,7 @@ void fill_hetero_ids(
         int64_t n_expert_used,
         int64_t n_tokens) {
     // Token 0: experts [0 .. n_expert_used). Other tokens: rotated distinct sets.
-    // Speculative verify packs draft tokens with different routers — row0 must stay stable.
+    // Speculative verify packs draft tokens with different routers - row0 must stay stable.
     ids.assign(size_t(n_expert_used * n_tokens), 0);
     for (int64_t t = 0; t < n_tokens; ++t) {
         for (int64_t e = 0; e < n_expert_used; ++e) {
@@ -232,13 +232,13 @@ int main() {
     ggml_backend_t backend = backend_holder.get();
     printf("backend=%s device=%s\n", ggml_backend_name(backend), ggml_backend_dev_description(chosen));
     printf("HYPOTHESIS: IQ4_XS mul_mv_id row0 under Gemma-like top-8 + hetero routing (P5 residual)\n");
-    printf("TDD: RED → MoE patch-C candidate; GREEN → next logits/first-diff localizer\n");
+    printf("TDD: RED -> MoE patch-C candidate; GREEN -> next logits/first-diff localizer\n");
     printf("NOTE: stays on mul_mv_id (ne21 < 32); mul_mm_id threshold is 32 for non-TQ\n");
 
     int fails = 0;
     const std::vector<int64_t> widths = {2, 3, 4, 5, 8};
 
-    // MOE-C1: product quant + top-8, still small K — extends C5 which skipped IQ4_XS id path.
+    // MOE-C1: product quant + top-8, still small K - extends C5 which skipped IQ4_XS id path.
     {
         moe_shape sh{/*k=*/256, /*m=*/64, /*n_experts=*/32, /*n_expert_used=*/8};
         check_moe_case(backend, GGML_TYPE_IQ4_XS, "c1-iq4xs-top8-uniform", sh, false, widths, fails);
@@ -262,14 +262,14 @@ int main() {
         check_moe_case(backend, GGML_TYPE_Q8_0, "c4-q8_0-top8-hetero", sh, true, widths, fails);
     }
 
-    // MOE-C5: closer to full expert count (128) but thinner rows — stress id map / tgpig.z packing.
+    // MOE-C5: closer to full expert count (128) but thinner rows - stress id map / tgpig.z packing.
     {
         moe_shape sh{/*k=*/256, /*m=*/64, /*n_experts=*/128, /*n_expert_used=*/8};
         check_moe_case(backend, GGML_TYPE_IQ4_XS, "c5-iq4xs-e128-hetero", sh, true, widths, fails);
     }
 
     if (fails != 0) {
-        printf("RESULT FAIL fails=%d (RED → MoE mul_mv_id patch-C candidate on this backend)\n", fails);
+        printf("RESULT FAIL fails=%d (RED -> MoE mul_mv_id patch-C candidate on this backend)\n", fails);
         return 1;
     }
     printf("RESULT PASS (GREEN on this backend for MoE micro-op; next logits/first-diff)\n");

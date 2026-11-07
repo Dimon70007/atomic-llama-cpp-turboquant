@@ -1,16 +1,16 @@
-// TASK-066.7 / 066.9 Phase A2 — pure Metal mul_mm vs mul_mv dispatch policy.
+// TASK-066.7 / 066.9 Phase A2 - pure Metal mul_mm vs mul_mv dispatch policy.
 //
 // Shared by ggml-metal-ops.cpp and CPU unit tests/test-metal-mul-mm-policy.cpp.
-// No Metal runtime / ObjC — safe to include from host unit tests.
+// No Metal runtime / ObjC - safe to include from host unit tests.
 //
 // Rule (matches ggml_metal_op_mul_mat): use mul_mm when ne11 > mm_min
 // (TQ / other special cases stay in ops.cpp).
 //
 // History:
-//   upstream-like: mm_min=8  → N=8 on mul_mv
-//   066.7 KEEP:    mm_min=7  → N>=8 on mul_mm; rem∈{2..7} still on mul_mv (A2 hole)
-//   066.9 A2:      mm_min=1  → N>=2 on mul_mm; closes last-ubatch rem cross-kernel
-//   066.9 B:       mm_min=0  → N>=1 on mul_mm; closes MTP verify N=1 vs {2,3,4}
+//   upstream-like: mm_min=8  -> N=8 on mul_mv
+//   066.7 KEEP:    mm_min=7  -> N>=8 on mul_mm; remin{2..7} still on mul_mv (A2 hole)
+//   066.9 A2:      mm_min=1  -> N>=2 on mul_mm; closes last-ubatch rem cross-kernel
+//   066.9 B:       mm_min=0  -> N>=1 on mul_mm; closes MTP verify N=1 vs {2,3,4}
 //                  (Phase B flips DEFAULT after RED autotest; A2 rem lock retained)
 
 #pragma once
@@ -35,8 +35,8 @@ static inline bool ggml_metal_mul_mm_ne11_uses_mm(int64_t ne11, int mm_min) {
  * MTP / speculative verify class: N=1 decode vs verify width N in {2,3,4}.
  * True when serial and verify disagree on mul_mm vs mul_mv under mm_min.
  *
- * Example (066.9 Phase B): mm_min=1 → N=1 mv, N=2..4 mm → hazard.
- * With mm_min=0 → all on mm → no hazard. Raising min to hide is forbidden.
+ * Example (066.9 Phase B): mm_min=1 -> N=1 mv, N=2..4 mm -> hazard.
+ * With mm_min=0 -> all on mm -> no hazard. Raising min to hide is forbidden.
  */
 static inline bool ggml_metal_mtp_verify_cross_kernel_hazard(int64_t verify_n, int mm_min) {
     if (verify_n < 2) {
@@ -67,8 +67,8 @@ static inline int32_t ggml_metal_ubatch_last_chunk_ne11(int32_t n_tokens, int32_
  * Prefill with full chunks of size n_ubatch plus a remainder rem:
  * true if full chunks and rem disagree on mul_mm vs mul_mv under mm_min.
  *
- * Example (066.9 A2): n_tokens=1708, n_ubatch=8, mm_min=7 → rem=4 → hazard.
- * With mm_min=1 → no hazard.
+ * Example (066.9 A2): n_tokens=1708, n_ubatch=8, mm_min=7 -> rem=4 -> hazard.
+ * With mm_min=1 -> no hazard.
  */
 static inline bool ggml_metal_ubatch_rem_cross_kernel_hazard(
         int32_t n_tokens,

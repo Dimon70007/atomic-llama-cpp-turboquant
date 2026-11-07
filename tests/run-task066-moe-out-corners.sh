@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# TASK-066 ST-3.2f-ter-loc — MoE ffn_moe_out dual-topology localizer (patch-C TDD).
+# TASK-066 ST-3.2f-ter-loc - MoE ffn_moe_out dual-topology localizer (patch-C TDD).
 # Lives in the turboquant / llama.cpp tree (not linux_to_mac).
 #
 # Usage:
 #   ./tests/run-task066-moe-out-corners.sh [OUT_DIR]
 # Env:
-#   BUILD_DIR — cmake build dir (default: <repo>/build)
-#   REBUILD=1 — rebuild test-moe-out-row0-parity before run
+#   BUILD_DIR - cmake build dir (default: <repo>/build)
+#   REBUILD=1 - rebuild test-moe-out-row0-parity before run
 
 set -euo pipefail
 
@@ -19,7 +19,7 @@ TEST_BIN="${BUILD_DIR}/bin/test-moe-out-row0-parity"
 
 if [[ ! -d "${BUILD_DIR}" ]]; then
   echo "FAIL: BUILD_DIR missing: ${BUILD_DIR}" >&2
-  echo "Configure/build this fork first (cmake -B build …), then re-run." >&2
+  echo "Configure/build this fork first (cmake -B build ...), then re-run." >&2
   exit 1
 fi
 

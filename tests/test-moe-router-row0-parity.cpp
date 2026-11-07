@@ -1,4 +1,4 @@
-// TASK-066 ST-3.2d — MoE router→soft_max→argsort_top_k→mul_mat_id row0 localizer.
+// TASK-066 ST-3.2d - MoE router->soft_max->argsort_top_k->mul_mat_id row0 localizer.
 //
 // Prior MoE micro-op (fixed expert ids) is GREEN on Metal. Real Gemma MoE computes
 // expert ids from router logits per token. Hypothesis: N>1 verify batches flip row0
@@ -6,8 +6,8 @@
 //
 // Self-contained: build & run inside this repo only (no external project deps).
 // Env:
-//   TASK066_ROUTER_STAGE=logits|probs|ids|moe  — stop after stage (bisection; default moe)
-// TDD: RED → patch C candidate; GREEN → live first-diff dump next (product harness elsewhere).
+//   TASK066_ROUTER_STAGE=logits|probs|ids|moe  - stop after stage (bisection; default moe)
+// TDD: RED -> patch C candidate; GREEN -> live first-diff dump next (product harness elsewhere).
 // Host-skip 77 without Metal/GPU.
 
 #include "ggml.h"
@@ -319,7 +319,7 @@ int main() {
     ggml_backend_t backend = backend_holder.get();
     printf("backend=%s device=%s\n", ggml_backend_name(backend), ggml_backend_dev_description(chosen));
     printf("HYPOTHESIS: router soft_max/argsort_top_k flips row0 experts under N>1\n");
-    printf("TDD: RED → logits/router patch-C candidate; GREEN → live first-diff dump next\n");
+    printf("TDD: RED -> logits/router patch-C candidate; GREEN -> live first-diff dump next\n");
     printf("TASK066_ROUTER_STAGE=%d (0=logits 1=probs 2=ids 3=moe)\n", int(stage));
     fflush(stdout);
 
@@ -331,7 +331,7 @@ int main() {
     check_chain(backend, GGML_TYPE_Q8_0, "rt3-q8_0-neartie", true, widths, stage, fails);
 
     if (fails != 0) {
-        printf("RESULT FAIL fails=%d (RED → MoE router/logits patch-C candidate)\n", fails);
+        printf("RESULT FAIL fails=%d (RED -> MoE router/logits patch-C candidate)\n", fails);
         return 1;
     }
     printf("RESULT PASS (GREEN router chain stage; escalate stage or live first-diff)\n");

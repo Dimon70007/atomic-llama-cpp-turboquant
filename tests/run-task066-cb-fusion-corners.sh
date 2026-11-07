@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# TASK-066 follow-up — Metal CB fusion align unit suite (TDD RED until follow-up High/Medium).
+# TASK-066 follow-up - Metal CB fusion align unit suite (TDD RED until follow-up High/Medium).
 #
 # Usage (from this repo root):
 #   ./tests/run-task066-cb-fusion-corners.sh [OUT_DIR]
 # Env:
-#   BUILD_DIR — cmake build dir (default: <repo>/build)
-#   REBUILD=1 — rebuild test-metal-cb-fusion before run
+#   BUILD_DIR - cmake build dir (default: <repo>/build)
+#   REBUILD=1 - rebuild test-metal-cb-fusion before run
 
 set -euo pipefail
 

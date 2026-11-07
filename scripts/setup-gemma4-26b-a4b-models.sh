@@ -7,8 +7,8 @@
 #   MODELS_DIR=$HOME/models ./scripts/setup-gemma4-26b-a4b-models.sh
 #
 # Env:
-#   MODELS_DIR  — search dir for GGUFs (default: $HOME/models)
-#   FORCE=1      — replace existing links/files in .scratch
+#   MODELS_DIR  - search dir for GGUFs (default: $HOME/models)
+#   FORCE=1      - replace existing links/files in .scratch
 
 set -euo pipefail
 

@@ -221,9 +221,9 @@ bool check_c1(
     return ok_all;
 }
 
-// C7 — multi-step ubatch vs one-shot (product C2 class at FA-op level).
+// C7 - multi-step ubatch vs one-shot (product C2 class at FA-op level).
 // n_total queries causal over KV=n_total: one FA(nq=n_total) vs floor(n_total/ub)
-// steps of FA(nq=ub) with growing KV. Bit-exact required (no ε).
+// steps of FA(nq=ub) with growing KV. Bit-exact required (no eps).
 // Pre-fix (legacy ne01<20 vec): n=16/ub=8 both-vec often GREEN; n=32/ub=8 vec vs
 // tile RED. After TASK-066 always-tile: both must be GREEN.
 bool check_c7_multistep_ubatch(
@@ -301,11 +301,11 @@ bool check_c2_boundary(
         const char * label,
         int & fails) {
     // Speculative verify grows KV earlier than plain decode. Keep ne11 identical
-    // (verify_kv) on both arms and mask decode row0 to decode_kv-1 — otherwise
+    // (verify_kv) on both arms and mask decode row0 to decode_kv-1 - otherwise
     // different ne11 alone yields ~1 ULP even when nsg is pinned.
     const int64_t verify_kv = decode_kv + (n - 1);
     const int64_t q_pos0 = decode_kv - 1;
-    printf("C2 early-cross [%s] decode_kv=%lld verify_kv=%lld N=%lld K=%s V=%s nsg_formula %lld→%lld (same-ne11+mask)\n",
+    printf("C2 early-cross [%s] decode_kv=%lld verify_kv=%lld N=%lld K=%s V=%s nsg_formula %lld->%lld (same-ne11+mask)\n",
            label, (long long) decode_kv, (long long) verify_kv, (long long) n,
            ggml_type_name(type_k), ggml_type_name(type_v),
            (long long) nsg_for_ne11(decode_kv), (long long) nsg_for_ne11(verify_kv));
@@ -364,7 +364,7 @@ void run_pair_suite(
     check_c2_boundary(backend, 4095, 3, type_k, type_v, label, fails);
     // C7: product-class multi-step ubatch (H6 n=16 / H7=C2 n=32).
     // 066.9 Phase A: also stress longer FA-op chunks (H2 n=512 GREEN at model;
-    // H3 n≈1696 RED — if C7@256 stays GREEN, residual is above pure FA-op).
+    // H3 n~1696 RED - if C7@256 stays GREEN, residual is above pure FA-op).
     check_c7_multistep_ubatch(backend, 16, 8, type_k, type_v, label, fails);
     check_c7_multistep_ubatch(backend, 32, 8, type_k, type_v, label, fails);
     check_c7_multistep_ubatch(backend, 64, 8, type_k, type_v, label, fails);
@@ -416,7 +416,7 @@ int main() {
     int fails = 0;
     const std::vector<int64_t> widths = {2, 3, 4, 5, 8};
 
-    // C1+C2 baseline types (F16/F16) — full boundary matrix.
+    // C1+C2 baseline types (F16/F16) - full boundary matrix.
     run_pair_suite(backend, GGML_TYPE_F16, GGML_TYPE_F16, "f16/f16", widths, /*full*/ true, fails);
 
     // C4 product MTP Metal profile: quant_k=q8_0, quant_v=turbo4.

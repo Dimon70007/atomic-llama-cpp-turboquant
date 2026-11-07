@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# TASK-066 Stage 0 — nomtp ubatch ladder (product gate; NOT in SUITE=followup).
+# TASK-066 Stage 0 - nomtp ubatch ladder (product gate; NOT in SUITE=followup).
 # See docs/backend/metal-batch-invariance.md and examples/metal-batch-invariance/README.md.
 #
 # Model resolution matches scripts/run-gemma4-mtp-server.sh (MAIN_GGUF / .scratch):
@@ -13,24 +13,24 @@
 #   BUILD_DIR=build ./examples/metal-batch-invariance/run-ubatch-ladder.sh [OUT_DIR]
 #
 # Env:
-#   MAIN_GGUF / TASK066_MODEL — optional GGUF override
-#   TASK066_PROMPT      — optional; default benchmarks/metal-batch-invariance/...prompt.txt
-#   TASK066_N_PREDICT   — default 256
-#   TASK066_CTX         — default 4096
-#   TASK066_UBATCH_LIST — default "1 8 16 33 256 512 1024 2048"
-#   TASK066_REPEAT_LARGE — default "1024 2048" (2x same-ubatch on large cells)
-#   TASK066_BATCH_MODE  — "floor" (default): -b = max(ubatch, TASK066_BATCH_FLOOR)
+#   MAIN_GGUF / TASK066_MODEL - optional GGUF override
+#   TASK066_PROMPT      - optional; default benchmarks/metal-batch-invariance/...prompt.txt
+#   TASK066_N_PREDICT   - default 256
+#   TASK066_CTX         - default 4096
+#   TASK066_UBATCH_LIST - default "1 8 16 33 256 512 1024 2048"
+#   TASK066_REPEAT_LARGE - default "1024 2048" (2x same-ubatch on large cells)
+#   TASK066_BATCH_MODE  - "floor" (default): -b = max(ubatch, TASK066_BATCH_FLOOR)
 #                         "equal": -b = ubatch (small ub breaks ~2k prefill)
 #                         "max":   -b = TASK066_BATCH_MAX always (often Metal OOM on M4)
-#   TASK066_BATCH_FLOOR — default 512 (enough for ~2k prefill chunks; avoids -b 2048 OOM)
-#   TASK066_BATCH_MAX   — default 2048 (only for mode=max)
-#   TASK066_CTK/CTV     — locked q8_0 / turbo4 (product KV; other values rejected)
-#   TASK066_CRAM        — default 0 (disable prompt cache). CLI default is 8192 MiB and
+#   TASK066_BATCH_FLOOR - default 512 (enough for ~2k prefill chunks; avoids -b 2048 OOM)
+#   TASK066_BATCH_MAX   - default 2048 (only for mode=max)
+#   TASK066_CTK/CTV     - locked q8_0 / turbo4 (product KV; other values rejected)
+#   TASK066_CRAM        - default 0 (disable prompt cache). CLI default is 8192 MiB and
 #                         OOMs this 26B MoE on 24 GB Metal; product yaml uses 4096.
-#   TASK066_CTXCP       — default 32 (product ctx_checkpoints)
-#   TASK066_STOP_ON_FAIL — default 1 (abort on non-zero OR Metal OOM / Compute error in log)
-#   TASK066_ALLOW_SHARED_METAL — default 0; set 1 to skip "other llama-* holding GPU" preflight
-#   GGML_METAL_MUL_MM_MIN — recommended 8 for Stage 0/1 debug
+#   TASK066_CTXCP       - default 32 (product ctx_checkpoints)
+#   TASK066_STOP_ON_FAIL - default 1 (abort on non-zero OR Metal OOM / Compute error in log)
+#   TASK066_ALLOW_SHARED_METAL - default 0; set 1 to skip "other llama-* holding GPU" preflight
+#   GGML_METAL_MUL_MM_MIN - recommended 8 for Stage 0/1 debug
 #   LLAMA_CLI, BUILD_DIR, REBUILD=1, DRY_RUN=1
 #
 # Writes: logs/metal-ubatch-ladder-<stamp>/{cells/,matrix.md,README.txt,env.txt}
@@ -104,7 +104,7 @@ fi
 # already holds the model (typical: localhost:8180).
 preflight_exclusive_metal() {
   if [[ "${TASK066_ALLOW_SHARED_METAL:-0}" == "1" ]]; then
-    echo "NOTE: TASK066_ALLOW_SHARED_METAL=1 — skipping exclusive-Metal preflight" >&2
+    echo "NOTE: TASK066_ALLOW_SHARED_METAL=1 - skipping exclusive-Metal preflight" >&2
     return 0
   fi
   local hits=""
@@ -115,7 +115,7 @@ preflight_exclusive_metal() {
   if [[ -z "${hits}" ]]; then
     return 0
   fi
-  # If the only hits are unrelated short-lived, still warn — any llama-server is fatal.
+  # If the only hits are unrelated short-lived, still warn - any llama-server is fatal.
   if echo "${hits}" | grep -q 'llama-server'; then
     echo "FAIL: another llama-server is already running (holds Metal VRAM):" >&2
     echo "${hits}" | LC_ALL=C sed 's/^/  /' >&2
@@ -254,7 +254,7 @@ run_cell() {
   if [[ "${rc}" -ne 0 ]]; then
     echo "FAIL: llama-cli exit ${rc} for ub=${ub} run=${run} (see ${log})" >&2
     if grep -E -q 'Insufficient Memory' "${log}" 2>/dev/null; then
-      echo "hint: Metal OOM — ensure -cram 0 (default here; CLI default 8192 MiB OOMs 24 GB)." >&2
+      echo "hint: Metal OOM - ensure -cram 0 (default here; CLI default 8192 MiB OOMs 24 GB)." >&2
       echo "hint: kill leftover llama-cli/llama-server; BATCH_MODE=floor; CTX~3072; KV q8_0/turbo4." >&2
     fi
     if [[ "${STOP_ON_FAIL}" == "1" ]]; then

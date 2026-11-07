@@ -1,4 +1,4 @@
-// TASK-066.2 / ggml-org/llama.cpp#31688 + #28164 — Metal CB split vs fuse table.
+// TASK-066.2 / ggml-org/llama.cpp#31688 + #28164 - Metal CB split vs fuse table.
 //
 // Invariants (see tests/TASK-066.1-audit-notes.md + TASK-066.2-compose-autotests.md):
 //   I1  fusion_max spans encoder-relevant fuse groups (ADD / RMS_NORM+MUL+ADD / SNAKE).
@@ -130,7 +130,7 @@ bool check(bool ok, int & fails, const char * name, const std::string & detail) 
     return false;
 }
 
-// ADD, RESHAPE (empty op), ADD with a1->src[0] == a0 — encoder fuses across reshape.
+// ADD, RESHAPE (empty op), ADD with a1->src[0] == a0 - encoder fuses across reshape.
 bool case_add_view_add(int & fails) {
     constexpr int64_t n = 64;
     auto h = make_ctx();
@@ -593,7 +593,7 @@ int main() {
     case_fusion_next_norm_mul_add(fails);
 
     if (fails != 0) {
-        printf("FAILED: %d check(s) — RED until 066.3 fixes (see TASK-066.1-audit-notes)\n", fails);
+        printf("FAILED: %d check(s) - RED until 066.3 fixes (see TASK-066.1-audit-notes)\n", fails);
         return 1;
     }
     printf("OK: metal CB fusion align (TASK-066.2)\n");

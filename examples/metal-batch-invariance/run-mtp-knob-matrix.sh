@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Metal MTP knobs quality/speed matrix (examples only — not ctest).
+# Metal MTP knobs quality/speed matrix (examples only - not ctest).
 #
 # Usage:
 #   unset GGML_METAL_MUL_MM_MIN
@@ -21,7 +21,7 @@ if [[ ! -f "${PY}" ]]; then
 fi
 
 if [[ -z "${GGML_METAL_MUL_MM_MIN:-}" ]]; then
-  echo "NOTE: MUL_MM_MIN unset → product default 0" >&2
+  echo "NOTE: MUL_MM_MIN unset -> product default 0" >&2
 fi
 
 export BUILD_DIR="${BUILD_DIR:-${REPO_ROOT}/build}"

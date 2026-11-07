@@ -2464,13 +2464,13 @@ int ggml_metal_op_mul_mat(ggml_metal_op_t ctx, int idx) {
     // TASK-066.7 float-tile + 066.9 A2 min=1 + Phase B default min=0
     // (see ggml_metal_mul_mm_batch_min / ggml-metal-mul-mm-policy.h).
     // Sharing mm for all ne11>=1 avoids: (A2) last-ubatch rem vs full chunks; (B) MTP
-    // verify N=1 vs {2,3,4} (same kernel — #28108 spirit for Metal matmul).
+    // verify N=1 vs {2,3,4} (same kernel - #28108 spirit for Metal matmul).
     const int ne11_mm_min = ggml_metal_mul_mm_batch_min();
 
     // first try to use small-batch mat-mv kernels
     // these should be efficient for BS [2, ~8]
     // TASK-066 / ggml-org/llama.cpp#25618 (skoulik): disable mul_mv_ext for ne11 in 2..8.
-    // N=1 uses mul_mv; verify batches used mul_mv_ext → row0 float drift (~1 ULP). Force mul_mv.
+    // N=1 uses mul_mv; verify batches used mul_mv_ext -> row0 float drift (~1 ULP). Force mul_mv.
     if (false && op->src[1]->type == GGML_TYPE_F32 && (ne00%128 == 0) &&
         (
          (
@@ -3058,10 +3058,10 @@ bool ggml_metal_op_flash_attn_ext_use_vec(const ggml_tensor * op) {
 
     // TASK-066 C2 / Thinking Machines batch-invariance:
     // Legacy gate `(ne01 < 20)` made product ubatch ub=8 take FA-vec while
-    // ub=32/1024 took FA-tile → different reduction kernels for the same
+    // ub=32/1024 took FA-tile -> different reduction kernels for the same
     // prefill (H6 n=16 both-vec GREEN; H7/C2 n=32 ub8 vs ub32 RED).
     // Default: always tile. Opt into legacy shape-based vec with GGML_METAL_FA_VEC=1
-    // (perf A/B / #25618 vec-nsg corners only — not product path).
+    // (perf A/B / #25618 vec-nsg corners only - not product path).
     const char * allow_vec = getenv("GGML_METAL_FA_VEC");
     const bool allow_shape_vec = allow_vec && allow_vec[0] == '1';
 
@@ -3071,7 +3071,7 @@ bool ggml_metal_op_flash_attn_ext_use_vec(const ggml_tensor * op) {
         // EXPERIMENT: force non-vec for turbo3 on pre-M5 hardware.
         // The vec kernel uses nl=8 (4 elements per dequant call) which has 4x more
         // loop iterations than the non-vec nl=2 path. On M2 Pro, this loop overhead
-        // dominates — the non-vec path may be faster even for batch=1.
+        // dominates - the non-vec path may be faster even for batch=1.
         const ggml_type ktype = op->src[1]->type;
         if (ktype == GGML_TYPE_TURBO2_0 || ktype == GGML_TYPE_TURBO3_0 || ktype == GGML_TYPE_TURBO4_0) {
             const char * force_nonvec = getenv("TURBO_FORCE_NONVEC");

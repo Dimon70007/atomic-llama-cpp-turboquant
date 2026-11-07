@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# TASK-066 follow-up — one-command runner for Track A + Track B gates.
+# TASK-066 follow-up - one-command runner for Track A + Track B gates.
 #
 # Usage (from this repo root):
 #   ./tests/run-task066-followup-all.sh [OUT_DIR]
@@ -8,12 +8,12 @@
 #
 # Env (forwarded to children):
 #   BUILD_DIR, REBUILD=1
-#   TASK066_B1_WAIVE=1              — accept B1 PARTIAL (fork is_mem_shared)
-#   TASK066_ACC_TRACE_LOG=...       — required for B2 PASS (else B2 stays FAIL)
-#   TASK066_ACC_TRACE_NOTE=...      — optional first-diverge note for B2
-#   TASK066_MODEL + TASK066_CTX     — required to run B4 mtp-e2e; else B4 is SKIP
-#   TASK066_FOLLOWUP_REQUIRE_E2E=1  — fail closed if MODEL/CTX missing (no B4 SKIP)
-#   TASK066_FOLLOWUP_SKIP=csv       — skip named parts (e.g. mtp-acc-trace,mul-mat-residual)
+#   TASK066_B1_WAIVE=1              - accept B1 PARTIAL (fork is_mem_shared)
+#   TASK066_ACC_TRACE_LOG=...       - required for B2 PASS (else B2 stays FAIL)
+#   TASK066_ACC_TRACE_NOTE=...      - optional first-diverge note for B2
+#   TASK066_MODEL + TASK066_CTX     - required to run B4 mtp-e2e; else B4 is SKIP
+#   TASK066_FOLLOWUP_REQUIRE_E2E=1  - fail closed if MODEL/CTX missing (no B4 SKIP)
+#   TASK066_FOLLOWUP_SKIP=csv       - skip named parts (e.g. mtp-acc-trace,mul-mat-residual)
 #
 # Runs every gate even if earlier ones fail; final exit is non-zero if any FAIL
 # (host-skip exit 77 counts as SKIP, not FAIL).

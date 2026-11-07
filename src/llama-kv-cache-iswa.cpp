@@ -80,13 +80,13 @@ llama_kv_cache_iswa::llama_kv_cache_iswa(
     //
     // TASK-066.5 / C3-n1344: do NOT add this context's n_ubatch into size_swa.
     // Old formula `n_swa + n_ubatch` made SWA capacity depend on -ub:
-    //   Gemma4 n_swa=1024, ub=8  → PAD(1032,256)=1280
-    //   ub=1344 / ub=1024        → PAD(1024+ub,256) ≫ 1280
-    // Prefill past 1280 then slides on the small cache but not the large one →
+    //   Gemma4 n_swa=1024, ub=8  -> PAD(1032,256)=1280
+    //   ub=1344 / ub=1024        -> PAD(1024+ub,256) >> 1280
+    // Prefill past 1280 then slides on the small cache but not the large one ->
     // multi-ubatch vs one-shot logits diverge (c3-thresh: n=1280 GREEN, n=1288
-    // first RED; FIRST_DIFF=kqv_out; H9faOFF still RED — not FA-only).
+    // first RED; FIRST_DIFF=kqv_out; H9faOFF still RED - not FA-only).
     // Headroom = size_base so (a) every -ub shares the same capacity and
-    // (b) a oneshot ubatch up to n_ctx still fits. min() ⇒ size_swa == size_base
+    // (b) a oneshot ubatch up to n_ctx still fits. min() => size_swa == size_base
     // whenever ctx ≥ n_swa (full-length SWA cells; same as swa_full for that case).
     const uint32_t swa_window = hparams.n_swa * (unified ? n_seq_max : 1);
     uint32_t size_swa = GGML_PAD(std::min(size_base, swa_window + size_base), 256);

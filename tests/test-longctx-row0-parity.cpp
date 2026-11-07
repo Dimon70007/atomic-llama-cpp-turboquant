@@ -1,10 +1,10 @@
-// TASK-066 P5 residual localizer — long-KV FA row0 parity (hypothesis: FA still
-// diverges for N>1 at product KV lengths ≫ 4096 after metal-fa-nsg-pin).
+// TASK-066 P5 residual localizer - long-KV FA row0 parity (hypothesis: FA still
+// diverges for N>1 at product KV lengths >> 4096 after metal-fa-nsg-pin).
 //
-// TDD gate for patch C on FA long-KV: RED → candidate Metal/CUDA FA fix;
+// TDD gate for patch C on FA long-KV: RED -> candidate Metal/CUDA FA fix;
 // GREEN on a host means this surface needs no new patch *on that backend* (still run CUDA).
 //
-// Contract: product FA KV q8_0/turbo4; KV ∈ {8192, 32768, 65536}; N ∈ {2,3,4,5,8};
+// Contract: product FA KV q8_0/turbo4; KV in {8192, 32768, 65536}; N in {2,3,4,5,8};
 // row0(batch N) bit-identical to serial N=1. Also early-cross causal at long KV.
 // Host-skip (exit 77) when no Metal backend.
 
@@ -267,7 +267,7 @@ int main() {
     ggml_backend_t backend = backend_holder.get();
     printf("backend=%s device=%s\n", ggml_backend_name(backend), ggml_backend_dev_description(chosen));
     printf("HYPOTHESIS: FA long-KV row0 after A+B (metal-fa-nsg-pin + mul_mv_ext disable)\n");
-    printf("TDD: RED → patch C candidate on this backend; GREEN → no new FA patch here (still run CUDA)\n");
+    printf("TDD: RED -> patch C candidate on this backend; GREEN -> no new FA patch here (still run CUDA)\n");
     printf("KV types: product q8_0/turbo4\n");
 
     int fails = 0;
@@ -286,7 +286,7 @@ int main() {
     check_early_cross_long(backend, 65536, 2, type_k, type_v, fails);
 
     if (fails != 0) {
-        printf("RESULT FAIL fails=%d (RED → FA long-KV patch-C candidate on this backend)\n", fails);
+        printf("RESULT FAIL fails=%d (RED -> FA long-KV patch-C candidate on this backend)\n", fails);
         return 1;
     }
     printf("RESULT PASS (GREEN on this backend without new FA patch; re-run on CUDA / next localizer)\n");

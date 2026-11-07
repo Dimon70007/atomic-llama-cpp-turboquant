@@ -1,4 +1,4 @@
-// TASK-066 ST-3.2f / 3.2f-ter — full-graph decode row0 batch-invariance localizer.
+// TASK-066 ST-3.2f / 3.2f-ter - full-graph decode row0 batch-invariance localizer.
 //
 // Micro localizers (FA long-KV / MoE / router) stayed GREEN after Metal A+B KEEP, while
 // live P5 + first-diff logits still MISMATCH (near-tie argmax cascade under MTP verify
@@ -7,7 +7,7 @@
 //   After the same prefix, decode token T as:
 //     serial:  batch N=1
 //     verify:  batch N=2 with dummy draft token in slot 1
-//   Require bit-exact logits for row0 (slot 0). Any ULP diff → RED (patch-C candidate).
+//   Require bit-exact logits for row0 (slot 0). Any ULP diff -> RED (patch-C candidate).
 //
 // ST-3.2f-ter bisect (env TASK066_BISECT=1):
 //   During the final decode only, capture F32/F16 graph tensors via cb_eval and compare
@@ -429,7 +429,7 @@ double mad_slice0(const tensor_snap & a, const tensor_snap & b) {
 }
 
 bool is_anon_tensor_name(const std::string & name) {
-    // ggml auto names: "node_123" — not stable across N=1 vs N=2 graph shapes.
+    // ggml auto names: "node_123" - not stable across N=1 vs N=2 graph shapes.
     return name.rfind("node_", 0) == 0;
 }
 
@@ -772,14 +772,14 @@ int main(int argc, char ** argv) {
            cmp.argmax_a, cmp.argmax_b);
 
     if (!cmp.exact) {
-        printf("RESULT FAIL (RED) — full-graph row0 logits not bit-exact; patch-C TDD gate open\n");
+        printf("RESULT FAIL (RED) - full-graph row0 logits not bit-exact; patch-C TDD gate open\n");
         return 1;
     }
     if (cmp.argmax_a != cmp.argmax_b) {
-        printf("RESULT FAIL (RED) — argmax mismatch with claimed exact logits\n");
+        printf("RESULT FAIL (RED) - argmax mismatch with claimed exact logits\n");
         return 1;
     }
-    printf("RESULT PASS (GREEN) — full-graph row0 bit-exact on this prompt/host\n");
+    printf("RESULT PASS (GREEN) - full-graph row0 bit-exact on this prompt/host\n");
     printf("note: GREEN here does not waive live first-diff/P5; try longer --prompt-file\n");
     return 0;
 }
