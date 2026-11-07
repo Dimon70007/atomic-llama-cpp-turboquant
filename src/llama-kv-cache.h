@@ -40,6 +40,16 @@ ggml_type llama_kv_cache_turbo_layer_adaptive_type_k(
 ggml_type llama_kv_cache_turbo_layer_adaptive_type_v(
         int mode, ggml_type type_k, ggml_type type_v, uint32_t il, uint32_t n_layer);
 
+// q8 head/tail brackets from -ctv turbo3.8|turbo4.8 (TURBO_LAYER_Q8_BRACKETS).
+// HEAD/TAIL via TURBO_LAYER_HEAD / TURBO_LAYER_TAIL (defaults 2/8).
+// Returns true when the schedule is active (mixed per-layer V types).
+bool llama_kv_cache_q8_brackets_active(void);
+
+// Resolve effective V type for layer il under q8 brackets. If brackets are
+// inactive, returns type_v unchanged. Throws on ADAPTIVE conflict / bad widths.
+ggml_type llama_kv_cache_q8_brackets_type_v(
+        ggml_type type_v, uint32_t il, uint32_t n_layer);
+
 //
 // llama_kv_cache
 //
