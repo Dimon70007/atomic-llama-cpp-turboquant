@@ -1,6 +1,6 @@
 # TASK-066 — Upstream / fork PR audit registry
 
-**Updated:** 2026-11-07 (066.9 Phase A localize frozen)  
+**Updated:** 2026-11-07 (A1 Done; **A2 jinja-ladder next** > Phase B MTP)  
 **Index:** [README-TASK066.md](README-TASK066.md)  
 **Artifacts:** `logs/upstream-prs/{pr28164,pr31688,pr30100,pr27781}.diff`  
 **Full freeze:** [TASK-066.9 § Frozen results](TASK-066.9-fa-batch-invariance.md)  
@@ -58,14 +58,15 @@
 | **#27441** skinny mm | Small-batch mm tiles | ❌ CLOSED | Do not blind-reapply | residual / ladder |
 | **066.7** float-tile + `MUL_MM_MIN=7` | Unify S8+ on mm | 🟢 KEEP | Orthogonal to C2 | `SUITE=mul-mat-residual` |
 | **TASK-066 FA always-tile** | No `ne01<20` vec/tile flip | ✅ Default tile | C7 RED→GREEN + C2 GREEN | `SUITE=fa` C7 + C2 |
-| **066.9 Phase A** | Nomtp C3 n=1344 multi-step | 🔓 Active | n≤1280 GREEN; n≥1344 RED; **H9faOFF RED** ⇒ non-FA | C3 + C2 lock |
-| **066.9 Phase B** | MTP verify widths 1..4 (#28108 spirit) | ⏸ Gated on Phase A DoD | Draft: [task066-hist/draft_mtp_research_task-066_fa.md](task066-hist/draft_mtp_research_task-066_fa.md) | MTP FA autotest (TBD) |
-| **#26358** / TM fixed split-KV | Further prefill invariance | ⬜ Open if C1 stays RED | Owned under **066.9 Phase A** | C1 / ladder |
-| **#28108** (CUDA hist) | Unify FA tile for verify Q widths | ⬜ Metal port in Phase B | Not for Phase A | MTP FA corner |
+| **066.9 Phase A1** | Nomtp C2/C3/C1 + ISWA | 🟢 Done | C3+C1 GREEN; ISWA `size_swa` KEEP | C2/C3/C1 |
+| **066.9 Phase A2** | Jinja-ladder S8 residual | 🔓 **Next** (> MTP) | `012625Z` S8 vs S1024 DIFF@22; C1 raw GREEN ≠ Done | Ladder + autotest |
+| **066.9 Phase B** | MTP verify widths 1..4 (#28108 spirit) | ⏸ Gated on **A2 DoD** | Draft: [task066-hist/draft_mtp_research_task-066_fa.md](task066-hist/draft_mtp_research_task-066_fa.md) | MTP FA autotest (TBD) |
+| **#26358** / TM fixed split-KV | Further prefill / chat-path | ⬜ Own under **066.9 Phase A2** if ladder stays DIFF | Not Phase B | Ladder + A2 autotest |
+| **#28108** (CUDA hist) | Unify FA tile for verify Q widths | ⬜ Metal port in Phase B | **After A2 DoD** | MTP FA corner |
 
 ## Gaps (not “failed apply”)
 
-1. **C2 closed**; **C3-n1344 / C1 / ladder** → **[066.5](TASK-066.5-fusion-table-parity.md)** (H9faOFF: not FA-only; MTP Phase B gated).
+1. **A1 closed** (C2 + ISWA C3/C1). **Next: A2** jinja-ladder ([066.9](TASK-066.9-fa-batch-invariance.md)). MTP Phase B gated on **A2 DoD**.
 2. **Encoder still hand-rolls fuse** vs `fusion_next` — 066.1 PARTIAL; **066.5 active**.
 3. **#30100 / #27441** — deferred / closed.
 

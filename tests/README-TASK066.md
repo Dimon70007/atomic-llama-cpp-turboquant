@@ -3,10 +3,10 @@
 Self-contained in **this** llama.cpp / ggml fork. Other developers: start here.
 
 **Branch:** `task066-metal-batch-invariance`  
-**Active track:** **[066.9](TASK-066.9-fa-batch-invariance.md) Phase B MTP** (gated — need explicit start). **[066.5](TASK-066.5-fusion-table-parity.md)** **KEEP** (ISWA `size_swa`; C3+C1 GREEN).  
+**Active track:** **[066.9](TASK-066.9-fa-batch-invariance.md) Phase A2** — jinja-ladder S8 residual (`012625Z` DIFF@22). **[066.5](TASK-066.5-fusion-table-parity.md)** **KEEP** (ISWA; C3+C1). Phase B MTP **gated behind A2**.  
 **PR fidelity:** **[TASK-066-pr-audit-registry.md](TASK-066-pr-audit-registry.md)** (re-check after every Metal edit + suites).  
-**Done behind:** **[066.7 KEEP](TASK-066.7-mul-mat-residual.md)** + **[066.8 R&D DELIVERED](TASK-066.8-fp-comparison-metrics-rd.md)** + FA always-tile (C2) + 066.9 localize + **066.5 ISWA**.  
-**Ladder:** post-ISWA `012625Z` S512≡S1024; S8 vs S1024 DIFF@22 under jinja CLI (HELP vs `231804Z`@329). C1 raw greedy GREEN. MTP blocked until explicit Phase B start. Hist Stage 1 WAIVE ≠ Done.
+**Done behind (Phase A1):** **[066.7 KEEP](TASK-066.7-mul-mat-residual.md)** + **[066.8](TASK-066.8-fp-comparison-metrics-rd.md)** + FA always-tile (C2) + 066.9 localize + **066.5 ISWA** (C3+C1).  
+**Priority:** `A1 → A2 (jinja-ladder) → B (MTP)`. C1 raw greedy GREEN ≠ ladder Done. Hist Stage 1 WAIVE ≠ Done.
 
 ## Evidence hierarchy (hard)
 
@@ -27,7 +27,7 @@ Self-contained in **this** llama.cpp / ggml fork. Other developers: start here.
 | **066.6** | [TASK-066.6-cb-and-invariance-gates.md](TASK-066.6-cb-and-invariance-gates.md) | after 066.5 / parallel | 🟢 C2/C7 + C3 via 066.5 |
 | **066.7** | [TASK-066.7-mul-mat-residual.md](TASK-066.7-mul-mat-residual.md) | 066.4 done; residual was RED | 🟢 **KEEP** |
 | **066.8** | [TASK-066.8-fp-comparison-metrics-rd.md](TASK-066.8-fp-comparison-metrics-rd.md) ([lit](task066-hist/TASK-066.8-lit-notes.md)) | 066.7 KEEP | 🟢 **R&D DELIVERED** |
-| **066.9** | [TASK-066.9-fa-batch-invariance.md](TASK-066.9-fa-batch-invariance.md) ([draft](task066-hist/draft_mtp_research_task-066_fa.md)) | C2 GREEN + 066.7 | 🟢 Phase A DoD (C3→C1); Phase B MTP gated |
+| **066.9** | [TASK-066.9-fa-batch-invariance.md](TASK-066.9-fa-batch-invariance.md) ([draft](task066-hist/draft_mtp_research_task-066_fa.md)) | C2 GREEN + 066.7 | 🟢 A1 (C3→C1); 🔓 **A2 jinja-ladder** next; Phase B gated |
 
 Overview locks / DoD / out-of-scope: [TASK-066.0-overview.md](TASK-066.0-overview.md).  
 Latest suite GREEN/RED snapshot: [TASK-066-status-matrix-20261106.md](TASK-066-status-matrix-20261106.md).

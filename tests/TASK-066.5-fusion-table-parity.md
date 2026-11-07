@@ -3,7 +3,7 @@
 **Status:** 🟢 **KEEP** — C3-n1344 + C1 GREEN (2026-11-07)  
 **Depends on:** [066.7 KEEP](TASK-066.7-mul-mat-residual.md); FA always-tile C2 GREEN; [066.9](TASK-066.9-fa-batch-invariance.md) Phase A localize  
 **Delivered lever:** ISWA `size_swa` independent of context `n_ubatch` (not fuse-table)  
-**MTP:** still [066.9](TASK-066.9-fa-batch-invariance.md) Phase B gated  
+**Next after this KEEP:** [066.9 Phase A2](TASK-066.9-fa-batch-invariance.md) jinja-ladder (before Phase B MTP)  
 **Source hypothesis (superseded):** fuse/`fusion_max` — bisect showed attn/`kqv_out`; root was SWA capacity
 
 ### Root cause (evidence)
@@ -60,7 +60,7 @@ TASK066_DIAG=c3-thresh …   # pad/SWA threshold matrix
 - [x] Lever documented (ISWA `size_swa`, not FA / not fuse-table).
 - [x] C1 GREEN; ladder logged HELP vs `231804Z`.
 - [x] Regressions `cb-fusion` / `mul-mat-residual` / `fa` GREEN.
-- [ ] Optional follow-up: jinja CLI S8 vs S1024 DIFF@22 (outside C1 gate).
+- [ ] **Handed to 066.9 Phase A2** (not optional): jinja-ladder S8 vs S1024 DIFF@22 — priority **> Phase B MTP**.
 
 ## Checklist
 

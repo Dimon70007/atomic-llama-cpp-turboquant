@@ -10,21 +10,22 @@
 
 🟢 **066.7 KEEP** + **066.8 R&D DELIVERED** (2026-11-06).  
 🟢 **FA always-tile (2026-11-07):** C2 GREEN; A0–A4 exact; C1 HELP `first_token_diff` 0→8; ladder `231804Z` DIFF@329.  
-🟢 **066.9 Phase A localize + DoD:** C3-n1344 + C1 GREEN via **066.5 ISWA `size_swa`** (not fuse-table). H9faOFF named non-FA class correctly (SWA capacity). Full freeze: [TASK-066.9 § Frozen results](TASK-066.9-fa-batch-invariance.md). Phase B MTP gated.  
-🟢 **066.5 KEEP** — ISWA `size_swa` independent of `n_ubatch`. Ladder HELP `012625Z` (S512≡S1024; jinja S8 DIFF@22).  
-📋 **PR audit:** [TASK-066-pr-audit-registry.md](TASK-066-pr-audit-registry.md). Hist Stage 1 WAIVE ≠ Done. **MTP blocked** until explicit Phase B start.
+🟢 **066.9 Phase A1 DONE:** C3-n1344 + C1 GREEN via **066.5 ISWA `size_swa`**. H9faOFF → ISWA class. Freeze: [TASK-066.9](TASK-066.9-fa-batch-invariance.md).  
+🔓 **Phase A2 OPEN (next, > MTP):** jinja-ladder S8 vs S1024 DIFF@22 (`012625Z`); S512≡S1024. Found in Phase A confirm — A incomplete until A2.  
+🟢 **066.5 KEEP** — ISWA `size_swa` ⊥ `n_ubatch`.  
+📋 **PR audit:** [TASK-066-pr-audit-registry.md](TASK-066-pr-audit-registry.md). Hist Stage 1 WAIVE ≠ Done. **MTP blocked** until **A2 DoD** + explicit start.
 
 ## Locked decisions
 
 1. Goal: shrink nomtp cross-ubatch drift (primary **S8 vs S1024**; also `{256,512}`).
-2. Order: 066.1–066.4 done → **066.7 KEEP** → **066.8 R&D** → FA always-tile (C2) → **066.9 Phase A** → (only then) **066.9 Phase B MTP**.
+2. Order: 066.1–066.4 done → **066.7 KEEP** → **066.8 R&D** → FA always-tile (C2) → **066.9 A1** (ISWA/C3/C1) → **066.9 A2** (jinja-ladder) → (only then) **066.9 Phase B MTP**.
 3. Backend: Metal first. CUDA out of scope for this numbered track.
 4. Premature WAIVE forbidden as “Done”.
 5. Raising `MUL_MM_MIN` to hide mm is **not** a fix. 066.7 **lowered** default to **7** so N=8 and large N share float-tile `mul_mm`. `#27441` stays closed unless corrected hypothesis.
 6. `#30100` encode N/A until encode path exists (hist recheck).
 7. **Every code change ships with autotests** (hard — see below). No silent “fix then maybe test later”.
-8. **Primary gate for mm work = `mul-mat-residual`**, not e2e. Ladder / fullgraph confirm-only; MTP blocked until 066.9 Phase A.
-9. **066.9 priority:** nomtp (Phase A) before MTP FA widths / #28108 spirit (Phase B). Product stays FA-on + turbo4.
+8. **Primary gate for mm work = `mul-mat-residual`**, not e2e. Ladder confirm after C3; MTP blocked until **A2**.
+9. **066.9 priority:** `A1 → A2 (jinja-ladder) → B (MTP)`. C1 GREEN ≠ ladder Done. Product stays FA-on + turbo4.
 
 ## Evidence hierarchy (hard)
 
@@ -42,9 +43,10 @@
 1. `SUITE=mul-mat-residual` PASS. ✅ 066.7  
 2. C2 FA multi-step bit-exact. ✅ always-tile  
 3. Non-FA residual named (H9faOFF). ✅ 066.9 localize  
-4. **C3-n1344 GREEN** (066.5 ISWA) → C1 GREEN → ladder HELP `012625Z`. ✅  
-5. **066.9 Phase B** (gated): MTP FA width autotest GREEN; then product MTP stamps.  
-6. 066.8 metrics R&D. ✅  
+4. **C3-n1344 GREEN** (066.5 ISWA) → C1 GREEN. ✅ Phase A1  
+5. **Phase A2:** jinja-ladder S8 vs S1024 GREEN (or WAIVE). 🔓 open (**> MTP**)  
+6. **066.9 Phase B** (gated on A2): MTP FA width autotest GREEN; then product MTP stamps.  
+7. 066.8 metrics R&D. ✅  
 “Owned huge DIFF@80” ≠ Done.
 
 ## Flow
@@ -60,6 +62,7 @@ flowchart TD
   tile[FA_always_tile_C2_GREEN]
   loc[066_9_localize_nonFA_C3]
   t5[066_5_fusion_C3_n1344]
+  t9a2[066_9_PhaseA2_jinja_ladder]
   t9b[066_9_PhaseB_MTP_FA]
   mtp[MTP_product_stamps]
   t1 --> t2 --> t3 --> t4 --> t7
@@ -67,13 +70,14 @@ flowchart TD
   t7 --> tile
   tile --> loc
   loc --> t5
-  t5 --> t9b
+  t5 --> t9a2
+  t9a2 --> t9b
   t9b --> mtp
 ```
 
 ## Out of scope
 
-- MTP vs nomtp product stamps until **066.9 Phase A** DoD met (then Phase B).
+- MTP vs nomtp product stamps until **066.9 Phase A2** DoD met (then Phase B).
 - CUDA cluster work.
 - Treating hist stage1-waive as success.
 - Model-only KEEP without green, correctly composed autotests.

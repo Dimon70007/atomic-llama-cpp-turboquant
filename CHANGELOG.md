@@ -34,6 +34,9 @@ Releases before `b10269-1.5.0` predate this file; see the git history.
 
 ### Changed
 
+- **TASK-066.9 Phase A2 priority:** jinja-ladder residual (`012625Z` S8 vs S1024 DIFF@22) is
+  **Phase A unfinished work** — ordered **A1 → A2 → B (MTP)**; MTP gated on A2 DoD. Spec:
+  `tests/TASK-066.9-fa-batch-invariance.md`, `tests/TASK-066.0-overview.md`, `tests/README-TASK066.md`.
 - **TASK-066 docs:** PR audit registry + frozen findings (ladder/C2/FA ablation); baseline suites
   `cb-fusion`/`mul-mat-residual`/`fa` GREEN, C2 RED (`logs/task066-pr-audit-baseline-20261106T230631Z`).
 
