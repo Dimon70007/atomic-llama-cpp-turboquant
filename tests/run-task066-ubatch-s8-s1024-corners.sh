@@ -84,7 +84,7 @@ echo "==> UBATCH-S8-S1024-C1 (test-ubatch-s8-s1024-row0-parity)"
 echo "    model=${MODEL}"
 echo "    ctx=${CTX} prompt=${PROMPT}"
 echo "    n_predict=${TASK066_N_PREDICT:-64}"
-echo "    GGML_METAL_MUL_MM_MIN=${GGML_METAL_MUL_MM_MIN-<unset:default 7>}"
+echo "    GGML_METAL_MUL_MM_MIN=${GGML_METAL_MUL_MM_MIN-<unset:default 1>}"
 set +e
 "${TEST_BIN}" "${ARGS[@]}" 2>&1 | tee "${OUT_DIR}/ubatch-s8-s1024.log"
 RC=${PIPESTATUS[0]}

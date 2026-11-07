@@ -1,8 +1,8 @@
 # TASK-066.9 — FA batch-invariance (nomtp-first, MTP second)
 
-**Status:** 🟢 Phase A1 (localize + C3/C1 + ISWA) **DONE**; 🔓 **Phase A2** jinja-ladder residual **OPEN** (next); Phase B MTP gated behind A2  
+**Status:** 🟢 Phase A1 **DONE**; 🟢 **Phase A2 DONE** (jinja-ladder / rem cross-kernel); Phase B MTP gated (explicit start)  
 **Depends on:** [066.7 KEEP](TASK-066.7-mul-mat-residual.md); C2 GREEN (FA always-tile); research below  
-**Next:** **Phase A2** — jinja/`--conversation` ladder S8 vs S1024 DIFF@22 (`012625Z`); **not** Phase B yet  
+**Next:** Phase B MTP only after explicit start  
 **Research:** [task066-hist/draft_mtp_research_task-066_fa.md](task066-hist/draft_mtp_research_task-066_fa.md), [task066-hist/TASK-066-fa-batch-invariance-web-research.md](task066-hist/TASK-066-fa-batch-invariance-web-research.md)  
 **Index:** [README-TASK066.md](README-TASK066.md) · [PR audit](TASK-066-pr-audit-registry.md)
 
@@ -12,8 +12,7 @@
 Phase A1 (nomtp C2/C3/C1 + ISWA)  →  Phase A2 (jinja-ladder residual)  →  Phase B (MTP / #28108)
 ```
 
-Found during Phase A confirm: product ladder uses `--jinja --conversation` and still DIFF S8 vs S1024 after ISWA KEEP. That is **Phase A unfinished work (A2)**, not an optional side quest.  
-Product MTP e2e **blocked** until **Phase A2 DoD** (or explicit unlock in [066.0](TASK-066.0-overview.md)).
+A2 found during Phase A confirm; closed 2026-11-07. MTP still needs **explicit start**.
 
 ---
 
@@ -70,7 +69,7 @@ Stamps: `logs/task066-localize-threshold-20261106T233840Z`, `…-bisect-20261106
 ## Goal
 
 1. **Phase A1:** Close nomtp cross-ubatch drift at autotest C2/C3/C1 (ISWA KEEP) — **done**.  
-2. **Phase A2:** Close product **jinja-ladder** S8 vs S1024 residual (`012625Z` DIFF@22) — **open** (higher priority than MTP).  
+2. **Phase A2:** Close product **jinja-ladder** S8 vs S1024 residual — **done** (`023433Z`; `MUL_MM_MIN` default 1 + C1j).  
 3. **Phase B:** Metal unify FA geometry for MTP verify widths `{1..4}` (#28108 spirit); then turbo4 × speculative — without dropping turbo.
 
 ## Evidence hierarchy (066.0 lock 7)
@@ -97,42 +96,46 @@ Every Metal/ops/fusion edit: autotest RED→GREEN same change set; re-run `cb-fu
 
 ---
 
-## Phase A2 — jinja-ladder residual (PRIORITY — next)
+## Phase A2 — jinja-ladder residual (DONE 2026-11-07)
 
-**Why A2, not “optional”:** found while finishing Phase A confirm. Product ladder fixture uses `--jinja --conversation --single-turn`; raw C1 greedy GREEN does **not** cover that path. Phase A nomtp is incomplete until this closes (or WAIVE with evidence).
+**Why A2:** found while finishing Phase A confirm. Product ladder `--jinja --conversation`; raw C1 GREEN ≠ ladder Done.
 
 | Item | Detail |
 |------|--------|
-| Stamp | `logs/task066-ubatch-ladder-20261107T012625Z` |
-| Symptom | S8 vs S1024 DIFF@byte 22 (`summary` vs `резюме (summary)`); S256/S512/S1024 identical |
-| vs C1 | C1 raw tokenize + greedy n_predict=64 **GREEN** — different entry (no jinja chat) |
+| Pre-fix stamp | `logs/task066-ubatch-ladder-20261107T012625Z` — DIFF@22 |
+| Post-fix stamp | `logs/task066-ubatch-ladder-20261107T023433Z` — S8≡S256≡S512≡S1024 |
 | Fixture | [TASK-066-ladder-fixture.md](TASK-066-ladder-fixture.md) |
 
-### Open
+### Root cause (named)
 
-1. Localize A2: jinja/chat template / CLI flags vs true ubatch residual under conversation.  
-2. Autotest RED corner that fails closed on this class (extend C1 or new suite) → fix → GREEN.  
-3. Ladder re-stamp: S8 vs S1024 identical (or documented WAIVE).  
-4. Other non-FA ops only with new RED corner; FA only with FA-off contrast.
+Jinja chat prompt = **1708** tokens (raw C1 = **1696**). With `-ub 8`: `1708 % 8 = 4` → last ubatch `ne11=4`. Under 066.7 default `MUL_MM_MIN=7`, rem∈{2..7} stays on **mul_mv** while full chunks use **mul_mm** → cross-kernel first-token drift (`summary` vs `резюме`). `ub≥16` rem lands on mm → S16..S1024 identical. Ablation: `MIN=1` → S8≡S16; `MIN=33` (all mv) → also ≡. Raw C1 GREEN because `1696 % 8 = 0` (no rem).
 
-### Anti-patterns
+### Fix
 
-- FA-off / `ctv=f16` as product fix; FA shape pins without FA-off contrast  
-- ε-PASS C3/C1/A2; reopen `#27441`; **MTP / `#28108` before A2 DoD**; blind `VLLM_BATCH_INVARIANT`  
-- Treating C1 GREEN as ladder Done
+Product default `GGML_METAL_MUL_MM_MIN` **7 → 1** (`ne11≥2` → float-tile mm; N=1 decode still mv). Residual suite gate updated (unset or 1).
+
+### Autotest
+
+**C1j** in `test-ubatch-s8-s1024-row0-parity`: apply model jinja chat template (`enable_thinking=false`) then greedy S8 vs S1024. `TASK066_DIAG=c1j` for fast loop. RED@min7 → GREEN@min1 same change set.
 
 ### Phase A2 DoD
 
-- [ ] Named root cause for jinja-ladder S8≠S1024 (`012625Z` class)  
-- [ ] Autotest RED→GREEN same change set  
-- [ ] Ladder S8 vs S1024 GREEN (or explicit WAIVE + stamp)  
-- [ ] Regress C2 / C3-n1280 / C3-n1344 / C1 still GREEN  
+- [x] Named root cause (last-ubatch rem cross-kernel mv/mm; not jinja CLI bug per se)  
+- [x] Autotest C1j RED→GREEN  
+- [x] Ladder `023433Z` S8≡S1024  
+- [x] Regress C2 / C3-n1280 / C3-n1344 / C1 / C1j + `cb-fusion` / `mul-mat-residual` / `fa` GREEN  
+
+### Anti-patterns (still)
+
+- FA-off / `ctv=f16` as product fix; ε-PASS; reopen `#27441`  
+- Treating raw C1 GREEN as ladder Done (need C1j)  
+- Assuming MTP widths {2..7} still share mv with N=1 after A2 (they now use mm)  
 
 ---
 
 ## Phase B — MTP (after Phase A2)
 
-**Unlock:** **Phase A2 DoD** **and** explicit start.  
+**Unlock:** **Phase A2 DoD** ✅ **and** explicit start.  
 
 1. Autotest RED: verify width N=1 vs `{2,3,4}` FA row0/logits  
 2. Port #28108 spirit on Metal (not CUDA paste)  
@@ -160,7 +163,7 @@ BUILD_DIR=build-task066-cb-ws SUITE=fa ./tests/run-task066-metal-corners.sh
 TASK066_MODEL=.scratch/gemma-4-26b-a4b/gemma-4-26B-A4B-it-UD-IQ4_XS.gguf \
 TASK066_CTX=3072 BUILD_DIR=build-task066-cb-ws \
   SUITE=ubatch-s8-s1024 ./tests/run-task066-metal-corners.sh
-# Expect A1: C2 GREEN, C3-n1280 GREEN, C3-n1344 GREEN, C1 GREEN
-# A2 confirm: ./tests/run-task066-ubatch-ladder.sh  (jinja fixture; S8 vs S1024)
-# Diag: TASK066_DIAG=localize | fa-ablation | c3-bisect | c3-thresh
+# Expect A1+A2: C2/C3/C1/C1j GREEN
+# Confirm: ./tests/run-task066-ubatch-ladder.sh  (jinja; S8≡S1024)
+# Diag: TASK066_DIAG=c1j | localize | fa-ablation | c3-bisect | c3-thresh
 ```

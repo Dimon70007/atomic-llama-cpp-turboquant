@@ -14,6 +14,9 @@ Releases before `b10269-1.5.0` predate this file; see the git history.
 
 ### Added
 
+- **TASK-066.9 Phase A2 C1j gate:** `test-ubatch-s8-s1024-row0-parity` applies jinja chat template
+  (`enable_thinking=false`) then greedy S8 vs S1024 after raw C1. `TASK066_DIAG=c1j` for fast loop.
+  Covers ladder class that raw C1 misses (1708 tok prompt).
 - **TASK-066.5/066.6 TDD gate:** `test-ubatch-s8-s1024-row0-parity` + `SUITE=ubatch-s8-s1024` —
   C2 + C3 (n=1280/1344) + C1 product greedy S8 vs S1024. Diag:
   `TASK066_DIAG=localize|fa-ablation|c3-bisect|c3-thresh`; true FA-off needs `TASK066_CTV=f16`
@@ -24,6 +27,12 @@ Releases before `b10269-1.5.0` predate this file; see the git history.
 
 ### Fixed
 
+- **TASK-066.9 Phase A2 (jinja-ladder S8 vs S1024):** last prefill ubatch remainder with
+  `ne11∈{2..7}` stayed on `mul_mv` under `MUL_MM_MIN=7` while full chunks used float-tile
+  `mul_mm` (jinja prompt 1708 toks → `1708%8=4`). Product default `GGML_METAL_MUL_MM_MIN`
+  **7 → 1** (`ne11≥2` → mm; N=1 decode still mv). C1j RED→GREEN; ladder
+  `logs/task066-ubatch-ladder-20261107T023433Z` S8≡S256≡S512≡S1024. Residual suite gate:
+  unset or `1`.
 - **TASK-066.5 ISWA `size_swa` batch-invariance (C3-n1344):** stop sizing the SWA KV cache from
   this context’s `n_ubatch` (`n_swa+n_ubatch` made ub=8 → 1280 cells vs large-ub ≫1280). Prefill
   past 1280 then slid only on the small cache → multi-ubatch vs one-shot logits diverged
@@ -34,9 +43,8 @@ Releases before `b10269-1.5.0` predate this file; see the git history.
 
 ### Changed
 
-- **TASK-066.9 Phase A2 priority:** jinja-ladder residual (`012625Z` S8 vs S1024 DIFF@22) is
-  **Phase A unfinished work** — ordered **A1 → A2 → B (MTP)**; MTP gated on A2 DoD. Spec:
-  `tests/TASK-066.9-fa-batch-invariance.md`, `tests/TASK-066.0-overview.md`, `tests/README-TASK066.md`.
+- **TASK-066.9 Phase A2 DONE:** ordered **A1 → A2 → B (MTP)**; MTP gated on A2 DoD ✅ + explicit
+  start. Spec: `tests/TASK-066.9-fa-batch-invariance.md`.
 - **TASK-066 docs:** PR audit registry + frozen findings (ladder/C2/FA ablation); baseline suites
   `cb-fusion`/`mul-mat-residual`/`fa` GREEN, C2 RED (`logs/task066-pr-audit-baseline-20261106T230631Z`).
 

@@ -1,7 +1,7 @@
 # TASK-066 follow-up B5 — Metal MUL_MAT batch-path inventory
 
 Status: **066.7 KEEP** (2026-11-06). Residual vs N=8 GREEN for `{9,16,32,256,512,1024}`.  
-Product default `GGML_METAL_MUL_MM_MIN=7` (ne11≥8 → float-tile `mul_mm` for q8_0/iq4_xs). Env-gated.
+Product default `GGML_METAL_MUL_MM_MIN=1` (ne11≥2 → float-tile `mul_mm` for q8_0/iq4_xs; 066.9 A2). Env-gated.
 
 Related: `#25618`, `test-mul-mat-batch-invariance`, `SUITE=mul-mat` / `SUITE=mul-mat-residual`,
 [task066-hist/draft_mtp_research_task-066_testing.md](task066-hist/draft_mtp_research_task-066_testing.md) (product `batch`/`ubatch` sensitivity),
@@ -28,7 +28,7 @@ See [README-TASK066.md](README-TASK066.md) / [TASK-066.0-overview.md](TASK-066.0
 
 | Path | Why | Status |
 |------|-----|--------|
-| env-gate `GGML_METAL_MUL_MM_MIN` | A/B without rebuild; MoE `ne21` shares non-TQ | DONE; **default 7** (was 32) |
+| env-gate `GGML_METAL_MUL_MM_MIN` | A/B without rebuild; MoE `ne21` shares non-TQ | DONE; **default 1** (was 7 / 32) |
 | residual suite gate | SKIP(77) if env set and != **7** | DONE 066.7 |
 | ladder fixture + runner | Stage 0 product stamp | DONE P0.2/P0.3 |
 | `mul_mm` / split-K / same-ubatch | #19034; stamp 170944Z run1=run2 | DONE (same-ubatch OK) |

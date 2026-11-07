@@ -50,7 +50,7 @@ Short Pierre/Dolokhov duel excerpt + RU summary instruction. Ladder runner defau
 | `cache-ram` | `0` (**required**) | CLI default is **8192 MiB** and OOMs 24 GB with this model; product yaml uses 4096 |
 | `ctx-checkpoints` | `32` | product |
 | `batch` / `ubatch` | **default:** `-b = max(N, 512)`, `-ub N` (`TASK066_BATCH_MODE=floor`) | `-b 1` breaks ~2k prefill |
-| **Product ubatch** | floor **256**, target **512**; large **1024/2048** | S8+ on float-tile mm under default `MUL_MM_MIN=7`; hist WAIVE not Done — see [TASK-066.0-overview.md](TASK-066.0-overview.md) |
+| **Product ubatch** | floor **256**, target **512**; large **1024/2048** | Prefill `ne11≥2` on float-tile mm under default `MUL_MM_MIN=1` (066.9 A2; avoids rem cross-kernel) |
 | equal / max stamps | optional A/B | |
 | cli turn | `--conversation --single-turn --simple-io --no-warmup` + stdin `/dev/null` | `--simple-io` required so generation lands in `cli.log` / `generation.txt` |
 
@@ -60,9 +60,9 @@ Reference yaml (key names only): [fixtures/task066/ladder-nomtp.reference.yaml](
 
 | Variable | Ladder Stage 0/1 debug | Product / unit residual |
 |----------|------------------------|-------------------------|
-| `GGML_METAL_MUL_MM_MIN` | **`8`** (N=8 still on mul_mv; debug only) | unset or **`7`** (066.7 product: N≥8 on float-tile mm) |
+| `GGML_METAL_MUL_MM_MIN` | **`7`** / **`8`** (legacy pins; rem cross-kernel) | unset or **`1`** (066.9 A2 product: N≥2 on float-tile mm) |
 
-`SUITE=mul-mat-residual` SKIP(77) if `GGML_METAL_MUL_MM_MIN` is set to anything other than `7`.
+`SUITE=mul-mat-residual` SKIP(77) if `GGML_METAL_MUL_MM_MIN` is set to anything other than `1`.
 
 ## Binary
 

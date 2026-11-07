@@ -60,7 +60,7 @@ TASK066_DIAG=c3-thresh …   # pad/SWA threshold matrix
 - [x] Lever documented (ISWA `size_swa`, not FA / not fuse-table).
 - [x] C1 GREEN; ladder logged HELP vs `231804Z`.
 - [x] Regressions `cb-fusion` / `mul-mat-residual` / `fa` GREEN.
-- [ ] **Handed to 066.9 Phase A2** (not optional): jinja-ladder S8 vs S1024 DIFF@22 — priority **> Phase B MTP**.
+- [x] **Handed to 066.9 Phase A2** — **DONE** (`MUL_MM_MIN` default 1; ladder `023433Z`).
 
 ## Checklist
 

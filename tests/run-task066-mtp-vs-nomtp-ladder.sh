@@ -3,7 +3,7 @@
 # Not in SUITE=followup. Same knobs as run-task066-ubatch-ladder.sh + draft head.
 #
 # Usage:
-#   unset GGML_METAL_MUL_MM_MIN   # product default 7 (ne11>=8 on float-tile mul_mm)
+#   unset GGML_METAL_MUL_MM_MIN   # product default 1 (ne11>=2 on float-tile mul_mm)
 #   BUILD_DIR=build-task066-cb ./tests/run-task066-mtp-vs-nomtp-ladder.sh
 #
 # Env:
@@ -257,7 +257,7 @@ run_cell() {
     echo "cram=${CRAM} ctxcp=${CTXCP} ctx=${CTX}"
     echo "draft=${DRAFT}"
     echo "spec_draft_n_max=${SPEC_N_MAX}"
-    echo "GGML_METAL_MUL_MM_MIN=${GGML_METAL_MUL_MM_MIN:-<unset:default 7>}"
+    echo "GGML_METAL_MUL_MM_MIN=${GGML_METAL_MUL_MM_MIN:-<unset:default 1>}"
     echo "cmd=${CLI_BIN} ${args[*]}"
   } > "${dir}/meta.txt"
 
@@ -324,7 +324,7 @@ run_cell() {
   echo "batch_mode=${BATCH_MODE} batch_floor=${BATCH_FLOOR}"
   echo "ubatch_list=${UBATCH_LIST}"
   echo "spec_draft_n_max=${SPEC_N_MAX}"
-  echo "GGML_METAL_MUL_MM_MIN=${GGML_METAL_MUL_MM_MIN:-<unset:default 7>}"
+  echo "GGML_METAL_MUL_MM_MIN=${GGML_METAL_MUL_MM_MIN:-<unset:default 1>}"
   echo "cli=${CLI_BIN}"
   echo "build_dir=${BUILD_DIR}"
 } | tee "${OUT_DIR}/README.txt"
@@ -345,7 +345,7 @@ MATRIX="${OUT_DIR}/matrix.md"
   echo "# TASK-066 MTP vs nomtp matrix"
   echo
   echo "stamp: ${STAMP}"
-  echo "MUL_MM_MIN: ${GGML_METAL_MUL_MM_MIN:-<unset:default 7>}"
+  echo "MUL_MM_MIN: ${GGML_METAL_MUL_MM_MIN:-<unset:default 1>}"
   echo "draft: ${DRAFT}"
   echo "spec_draft_n_max: ${SPEC_N_MAX}"
   echo

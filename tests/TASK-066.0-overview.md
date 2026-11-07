@@ -10,10 +10,10 @@
 
 🟢 **066.7 KEEP** + **066.8 R&D DELIVERED** (2026-11-06).  
 🟢 **FA always-tile (2026-11-07):** C2 GREEN; A0–A4 exact; C1 HELP `first_token_diff` 0→8; ladder `231804Z` DIFF@329.  
-🟢 **066.9 Phase A1 DONE:** C3-n1344 + C1 GREEN via **066.5 ISWA `size_swa`**. H9faOFF → ISWA class. Freeze: [TASK-066.9](TASK-066.9-fa-batch-invariance.md).  
-🔓 **Phase A2 OPEN (next, > MTP):** jinja-ladder S8 vs S1024 DIFF@22 (`012625Z`); S512≡S1024. Found in Phase A confirm — A incomplete until A2.  
+🟢 **066.9 Phase A1 DONE:** C3-n1344 + C1 GREEN via **066.5 ISWA `size_swa`**.  
+🟢 **066.9 Phase A2 DONE:** last-ubatch rem cross-kernel → product `MUL_MM_MIN` default **1**; C1j + ladder `023433Z` S8≡S1024. Freeze: [TASK-066.9](TASK-066.9-fa-batch-invariance.md).  
 🟢 **066.5 KEEP** — ISWA `size_swa` ⊥ `n_ubatch`.  
-📋 **PR audit:** [TASK-066-pr-audit-registry.md](TASK-066-pr-audit-registry.md). Hist Stage 1 WAIVE ≠ Done. **MTP blocked** until **A2 DoD** + explicit start.
+📋 **PR audit:** [TASK-066-pr-audit-registry.md](TASK-066-pr-audit-registry.md). Hist Stage 1 WAIVE ≠ Done. **MTP blocked** until explicit start (A2 DoD ✅).
 
 ## Locked decisions
 
@@ -21,7 +21,7 @@
 2. Order: 066.1–066.4 done → **066.7 KEEP** → **066.8 R&D** → FA always-tile (C2) → **066.9 A1** (ISWA/C3/C1) → **066.9 A2** (jinja-ladder) → (only then) **066.9 Phase B MTP**.
 3. Backend: Metal first. CUDA out of scope for this numbered track.
 4. Premature WAIVE forbidden as “Done”.
-5. Raising `MUL_MM_MIN` to hide mm is **not** a fix. 066.7 **lowered** default to **7** so N=8 and large N share float-tile `mul_mm`. `#27441` stays closed unless corrected hypothesis.
+5. Raising `MUL_MM_MIN` to hide mm is **not** a fix. 066.7 lowered 32→7; **066.9 A2** lowered **7→1** so prefill rem∈{2..7} shares float-tile `mul_mm` (not cross-kernel vs full chunks). `#27441` stays closed.
 6. `#30100` encode N/A until encode path exists (hist recheck).
 7. **Every code change ships with autotests** (hard — see below). No silent “fix then maybe test later”.
 8. **Primary gate for mm work = `mul-mat-residual`**, not e2e. Ladder confirm after C3; MTP blocked until **A2**.
@@ -44,8 +44,8 @@
 2. C2 FA multi-step bit-exact. ✅ always-tile  
 3. Non-FA residual named (H9faOFF). ✅ 066.9 localize  
 4. **C3-n1344 GREEN** (066.5 ISWA) → C1 GREEN. ✅ Phase A1  
-5. **Phase A2:** jinja-ladder S8 vs S1024 GREEN (or WAIVE). 🔓 open (**> MTP**)  
-6. **066.9 Phase B** (gated on A2): MTP FA width autotest GREEN; then product MTP stamps.  
+5. **Phase A2:** jinja-ladder S8 vs S1024 GREEN. ✅ (`023433Z`; `MUL_MM_MIN=1` + C1j)  
+6. **066.9 Phase B** (gated on A2 + explicit start): MTP FA width autotest GREEN; then product MTP stamps.  
 7. 066.8 metrics R&D. ✅  
 “Owned huge DIFF@80” ≠ Done.
 

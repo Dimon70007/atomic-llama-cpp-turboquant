@@ -1,7 +1,8 @@
 // TASK-066.5 / 066.6 — product ubatch S8 vs S1024 greedy token-stream parity (TDD RED gate).
 //
-// Ladder confirm `logs/task066-ubatch-ladder-20261106T212703Z` still DIFF@text under
-// product MUL_MM_MIN=7 (residual GREEN). This autotest reproduces that *class*:
+// Ladder confirm class (pre-A2 DIFF@text under MUL_MM_MIN=7). This autotest covers:
+//   C1  raw tokenize + greedy
+//   C1j jinja chat tokens + greedy (066.9 Phase A2)
 //
 //   Same prompt + product KV/FA knobs; greedy (argmax) decode for N tokens with
 //     A: -b max(512,8)=512  -ub 8
@@ -23,8 +24,14 @@
 //
 // Fail-closed: -m MODEL, -c CTX, -f PROMPT; TASK066_N_PREDICT (default 64).
 // Runner: tests/run-task066-ubatch-s8-s1024-corners.sh
+//
+// Phase A2 (066.9): after raw C1 GREEN, C1j applies model jinja chat template
+// (user turn + generation prompt, enable_thinking=false == ladder --reasoning off)
+// then greedy S8 vs S1024. Ladder `012625Z` DIFF@22 is this class — raw C1 alone
+// does not cover it. TASK066_DIAG=c1j runs only C1j (evidence / fast loop).
 
 #include "arg.h"
+#include "chat.h"
 #include "common.h"
 #include "llama.h"
 #include "log.h"
@@ -239,6 +246,131 @@ int32_t first_token_diff(const std::vector<llama_token> & a, const std::vector<l
         return (int32_t) n;
     }
     return -1;
+}
+
+// Ladder product path: jinja chat template around the fixture user text.
+// Matches llama-cli --jinja --conversation --reasoning off (enable_thinking=false).
+bool tokenize_jinja_user_prompt(
+        llama_model * model,
+        const llama_vocab * vocab,
+        const std::string & user_text,
+        std::vector<llama_token> & out_tokens,
+        std::string & out_prompt) {
+    out_tokens.clear();
+    out_prompt.clear();
+    auto tmpls = common_chat_templates_init(model, /*chat_template_override=*/"");
+    if (!tmpls) {
+        fprintf(stderr, "FAIL: common_chat_templates_init\n");
+        return false;
+    }
+    common_chat_msg user;
+    user.role = "user";
+    user.content = user_text;
+
+    common_chat_templates_inputs inputs;
+    inputs.messages = {user};
+    inputs.use_jinja = true;
+    inputs.add_generation_prompt = true;
+    inputs.enable_thinking = false;  // ladder: --reasoning off
+    inputs.reasoning_format = COMMON_REASONING_FORMAT_NONE;
+
+    const common_chat_params chat = common_chat_templates_apply(tmpls.get(), inputs);
+    if (chat.prompt.empty()) {
+        fprintf(stderr, "FAIL: jinja chat template produced empty prompt\n");
+        return false;
+    }
+    out_prompt = chat.prompt;
+
+    out_tokens.resize(out_prompt.size() + 16);
+    int32_t n_tok = llama_tokenize(
+            vocab, out_prompt.c_str(), (int32_t) out_prompt.size(),
+            out_tokens.data(), (int32_t) out_tokens.size(),
+            /*add_special=*/true, /*parse_special=*/true);
+    if (n_tok < 0) {
+        out_tokens.resize(size_t(-n_tok));
+        n_tok = llama_tokenize(
+                vocab, out_prompt.c_str(), (int32_t) out_prompt.size(),
+                out_tokens.data(), (int32_t) out_tokens.size(), true, true);
+        if (n_tok < 0) {
+            fprintf(stderr, "FAIL: jinja prompt tokenize\n");
+            return false;
+        }
+    }
+    out_tokens.resize(size_t(n_tok));
+    return !out_tokens.empty();
+}
+
+void print_gen_prefix(const char * label, const llama_vocab * vocab, const std::vector<llama_token> & toks, int32_t n) {
+    const int32_t lim = std::min(n, (int32_t) toks.size());
+    std::string s;
+    for (int32_t i = 0; i < lim; ++i) {
+        char buf[256];
+        const int n_piece = llama_token_to_piece(vocab, toks[size_t(i)], buf, (int) sizeof(buf), 0, true);
+        if (n_piece > 0) {
+            s.append(buf, size_t(n_piece));
+        }
+    }
+    printf("  %s first_%d_toks_text=%s\n", label, lim, s.c_str());
+}
+
+// C1j — A2 gate: greedy on jinja-wrapped prompt (ladder class).
+int run_c1j_gate(
+        llama_model * model,
+        const llama_vocab * vocab,
+        common_params params,
+        const std::string & user_text,
+        int32_t n_predict,
+        int32_t b_a,
+        int32_t ub_a,
+        int32_t b_b,
+        int32_t ub_b) {
+    std::vector<llama_token> jtokens;
+    std::string jprompt;
+    if (!tokenize_jinja_user_prompt(model, vocab, user_text, jtokens, jprompt)) {
+        return 1;
+    }
+    printf("UBATCH-S8-S1024-C1j jinja-chat greedy token-stream bit-exact (066.9 Phase A2)\n");
+    printf("  model=%s\n", params.model.path.c_str());
+    printf("  n_prompt_tokens_jinja=%zu n_predict=%d (raw fixture was separate C1)\n",
+           jtokens.size(), n_predict);
+    printf("  jinja_prompt_chars=%zu head=%.80s\n", jprompt.size(), jprompt.c_str());
+    printf("HYPOTHESIS: after chat template, greedy ids diverge S8 vs S1024 (ladder DIFF@22)\n");
+
+    const int64_t need_ctx = (int64_t) jtokens.size() + (int64_t) n_predict + 8;
+    if ((int64_t) params.n_ctx < need_ctx) {
+        fprintf(stderr,
+                "FAIL: n_ctx=%d too small for jinja prompt=%zu + n_predict=%d (need >= %lld)\n",
+                (int) params.n_ctx, jtokens.size(), n_predict, (long long) need_ctx);
+        return 2;
+    }
+
+    const gen_result a = run_greedy_ubatch(model, params, jtokens, n_predict, b_a, ub_a);
+    if (!a.ok) {
+        return 1;
+    }
+    const gen_result b = run_greedy_ubatch(model, params, jtokens, n_predict, b_b, ub_b);
+    if (!b.ok) {
+        return 1;
+    }
+
+    const int32_t diff_i = first_token_diff(a.tokens, b.tokens);
+    printf("  gen_len_a=%zu gen_len_b=%zu first_token_diff=%d\n",
+           a.tokens.size(), b.tokens.size(), diff_i);
+    print_gen_prefix("C1j_S8", vocab, a.tokens, 16);
+    print_gen_prefix("C1j_S1024", vocab, b.tokens, 16);
+    if (diff_i >= 0 && diff_i < (int32_t) a.tokens.size() && diff_i < (int32_t) b.tokens.size()) {
+        printf("  tok_a=%d tok_b=%d\n", a.tokens[size_t(diff_i)], b.tokens[size_t(diff_i)]);
+    }
+
+    if (diff_i >= 0) {
+        printf("RESULT FAIL (RED) — C1j jinja-chat greedy not bit-exact S8 vs S1024; "
+               "066.9 Phase A2 TDD gate open\n");
+        return 1;
+    }
+
+    printf("RESULT PASS (GREEN) — C1j jinja-chat greedy S8 vs S1024 identical for n_predict=%d\n",
+           n_predict);
+    return 0;
 }
 
 void print_cmp(const char * label, const logits_cmp & c) {
@@ -1037,6 +1169,7 @@ int main(int argc, char ** argv) {
     const bool do_fa_ablation = diag && std::strcmp(diag, "fa-ablation") == 0;
     const bool do_c3_bisect = diag && std::strcmp(diag, "c3-bisect") == 0;
     const bool do_c3_thresh = diag && std::strcmp(diag, "c3-thresh") == 0;
+    const bool do_c1j = diag && std::strcmp(diag, "c1j") == 0;
 
     const int32_t ub_a = 8;
     const int32_t ub_b = 1024;
@@ -1056,7 +1189,7 @@ int main(int argc, char ** argv) {
     if (const char * mm = std::getenv("GGML_METAL_MUL_MM_MIN"); mm && mm[0]) {
         fprintf(stderr, "GGML_METAL_MUL_MM_MIN=%s\n", mm);
     } else {
-        fprintf(stderr, "GGML_METAL_MUL_MM_MIN=<unset:default 7>\n");
+        fprintf(stderr, "GGML_METAL_MUL_MM_MIN=<unset:default 1>\n");
     }
 
     const bool require_gpu = []() {
@@ -1123,6 +1256,12 @@ int main(int argc, char ** argv) {
                 "FAIL: n_ctx=%d too small for prompt=%zu + n_predict=%d (need >= %lld)\n",
                 (int) params.n_ctx, tokens.size(), n_predict, (long long) need_ctx);
         return 2;
+    }
+
+    if (do_c1j) {
+        // Fast A2 loop: skip C2/C3/C1 raw; exit code is the C1j gate (RED/GREEN).
+        printf("UBATCH-S8-S1024-DIAG C1j only (066.9 Phase A2)\n");
+        return run_c1j_gate(model, vocab, params, params.prompt, n_predict, b_a, ub_a, b_b, ub_b);
     }
 
     if (do_localize) {
@@ -1256,6 +1395,8 @@ int main(int argc, char ** argv) {
 
     printf("RESULT PASS (GREEN) — greedy S8 vs S1024 identical for n_predict=%d on this prompt\n",
            n_predict);
-    printf("note: GREEN here does not waive longer n_predict / full ladder; raise TASK066_N_PREDICT\n");
-    return 0;
+    printf("note: raw C1 GREEN ≠ A2 Done; continuing to C1j (jinja chat)\n");
+
+    // Phase A2 — product ladder class (jinja-wrapped prompt).
+    return run_c1j_gate(model, vocab, params, params.prompt, n_predict, b_a, ub_a, b_b, ub_b);
 }

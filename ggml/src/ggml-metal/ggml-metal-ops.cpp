@@ -15,16 +15,24 @@
 #include <cstdio>
 #include <cstdlib>
 
-// TASK-066.7: mul_mm break-even. Default 7 → ne11>=8 uses mul_mm (incl. ubatch S8),
-// so residual vs golden N=8 and large N share the same kernel (float-tile q8_0/iq4_xs).
-// ne11 in 1..7 stay on mul_mv (MTP verify small batches bit-exact vs N=1).
-// Env GGML_METAL_MUL_MM_MIN overrides (32 = legacy B5 pin; 8 = N=8 still on mul_mv).
+// TASK-066.7 / 066.9 Phase A2: mul_mm break-even.
+// Default 1 → ne11>=2 uses mul_mm (float-tile q8_0/iq4_xs). N=1 decode stays on mul_mv.
+//
+// 066.7 used default 7 (ne11>=8 → mm) so product S8 shared mm with large N. That left a
+// hole: prefill last-ubatch remainders with ne11 in 2..7 still hit mul_mv while full
+// chunks hit mul_mm. Jinja chat prompt (1708 toks) → 1708%8=4 → S8 rem on mv vs S16+
+// rem on mm → ladder DIFF@22 (summary vs резюме). Ablation: MIN=1 → S8≡S16; MIN=33 →
+// both on mv also ≡. Autotest: C1j (jinja tokens) RED@min7 → GREEN@min1.
+//
+// Tradeoff: MTP verify widths {2..7} vs N=1 are again cross-kernel (mm vs mv) — Phase B
+// must not assume 066.7's "1..7 on mv" pin; revisit with FA/MTP gates.
+// Env GGML_METAL_MUL_MM_MIN overrides (7 = 066.7 pin; 8 = N=8 on mv; 32 = legacy B5).
 static int ggml_metal_mul_mm_batch_min(void) {
     static int cached = -1;
     if (cached >= 0) {
         return cached;
     }
-    cached = 7;
+    cached = 1;
     const char * env = getenv("GGML_METAL_MUL_MM_MIN");
     if (env && env[0] != '\0') {
         const int v = atoi(env);
@@ -2462,8 +2470,8 @@ int ggml_metal_op_mul_mat(ggml_metal_op_t ctx, int idx) {
 
     // find the break-even point where the matrix-matrix kernel becomes more efficient compared
     // to the matrix-vector kernel
-    // TASK-066.7: default 7 (see ggml_metal_mul_mm_batch_min). Float-tile mm for q8_0/iq4_xs
-    // cuts cross-kernel mad from ~1e-4 to ~1 ULP; sharing mm for ne11>=8 makes residual bit-exact.
+    // TASK-066.7 float-tile + 066.9 A2 default min=1 (see ggml_metal_mul_mm_batch_min).
+    // Sharing mm for all ne11>=2 avoids last-ubatch rem cross-kernel vs full chunks.
     const int ne11_mm_min = ggml_metal_mul_mm_batch_min();
 
     // first try to use small-batch mat-mv kernels
@@ -2792,7 +2800,7 @@ int ggml_metal_op_mul_mat_id(ggml_metal_op_t ctx, int idx) {
     // to the matrix-vector kernel
     // ne20 = n_used_experts
     // ne21 = n_rows (batch size)
-    // TASK-066.7: MoE shares GGML_METAL_MUL_MM_MIN (default 7). TQ still forces mul_mm_id (min=1).
+    // TASK-066.7: MoE shares GGML_METAL_MUL_MM_MIN (default 1). TQ still forces mul_mm_id (min=1).
     const int ne21_mm_id_min = is_tq_weight ? 1 : ggml_metal_mul_mm_batch_min();
 
     if (props_dev->has_simdgroup_mm && ne00 >= 64 && (ne21 > ne21_mm_id_min)) {
