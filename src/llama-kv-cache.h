@@ -162,6 +162,8 @@ public:
 
     bool get_can_shift() const override;
 
+    bool get_has_shared_cells() const override { return other != nullptr; }
+
     // bytes of llama_kv_cell_ext saved per cell in the sequence state (0 = none)
     size_t cell_ext_io_size() const;
 

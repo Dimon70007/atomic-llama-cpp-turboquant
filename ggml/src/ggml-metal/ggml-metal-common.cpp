@@ -455,3 +455,15 @@ void ggml_graph_optimize(ggml_cgraph * gf) {
         }
     }
 }
+
+// TASK-066 / #28164: STRUCTURAL stubs for fusion-table MUL_MAT+ADD packing.
+// Encoder does not yet run few-row MMA+ADD fuse (#30100 path missing here).
+bool ggml_metal_op_mul_mat_may_use_mma(const struct ggml_tensor * op) {
+    return op != nullptr && op->src[0] != nullptr && op->src[1] != nullptr &&
+           op->src[1]->type == GGML_TYPE_F32;
+}
+
+bool ggml_metal_op_mul_mat_use_mma(const struct ggml_tensor * op) {
+    GGML_UNUSED(op);
+    return false;
+}

@@ -397,11 +397,69 @@ add_executable(test-flash-attn-generic-hash test-flash-attn-generic-hash.cpp)
 target_link_libraries(test-flash-attn-generic-hash PRIVATE ggml)
 add_test(NAME test-flash-attn-generic-hash COMMAND test-flash-attn-generic-hash)
 
-# TASK-066 / #25618 — Metal FA nsg batch-invariance (C1 row0 + C2 2048/4096)
+# Metal batch-invariance / #25618 — FA nsg corners (SKIP 77 without Metal)
+# LABELS main: included in the default CI suite (`ctest -L main`, see .github/workflows/build-cpu.yml).
 add_executable(test-flash-attn-batch-invariance test-flash-attn-batch-invariance.cpp)
 target_link_libraries(test-flash-attn-batch-invariance PRIVATE ggml)
 add_test(NAME test-flash-attn-batch-invariance COMMAND test-flash-attn-batch-invariance)
-set_tests_properties(test-flash-attn-batch-invariance PROPERTIES SKIP_RETURN_CODE 77)
+set_tests_properties(test-flash-attn-batch-invariance PROPERTIES LABELS main SKIP_RETURN_CODE 77)
+
+# Metal batch-invariance / #25618 — mul_mat / mul_mat_id corners (SKIP 77 without Metal)
+add_executable(test-mul-mat-batch-invariance test-mul-mat-batch-invariance.cpp)
+target_link_libraries(test-mul-mat-batch-invariance PRIVATE ggml)
+add_test(NAME test-mul-mat-batch-invariance COMMAND test-mul-mat-batch-invariance)
+set_tests_properties(test-mul-mat-batch-invariance PROPERTIES LABELS main SKIP_RETURN_CODE 77)
+
+# Metal long-KV FA row0 localizer (SKIP 77 without Metal)
+add_executable(test-longctx-row0-parity test-longctx-row0-parity.cpp)
+target_link_libraries(test-longctx-row0-parity PRIVATE ggml)
+add_test(NAME test-longctx-row0-parity COMMAND test-longctx-row0-parity)
+set_tests_properties(test-longctx-row0-parity PROPERTIES LABELS main SKIP_RETURN_CODE 77)
+
+# MoE mul_mv_id row0 localizer (SKIP 77 without Metal)
+add_executable(test-moe-row0-parity test-moe-row0-parity.cpp)
+target_link_libraries(test-moe-row0-parity PRIVATE ggml)
+add_test(NAME test-moe-row0-parity COMMAND test-moe-row0-parity)
+set_tests_properties(test-moe-row0-parity PROPERTIES LABELS main SKIP_RETURN_CODE 77)
+
+# MoE router -> soft_max -> argsort_top_k -> mul_mat_id (SKIP 77 without Metal)
+add_executable(test-moe-router-row0-parity test-moe-router-row0-parity.cpp)
+target_link_libraries(test-moe-router-row0-parity PRIVATE ggml)
+add_test(NAME test-moe-router-row0-parity COMMAND test-moe-router-row0-parity)
+set_tests_properties(test-moe-router-row0-parity PROPERTIES LABELS main SKIP_RETURN_CODE 77)
+
+# MoE ffn_moe_out dual-topology (SKIP 77 without Metal)
+add_executable(test-moe-out-row0-parity test-moe-out-row0-parity.cpp)
+target_link_libraries(test-moe-out-row0-parity PRIVATE ggml)
+add_test(NAME test-moe-out-row0-parity COMMAND test-moe-out-row0-parity)
+set_tests_properties(test-moe-out-row0-parity PROPERTIES LABELS main SKIP_RETURN_CODE 77)
+
+# Full-graph decode row0 (N=1 vs N=2). Model required; shell runner only (not default ctest).
+# examples/metal-batch-invariance/run-mtp-e2e-corners.sh delegates here.
+llama_build(test-fullgraph-decode-row0-parity.cpp)
+
+# Product ubatch S8 vs S1024 greedy stream. ctest SKIP 77 without model/ctx (see wrapper).
+llama_build(test-ubatch-s8-s1024-row0-parity.cpp)
+add_test(
+    NAME test-ubatch-s8-s1024-row0-parity
+    COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/run-metal-ubatch-ctest.sh
+            $<TARGET_FILE:test-ubatch-s8-s1024-row0-parity>)
+set_tests_properties(test-ubatch-s8-s1024-row0-parity PROPERTIES LABELS main SKIP_RETURN_CODE 77)
+
+# CPU unit: mul_mm vs mul_mv policy / rem cross-kernel hazard (no GPU).
+# Header: ggml/src/ggml-metal/ggml-metal-mul-mm-policy.h
+add_executable(test-metal-mul-mm-policy test-metal-mul-mm-policy.cpp)
+add_test(NAME test-metal-mul-mm-policy COMMAND test-metal-mul-mm-policy)
+set_tests_properties(test-metal-mul-mm-policy PROPERTIES LABELS main)
+
+# Metal CB split vs ADD fusion (CPU unit; needs static ggml-metal).
+if (GGML_METAL AND NOT GGML_BACKEND_DL)
+    add_executable(test-metal-cb-fusion test-metal-cb-fusion.cpp)
+    target_link_libraries(test-metal-cb-fusion PRIVATE ggml)
+    target_include_directories(test-metal-cb-fusion PRIVATE ${CMAKE_SOURCE_DIR}/ggml/src)
+    add_test(NAME test-metal-cb-fusion COMMAND test-metal-cb-fusion)
+    set_tests_properties(test-metal-cb-fusion PROPERTIES LABELS main)
+endif()
 
 llama_build_and_test(test-model-load-cancel.cpp LABEL "model")
 llama_build_and_test(test-autorelease.cpp       LABEL "model")

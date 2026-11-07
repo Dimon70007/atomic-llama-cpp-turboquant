@@ -998,6 +998,7 @@ To learn more about model quantization, [read this documentation](tools/quantize
 - [How to build](docs/build.md)
 - [Running on Docker](docs/docker.md)
 - [Build on Android](docs/android.md)
+- [Metal batch-invariance](docs/backend/metal-batch-invariance.md) (FA always-tile, ISWA, `MUL_MM_MIN`; ctest + examples)
 - [Performance troubleshooting](docs/development/token_generation_performance_tips.md)
 - [GGML tips & tricks](https://github.com/ggml-org/llama.cpp/wiki/GGML-Tips-&-Tricks)
 

@@ -137,6 +137,13 @@ To disable the Metal build at compile time use the `-DGGML_METAL=OFF` cmake opti
 
 When built with Metal support, you can explicitly disable GPU inference with the `--n-gpu-layers 0` command-line argument.
 
+Batch-invariance regression tests (FA always-tile, ISWA, `MUL_MM_MIN` policy) are
+documented in [backend/metal-batch-invariance.md](./backend/metal-batch-invariance.md).
+Build with `-DLLAMA_BUILD_TESTS=ON`. They carry `LABELS main` and run with the
+default suite: `ctest -L main` (same gate as `.github/workflows/build-cpu.yml`).
+Product MTP e2e runners: `examples/metal-batch-invariance/` (not ctest);
+default duel prompt / model notes: `benchmarks/metal-batch-invariance/`.
+
 ## SYCL
 
 SYCL is a higher-level programming model to improve programming productivity on various hardware accelerators.
