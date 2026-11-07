@@ -54,7 +54,7 @@
 /tmp/
 /autogen-*.md
 /common/build-info.cpp
-
+logs
 # Deprecated
 
 /main
@@ -141,6 +141,9 @@ flake.lock
 /run-chat.sh
 /run-spec.sh
 /.ccache/
+
+# Local model scratch (GGUF symlinks / downloads; see scripts/setup-gemma4-26b-a4b-models.sh)
+/.scratch/
 
 # IDE
 

@@ -1,0 +1,45 @@
+{
+  "task": "TASK-066.9-phase-c",
+  "description": "MTP knobs quality/speed matrix after Phase B KEEP. Axes: n_max × p_min only; locks from product e2e.",
+  "locks": {
+    "ubatch": 512,
+    "sample_mode": "product",
+    "fa": "on",
+    "ctv": "turbo4",
+    "mul_mm_min": "unset (product default 0)",
+    "product_keep": {"n_max": 2, "p_min": 0.95, "run_id": "n2-p095"}
+  },
+  "gates": {
+    "hard": ["engagement", "non_empty_gen", "no_oom"],
+    "telemetry": ["first_disagree_vs_nomtp"],
+    "quality": "duel_hits",
+    "speed": "tg_tok_per_s",
+    "acceptance": "draft_acceptance"
+  },
+  "ranking": [
+    "prefer duel_hits == 2",
+    "else highest duel_hits",
+    "tie-break higher tg",
+    "second tie-break higher acceptance",
+    "compare winner vs product_keep; PROMOTE candidate only after operator ack"
+  ],
+  "baseline": {
+    "id": "nomtp-baseline",
+    "mode": "nomtp",
+    "note": "Shared nomtp generation for DIFF telemetry (run once)"
+  },
+  "runs": [
+    {"id": "n1-p085", "n_max": 1, "p_min": 0.85, "note": "n_max=1 p_min=0.85"},
+    {"id": "n1-p090", "n_max": 1, "p_min": 0.90, "note": "n_max=1 p_min=0.90"},
+    {"id": "n1-p095", "n_max": 1, "p_min": 0.95, "note": "n_max=1 p_min=0.95"},
+    {"id": "n2-p085", "n_max": 2, "p_min": 0.85, "note": "n_max=2 p_min=0.85"},
+    {"id": "n2-p090", "n_max": 2, "p_min": 0.90, "note": "n_max=2 p_min=0.90"},
+    {"id": "n2-p095", "n_max": 2, "p_min": 0.95, "note": "product KEEP (n_max=2 p_min=0.95)"},
+    {"id": "n3-p085", "n_max": 3, "p_min": 0.85, "note": "n_max=3 p_min=0.85"},
+    {"id": "n3-p090", "n_max": 3, "p_min": 0.90, "note": "n_max=3 p_min=0.90"},
+    {"id": "n3-p095", "n_max": 3, "p_min": 0.95, "note": "n_max=3 p_min=0.95"},
+    {"id": "n4-p085", "n_max": 4, "p_min": 0.85, "note": "n_max=4 p_min=0.85"},
+    {"id": "n4-p090", "n_max": 4, "p_min": 0.90, "note": "n_max=4 p_min=0.90"},
+    {"id": "n4-p095", "n_max": 4, "p_min": 0.95, "note": "n_max=4 p_min=0.95"}
+  ]
+}

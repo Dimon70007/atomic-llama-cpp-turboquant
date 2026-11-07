@@ -10,6 +10,79 @@ commit list underneath.
 
 Releases before `b10269-1.5.0` predate this file; see the git history.
 
+## Unreleased
+
+### Added
+
+- **TASK-066.9 Phase C MTP knobs matrix:** `tests/task066_mtp_knob_matrix.json` +
+  `tests/task066_mtp_knob_matrix.py` + `tests/run-task066-mtp-knob-matrix.sh` compose the
+  MTP-vs-nomtp ladder across `n_max∈{1,2,3,4}` × `p_min∈{0.85,0.9,0.95}` (ub=512 locks).
+  Shared nomtp baseline once (`TASK066_CELL_MODES`); stamp+Pareto recommend vs product KEEP
+  `(2,0.95)`; no YAML auto-promote. Ladder gains `TASK066_CELL_MODES=both|nomtp|mtp`.
+  Stamp `logs/task066-mtp-knob-matrix-20261107T043032Z` — all cells HARD+duel 2/2;
+  speed-Pareto candidate `n4-p085` (tg≈13.05); **operator KEEP** product `(2,0.95)` for
+  acceptance≈0.88 (YAML untouched). Acceptance-sorted result table frozen in
+  `TASK-066.9` Phase C + stamp `summary.md`.
+- **TASK-066.9 Phase B e2e (docs+runner+stamp):** `run-task066-mtp-vs-nomtp-ladder.sh` supports
+  `TASK066_SAMPLE_MODE=product|greedy`, product `p_min=0.95` / Unsloth sampling; HARD gate =
+  engagement + non-empty gen; MTP↔nomtp DIFF is telemetry (not FAIL) unless
+  `TASK066_REQUIRE_IDENTICAL=1`. Timing-strip in generation capture. Stamp
+  `logs/task066-mtp-vs-nomtp-20261107T041336Z` (ub=512, acceptance≈0.88, duel 2/2).
+- **TASK-066.9 Phase B MTP verify gate:** `test-mul-mat-batch-invariance --mtp-verify` locks
+  row0 N=1 vs `{2,3,4}` (q8_0 / iq4_xs / MoE). Wired into `SUITE=mul-mat-residual` after residual.
+  Policy helper `ggml_metal_mtp_verify_cross_kernel_hazard` locks min=1 RED / min=0 GREEN.
+- **TASK-066.9 A2 mul_mm policy unit:** header `ggml-metal-mul-mm-policy.h` + CPU test
+  `test-metal-mul-mm-policy` (no Metal). Locks rem cross-kernel hazard (`1708%8=4` under min=7)
+  and (Phase B) product `GGML_METAL_MUL_MM_MIN_DEFAULT=0`. Runs first in `SUITE=mul-mat-residual`.
+- **TASK-066.9 Phase A2 C1j gate:** `test-ubatch-s8-s1024-row0-parity` applies jinja chat template
+  (`enable_thinking=false`) then greedy S8 vs S1024 after raw C1. `TASK066_DIAG=c1j` for fast loop.
+  Covers ladder class that raw C1 misses (1708 tok prompt).
+- **TASK-066.5/066.6 TDD gate:** `test-ubatch-s8-s1024-row0-parity` + `SUITE=ubatch-s8-s1024` —
+  C2 + C3 (n=1280/1344) + C1 product greedy S8 vs S1024. Diag:
+  `TASK066_DIAG=localize|fa-ablation|c3-bisect|c3-thresh`; true FA-off needs `TASK066_CTV=f16`
+  (fail-closed with turbo). Requires `TASK066_MODEL` + `TASK066_CTX`. Not in `SUITE=all`.
+- **TASK-066.8 R&D (docs + telemetry):** mathematical FP comparison metrics for ubatch S1/S8/S256/S1024
+  and batch-invariance literature notes; `test-mul-mat-batch-invariance` dual-reports `max_ulp`
+  beside `mad` while **bit-exact** remains the PASS gate.
+
+### Fixed
+
+- **TASK-066.9 Phase B (MTP verify widths):** after A2 (`MUL_MM_MIN=1`), N=1 decode stayed on
+  `mul_mv` while verify `{2,3,4}` used float-tile `mul_mm` → row0 ULP drift (autotest
+  `--mtp-verify` RED@min1). Product default **1 → 0** (`ne11≥1` → mm). FA op-level C1/C2 already
+  GREEN (always-tile covers #28108 FA class on Metal). Residual suite gate: unset or `0`.
+  A2 rem lock retained (`!hazard(1708,8,0)`).
+- **TASK-066.9 Phase A2 (jinja-ladder S8 vs S1024):** last prefill ubatch remainder with
+  `ne11∈{2..7}` stayed on `mul_mv` under `MUL_MM_MIN=7` while full chunks used float-tile
+  `mul_mm` (jinja prompt 1708 toks → `1708%8=4`). Product default `GGML_METAL_MUL_MM_MIN`
+  **7 → 1** (`ne11≥2` → mm; N=1 decode still mv). C1j RED→GREEN; ladder
+  `logs/task066-ubatch-ladder-20261107T023433Z` S8≡S256≡S512≡S1024. Residual suite gate:
+  unset or `1` (superseded by Phase B → `0`).
+- **TASK-066.5 ISWA `size_swa` batch-invariance (C3-n1344):** stop sizing the SWA KV cache from
+  this context’s `n_ubatch` (`n_swa+n_ubatch` made ub=8 → 1280 cells vs large-ub ≫1280). Prefill
+  past 1280 then slid only on the small cache → multi-ubatch vs one-shot logits diverged
+  (`c3-thresh` n=1288 first RED; `FIRST_DIFF=kqv_out`). Headroom is now `size_base` so every `-ub`
+  shares capacity. `SUITE=ubatch-s8-s1024` C3+C1 GREEN; ladder HELP (`012625Z` S512≡S1024).
+- **TASK-066 fullgraph runner:** classify prefix/KV-slot failures as `FIXTURE_FAIL` (not logit RED);
+  prior status-matrix “fullgraph RED” with `CTX=2048`/`-b 2048` was fixture misuse.
+
+### Changed
+
+- **TASK-066.9 Phase B started / matmul KEEP:** FA geometry for MTP widths already GREEN under
+  always-tile; Phase B closes post-A2 mul_mm/mv hole (`MUL_MM_MIN` default **0**). Spec:
+  `tests/TASK-066.9-fa-batch-invariance.md`. Turbo4 × speculative e2e still follow-up.
+- **TASK-066.9 Phase A2 DONE:** ordered **A1 → A2 → B (MTP)**; MTP gated on A2 DoD ✅ + explicit
+  start. Spec: `tests/TASK-066.9-fa-batch-invariance.md`.
+- **TASK-066 docs:** PR audit registry + frozen findings (ladder/C2/FA ablation); baseline suites
+  `cb-fusion`/`mul-mat-residual`/`fa` GREEN, C2 RED (`logs/task066-pr-audit-baseline-20261106T230631Z`).
+
+### Fixed
+
+- **Metal MUL_MAT residual vs ubatch S8 (TASK-066.7):** float-tile `mul_mm` / `mul_mm_id` for
+  `q8_0` and `iq4_xs` (cuts half-MMA row0 drift ~1e-4 → ~1 ULP vs `mul_mv`), and product default
+  `GGML_METAL_MUL_MM_MIN` **32 → 7** so `ne11`/`ne21` ≥ 8 share that mm path with golden N=8.
+  `SUITE=mul-mat-residual` GREEN; `SUITE=mul-mat` stays GREEN on widths `{2,3,4,5,7}`.
+
 ## b10298-2.1.0
 
 ### Added

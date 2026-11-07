@@ -600,6 +600,9 @@ extern "C" {
 
     LLAMA_API const struct llama_model * llama_get_model   (const struct llama_context * ctx);
     LLAMA_API           llama_memory_t   llama_get_memory  (const struct llama_context * ctx);
+
+    // true if this memory shares its KV cells with another context's memory
+    LLAMA_API bool llama_memory_has_shared_cells(llama_memory_t mem);
     LLAMA_API  enum llama_pooling_type   llama_pooling_type(const struct llama_context * ctx); // TODO: rename to llama_get_pooling_type
 
     // Return the *effective* K/V cache tensor type currently used by the context's memory.

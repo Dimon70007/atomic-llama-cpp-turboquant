@@ -1,6 +1,7 @@
 // TASK-066 / llama.cpp#25618 — Metal FA flash_attn_ext_vec batch invariance.
-// C1: row0(nb=N) == nb=1 at the same KV length.
-// C2: decode at kv=L vs verify row0 at kv=L+(N-1) (early nsg boundary cross).
+// Applicable to Metal patch A (FA nsg pin):
+//   C1 row0 parity, C2 nsg boundary, C4 product KV quants (q8_0/turbo4),
+//   C5 N/A (FA pin does not touch mul_mat_id), C6 via separate smoke script.
 // Host-skip (exit 77) when no Metal backend is registered.
 
 #include "ggml.h"
@@ -34,6 +35,57 @@ struct fa_run {
     std::vector<float> out; // layout: [d, nq, hq, 1]
 };
 
+std::vector<uint8_t> quantize_rows(ggml_type type, const std::vector<float> & src_f32, int64_t ne0) {
+    GGML_ASSERT(src_f32.size() % size_t(ne0) == 0);
+    const int64_t nrows = int64_t(src_f32.size() / size_t(ne0));
+    const size_t row_bytes = ggml_row_size(type, ne0);
+    std::vector<uint8_t> out(size_t(nrows) * row_bytes, 0);
+
+    if (type == GGML_TYPE_F16) {
+        for (int64_t r = 0; r < nrows; ++r) {
+            ggml_fp32_to_fp16_row(
+                    src_f32.data() + size_t(r * ne0),
+                    reinterpret_cast<ggml_fp16_t *>(out.data() + size_t(r) * row_bytes),
+                    ne0);
+        }
+        return out;
+    }
+
+    if (type == GGML_TYPE_TURBO4_0) {
+        // Deterministic constant-centroid packing (same idea as test_flash_attn_ext_turbo4_vec).
+        constexpr uint8_t turbo4_centroid_index = 10;
+        constexpr uint8_t turbo4_indices = turbo4_centroid_index | (turbo4_centroid_index << 4);
+        const int64_t block_size = ggml_blck_size(GGML_TYPE_TURBO4_0);
+        const size_t block_bytes = ggml_type_size(GGML_TYPE_TURBO4_0);
+        GGML_ASSERT(ne0 % block_size == 0);
+        const float norm_f32 = 1.0f;
+        ggml_fp16_t norm_f16;
+        ggml_fp32_to_fp16_row(&norm_f32, &norm_f16, 1);
+        for (int64_t r = 0; r < nrows; ++r) {
+            uint8_t * row = out.data() + size_t(r) * row_bytes;
+            for (int64_t ib = 0; ib < ne0 / block_size; ++ib) {
+                uint8_t * block = row + size_t(ib) * block_bytes;
+                memcpy(block, &norm_f16, sizeof(norm_f16));
+                memset(block + sizeof(norm_f16), turbo4_indices, size_t(block_size / 2));
+            }
+        }
+        return out;
+    }
+
+    // Generic path (Q8_0, etc.)
+    std::vector<float> imatrix(size_t(ne0), 1.0f);
+    const size_t written = ggml_quantize_chunk(
+            type,
+            src_f32.data(),
+            out.data(),
+            /*start=*/0,
+            nrows,
+            ne0,
+            imatrix.data());
+    GGML_ASSERT(written == out.size());
+    return out;
+}
+
 fa_run run_fa(
         ggml_backend_t backend,
         int64_t nq,
@@ -41,7 +93,12 @@ fa_run run_fa(
         const std::vector<float> & q_f32,
         const std::vector<float> & k_f32,
         const std::vector<float> & v_f32,
-        bool causal_mask) {
+        bool causal_mask,
+        ggml_type type_k,
+        ggml_type type_v,
+        // When >= 0: q_pos for iq is q_pos0_base+iq (keep ne11 equal across decode vs verify).
+        // When < 0: default causal q_pos = (nkv - nq) + iq.
+        int64_t q_pos0_base = -1) {
     ggml_init_params params = {
         /*.mem_size   =*/ ggml_tensor_overhead() * 16 + ggml_graph_overhead_custom(32, false),
         /*.mem_base   =*/ nullptr,
@@ -51,8 +108,8 @@ fa_run run_fa(
     GGML_ASSERT(ctx);
 
     ggml_tensor * q = ggml_new_tensor_4d(ctx.get(), GGML_TYPE_F32, kHead, nq, kHeads, 1);
-    ggml_tensor * k = ggml_new_tensor_4d(ctx.get(), GGML_TYPE_F16, kHead, nkv, kHeads, 1);
-    ggml_tensor * v = ggml_new_tensor_4d(ctx.get(), GGML_TYPE_F16, kHead, nkv, kHeads, 1);
+    ggml_tensor * k = ggml_new_tensor_4d(ctx.get(), type_k, kHead, nkv, kHeads, 1);
+    ggml_tensor * v = ggml_new_tensor_4d(ctx.get(), type_v, kHead, nkv, kHeads, 1);
     ggml_tensor * m = nullptr;
     if (causal_mask) {
         m = ggml_new_tensor_4d(ctx.get(), GGML_TYPE_F16, nkv, nq, 1, 1);
@@ -71,19 +128,16 @@ fa_run run_fa(
 
     ggml_backend_tensor_set(q, q_f32.data(), 0, q_f32.size() * sizeof(float));
 
-    std::vector<ggml_fp16_t> k_f16(k_f32.size());
-    std::vector<ggml_fp16_t> v_f16(v_f32.size());
-    ggml_fp32_to_fp16_row(k_f32.data(), k_f16.data(), k_f32.size());
-    ggml_fp32_to_fp16_row(v_f32.data(), v_f16.data(), v_f32.size());
-    ggml_backend_tensor_set(k, k_f16.data(), 0, k_f16.size() * sizeof(ggml_fp16_t));
-    ggml_backend_tensor_set(v, v_f16.data(), 0, v_f16.size() * sizeof(ggml_fp16_t));
+    const std::vector<uint8_t> k_q = quantize_rows(type_k, k_f32, kHead);
+    const std::vector<uint8_t> v_q = quantize_rows(type_v, v_f32, kHead);
+    ggml_backend_tensor_set(k, k_q.data(), 0, k_q.size());
+    ggml_backend_tensor_set(v, v_q.data(), 0, v_q.size());
 
     if (m) {
         std::vector<ggml_fp16_t> mask(size_t(nkv * nq));
         for (int64_t iq = 0; iq < nq; ++iq) {
+            const int64_t q_pos = (q_pos0_base >= 0) ? (q_pos0_base + iq) : ((nkv - nq) + iq);
             for (int64_t ik = 0; ik < nkv; ++ik) {
-                // Causal relative to the *last* query occupying slots [nkv-nq, nkv).
-                const int64_t q_pos = (nkv - nq) + iq;
                 const bool visible = ik <= q_pos;
                 mask[size_t(iq * nkv + ik)] = ggml_fp32_to_fp16(visible ? 0.0f : -INFINITY);
             }
@@ -124,8 +178,16 @@ void fill_sin(std::vector<float> & dst, float phase) {
     }
 }
 
-bool check_c1(ggml_backend_t backend, int64_t kv, const std::vector<int64_t> & widths, int & fails) {
-    printf("C1 row0 parity @ kv=%lld\n", (long long) kv);
+bool check_c1(
+        ggml_backend_t backend,
+        int64_t kv,
+        const std::vector<int64_t> & widths,
+        ggml_type type_k,
+        ggml_type type_v,
+        const char * label,
+        int & fails) {
+    printf("C1 row0 parity [%s] @ kv=%lld K=%s V=%s\n",
+           label, (long long) kv, ggml_type_name(type_k), ggml_type_name(type_v));
     std::vector<float> k(static_cast<size_t>(kHead * kv), 0.0f);
     std::vector<float> v(static_cast<size_t>(kHead * kv), 0.0f);
     fill_sin(k, 0.11f);
@@ -144,12 +206,11 @@ bool check_c1(ggml_backend_t backend, int64_t kv, const std::vector<int64_t> & w
             }
         }
 
-        // No causal mask: row0 must see the same full KV as N=1 (pure kernel parity).
-        const fa_run serial = run_fa(backend, 1, kv, q1, k, v, /*causal_mask=*/false);
-        const fa_run batch  = run_fa(backend, n, kv, qn, k, v, /*causal_mask=*/false);
+        const fa_run serial = run_fa(backend, 1, kv, q1, k, v, false, type_k, type_v);
+        const fa_run batch  = run_fa(backend, n, kv, qn, k, v, false, type_k, type_v);
         const bool exact = row0_bit_identical(serial.out, batch.out, n);
         const double mad = max_abs_diff_row0(serial.out, batch.out, n);
-        printf("  N=%lld nsg(kv)=%lld exact=%d max_abs_diff=%.6g %s\n",
+        printf("  N=%lld nsg_formula(kv)=%lld exact=%d max_abs_diff=%.6g %s\n",
                (long long) n, (long long) nsg_for_ne11(kv), exact ? 1 : 0, mad,
                exact ? "PASS" : "FAIL");
         if (!exact) {
@@ -160,21 +221,99 @@ bool check_c1(ggml_backend_t backend, int64_t kv, const std::vector<int64_t> & w
     return ok_all;
 }
 
-bool check_c2_boundary(ggml_backend_t backend, int64_t decode_kv, int64_t n, int & fails) {
+// C7 — multi-step ubatch vs one-shot (product C2 class at FA-op level).
+// n_total queries causal over KV=n_total: one FA(nq=n_total) vs floor(n_total/ub)
+// steps of FA(nq=ub) with growing KV. Bit-exact required (no ε).
+// Pre-fix (legacy ne01<20 vec): n=16/ub=8 both-vec often GREEN; n=32/ub=8 vec vs
+// tile RED. After TASK-066 always-tile: both must be GREEN.
+bool check_c7_multistep_ubatch(
+        ggml_backend_t backend,
+        int64_t n_total,
+        int64_t ub,
+        ggml_type type_k,
+        ggml_type type_v,
+        const char * label,
+        int & fails) {
+    GGML_ASSERT(n_total > 0 && ub > 0 && (n_total % ub) == 0);
+    printf("C7 multistep-ubatch [%s] n=%lld ub=%lld K=%s V=%s\n",
+           label, (long long) n_total, (long long) ub,
+           ggml_type_name(type_k), ggml_type_name(type_v));
+
+    std::vector<float> k(static_cast<size_t>(kHead * n_total), 0.0f);
+    std::vector<float> v(static_cast<size_t>(kHead * n_total), 0.0f);
+    std::vector<float> q(static_cast<size_t>(kHead * n_total), 0.0f);
+    fill_sin(k, 0.21f);
+    fill_sin(v, 0.67f);
+    fill_sin(q, 0.43f);
+
+    const fa_run oneshot = run_fa(
+            backend, n_total, n_total, q, k, v, /*causal_mask=*/true, type_k, type_v);
+
+    std::vector<float> multi(static_cast<size_t>(kHead * n_total * kHeads), 0.0f);
+    for (int64_t step = 0; step < n_total / ub; ++step) {
+        const int64_t q0 = step * ub;
+        const int64_t nkv = q0 + ub;
+        std::vector<float> q_step(static_cast<size_t>(kHead * ub), 0.0f);
+        std::vector<float> k_step(static_cast<size_t>(kHead * nkv), 0.0f);
+        std::vector<float> v_step(static_cast<size_t>(kHead * nkv), 0.0f);
+        for (int64_t i = 0; i < ub; ++i) {
+            for (int64_t d = 0; d < kHead; ++d) {
+                q_step[size_t(i * kHead + d)] = q[size_t((q0 + i) * kHead + d)];
+            }
+        }
+        for (int64_t i = 0; i < nkv; ++i) {
+            for (int64_t d = 0; d < kHead; ++d) {
+                k_step[size_t(i * kHead + d)] = k[size_t(i * kHead + d)];
+                v_step[size_t(i * kHead + d)] = v[size_t(i * kHead + d)];
+            }
+        }
+        const fa_run step_out = run_fa(
+                backend, ub, nkv, q_step, k_step, v_step, /*causal_mask=*/true,
+                type_k, type_v, /*q_pos0_base=*/q0);
+        GGML_ASSERT(step_out.out.size() == size_t(kHead * ub * kHeads));
+        memcpy(
+                multi.data() + size_t(q0 * kHead * kHeads),
+                step_out.out.data(),
+                step_out.out.size() * sizeof(float));
+    }
+
+    bool exact = oneshot.out.size() == multi.size() &&
+            memcmp(oneshot.out.data(), multi.data(), oneshot.out.size() * sizeof(float)) == 0;
+    double mad = 0.0;
+    const size_t n = std::min(oneshot.out.size(), multi.size());
+    for (size_t i = 0; i < n; ++i) {
+        mad = std::max(mad, std::abs(double(oneshot.out[i]) - double(multi[i])));
+    }
+    printf("  exact=%d mad=%.6g %s\n", exact ? 1 : 0, mad, exact ? "PASS" : "FAIL");
+    if (!exact) {
+        ++fails;
+        return false;
+    }
+    return true;
+}
+
+bool check_c2_boundary(
+        ggml_backend_t backend,
+        int64_t decode_kv,
+        int64_t n,
+        ggml_type type_k,
+        ggml_type type_v,
+        const char * label,
+        int & fails) {
+    // Speculative verify grows KV earlier than plain decode. Keep ne11 identical
+    // (verify_kv) on both arms and mask decode row0 to decode_kv-1 — otherwise
+    // different ne11 alone yields ~1 ULP even when nsg is pinned.
     const int64_t verify_kv = decode_kv + (n - 1);
-    const int64_t nsg_dec = nsg_for_ne11(decode_kv);
-    const int64_t nsg_ver = nsg_for_ne11(verify_kv);
-    printf("C2 early-cross decode_kv=%lld verify_kv=%lld N=%lld nsg %lld→%lld\n",
-           (long long) decode_kv, (long long) verify_kv, (long long) n,
-           (long long) nsg_dec, (long long) nsg_ver);
+    const int64_t q_pos0 = decode_kv - 1;
+    printf("C2 early-cross [%s] decode_kv=%lld verify_kv=%lld N=%lld K=%s V=%s nsg_formula %lld→%lld (same-ne11+mask)\n",
+           label, (long long) decode_kv, (long long) verify_kv, (long long) n,
+           ggml_type_name(type_k), ggml_type_name(type_v),
+           (long long) nsg_for_ne11(decode_kv), (long long) nsg_for_ne11(verify_kv));
 
     std::vector<float> k(static_cast<size_t>(kHead * verify_kv), 0.0f);
     std::vector<float> v(static_cast<size_t>(kHead * verify_kv), 0.0f);
     fill_sin(k, 0.41f);
     fill_sin(v, 0.91f);
-
-    std::vector<float> k_dec(k.begin(), k.begin() + size_t(kHead * decode_kv));
-    std::vector<float> v_dec(v.begin(), v.begin() + size_t(kHead * decode_kv));
 
     std::vector<float> q1(static_cast<size_t>(kHead), 0.0f);
     fill_sin(q1, 0.55f);
@@ -187,8 +326,10 @@ bool check_c2_boundary(ggml_backend_t backend, int64_t decode_kv, int64_t n, int
         }
     }
 
-    const fa_run decode = run_fa(backend, 1, decode_kv, q1, k_dec, v_dec, true);
-    const fa_run verify = run_fa(backend, n, verify_kv, qn, k, v, true);
+    const fa_run decode = run_fa(
+            backend, 1, verify_kv, q1, k, v, true, type_k, type_v, /*q_pos0_base=*/q_pos0);
+    const fa_run verify = run_fa(
+            backend, n, verify_kv, qn, k, v, true, type_k, type_v, /*q_pos0_base=*/q_pos0);
     const bool exact = row0_bit_identical(decode.out, verify.out, n);
     const double mad = max_abs_diff_row0(decode.out, verify.out, n);
     printf("  exact=%d max_abs_diff=%.6g %s\n", exact ? 1 : 0, mad, exact ? "PASS" : "FAIL");
@@ -197,6 +338,38 @@ bool check_c2_boundary(ggml_backend_t backend, int64_t decode_kv, int64_t n, int
         return false;
     }
     return true;
+}
+
+void run_pair_suite(
+        ggml_backend_t backend,
+        ggml_type type_k,
+        ggml_type type_v,
+        const char * label,
+        const std::vector<int64_t> & widths,
+        bool full_c1_boundaries,
+        int & fails) {
+    if (full_c1_boundaries) {
+        for (int64_t kv : {2047, 2048, 2049, 4095, 4096, 4097}) {
+            check_c1(backend, kv, widths, type_k, type_v, label, fails);
+        }
+    } else {
+        // Product-quant C4: hit both nsg thresholds without re-running the full F16 matrix.
+        for (int64_t kv : {2048, 2049, 4096, 4097}) {
+            check_c1(backend, kv, widths, type_k, type_v, label, fails);
+        }
+    }
+    check_c2_boundary(backend, 2048, 2, type_k, type_v, label, fails);
+    check_c2_boundary(backend, 2047, 3, type_k, type_v, label, fails);
+    check_c2_boundary(backend, 4096, 2, type_k, type_v, label, fails);
+    check_c2_boundary(backend, 4095, 3, type_k, type_v, label, fails);
+    // C7: product-class multi-step ubatch (H6 n=16 / H7=C2 n=32).
+    // 066.9 Phase A: also stress longer FA-op chunks (H2 n=512 GREEN at model;
+    // H3 n≈1696 RED — if C7@256 stays GREEN, residual is above pure FA-op).
+    check_c7_multistep_ubatch(backend, 16, 8, type_k, type_v, label, fails);
+    check_c7_multistep_ubatch(backend, 32, 8, type_k, type_v, label, fails);
+    check_c7_multistep_ubatch(backend, 64, 8, type_k, type_v, label, fails);
+    check_c7_multistep_ubatch(backend, 128, 8, type_k, type_v, label, fails);
+    check_c7_multistep_ubatch(backend, 256, 8, type_k, type_v, label, fails);
 }
 
 } // namespace
@@ -212,12 +385,11 @@ int main() {
             break;
         }
         if (ggml_backend_dev_type(dev) == GGML_BACKEND_DEVICE_TYPE_GPU && chosen == nullptr) {
-            // Prefer an explicit Metal name; fall back to first GPU on Darwin.
             chosen = dev;
         }
     }
     if (!chosen) {
-        printf("host-skip: no Metal backend (C1/C2 FA fixtures)\n");
+        printf("host-skip: no Metal backend (TASK-066 FA corners)\n");
         return 77;
     }
     ggml_backend_ptr backend_holder(ggml_backend_dev_init(chosen, nullptr));
@@ -228,7 +400,11 @@ int main() {
     ggml_backend_t backend = backend_holder.get();
     printf("backend=%s device=%s\n", ggml_backend_name(backend), ggml_backend_dev_description(chosen));
 
-    // Formula gate (C2 thresholds from ST-1 / skoulik).
+    printf("APPLICABLE patchA(FA nsg): C1,C2,C4(product KV); C5=N/A(mul_mat_id untouched); "
+           "C6=see run-task066-fa-nsg-corners.sh\n");
+    printf("C5 N/A: metal-fa-nsg-pin only changes flash_attn_ext_vec nsg; MoE mul_mv_id is ST-2.1b\n");
+    printf("C4 note: IQ4_XS is target *weight* matmul (not FA KV); product FA KV is q8_0/turbo4\n");
+
     GGML_ASSERT(nsg_for_ne11(2047) == 1);
     GGML_ASSERT(nsg_for_ne11(2048) == 1);
     GGML_ASSERT(nsg_for_ne11(2049) == 2);
@@ -240,22 +416,22 @@ int main() {
     int fails = 0;
     const std::vector<int64_t> widths = {2, 3, 4, 5, 8};
 
-    // C1 at each boundary KV (same ne11 → same nsg; still must be row0-exact).
-    for (int64_t kv : {2047, 2048, 2049, 4095, 4096, 4097}) {
-        check_c1(backend, kv, widths, fails);
-    }
+    // C1+C2 baseline types (F16/F16) — full boundary matrix.
+    run_pair_suite(backend, GGML_TYPE_F16, GGML_TYPE_F16, "f16/f16", widths, /*full*/ true, fails);
 
-    // C2: verify batch crosses nsg threshold earlier than decode.
-    // decode_kv=2048 (nsg=1), N=2 → verify_kv=2049 (nsg=2) before pin.
-    check_c2_boundary(backend, 2048, 2, fails);
-    check_c2_boundary(backend, 2047, 3, fails);
-    check_c2_boundary(backend, 4096, 2, fails);
-    check_c2_boundary(backend, 4095, 3, fails);
+    // C4 product MTP Metal profile: quant_k=q8_0, quant_v=turbo4.
+    run_pair_suite(
+            backend, GGML_TYPE_Q8_0, GGML_TYPE_TURBO4_0, "product-q8_0/turbo4", widths,
+            /*full*/ false, fails);
+
+    // C4 sibling: symmetric q8_0 KV (drafter/aux / control profiles).
+    run_pair_suite(
+            backend, GGML_TYPE_Q8_0, GGML_TYPE_Q8_0, "q8_0/q8_0", widths, /*full*/ false, fails);
 
     if (fails != 0) {
-        printf("RESULT FAIL fails=%d\n", fails);
+        printf("RESULT FAIL fails=%d (C1/C2/C4/C7)\n", fails);
         return 1;
     }
-    printf("RESULT PASS\n");
+    printf("RESULT PASS (C1+C2+C4+C7; C5=N/A logged; C6 external)\n");
     return 0;
 }

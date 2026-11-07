@@ -7,11 +7,32 @@
 #include "ggml-metal-impl.h"
 #include "ggml-metal-common.h"
 #include "ggml-metal-device.h"
+#include "ggml-metal-mul-mm-policy.h"
 
 #include <cassert>
 #include <algorithm>
 #include <limits>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
+
+// TASK-066.7 / 066.9 A2+B: env-gated break-even around GGML_METAL_MUL_MM_MIN_DEFAULT.
+// Policy helpers: ggml-metal-mul-mm-policy.h (unit-tested). TQ / special cases stay below.
+static int ggml_metal_mul_mm_batch_min(void) {
+    static int cached = -1;
+    if (cached >= 0) {
+        return cached;
+    }
+    cached = GGML_METAL_MUL_MM_MIN_DEFAULT;
+    const char * env = getenv("GGML_METAL_MUL_MM_MIN");
+    if (env && env[0] != '\0') {
+        const int v = atoi(env);
+        if (v >= 0) {
+            cached = v;
+        }
+    }
+    return cached;
+}
 
 static ggml_metal_buffer_id ggml_metal_get_buffer_id(const ggml_tensor * t) {
     if (!t) {
@@ -2440,11 +2461,17 @@ int ggml_metal_op_mul_mat(ggml_metal_op_t ctx, int idx) {
 
     // find the break-even point where the matrix-matrix kernel becomes more efficient compared
     // to the matrix-vector kernel
-    const int ne11_mm_min = 8;
+    // TASK-066.7 float-tile + 066.9 A2 min=1 + Phase B default min=0
+    // (see ggml_metal_mul_mm_batch_min / ggml-metal-mul-mm-policy.h).
+    // Sharing mm for all ne11>=1 avoids: (A2) last-ubatch rem vs full chunks; (B) MTP
+    // verify N=1 vs {2,3,4} (same kernel — #28108 spirit for Metal matmul).
+    const int ne11_mm_min = ggml_metal_mul_mm_batch_min();
 
     // first try to use small-batch mat-mv kernels
     // these should be efficient for BS [2, ~8]
-    if (op->src[1]->type == GGML_TYPE_F32 && (ne00%128 == 0) &&
+    // TASK-066 / ggml-org/llama.cpp#25618 (skoulik): disable mul_mv_ext for ne11 in 2..8.
+    // N=1 uses mul_mv; verify batches used mul_mv_ext → row0 float drift (~1 ULP). Force mul_mv.
+    if (false && op->src[1]->type == GGML_TYPE_F32 && (ne00%128 == 0) &&
         (
          (
           (
@@ -2550,7 +2577,8 @@ int ggml_metal_op_mul_mat(ggml_metal_op_t ctx, int idx) {
         // for now the matrix-matrix multiplication kernel only works on A14+/M1+ SoCs
         // AMD GPU and older A-chips will reuse matrix-vector multiplication kernel
         props_dev->has_simdgroup_mm && ne00 >= 64 &&
-        (ne11 > ne11_mm_min || op->src[0]->type == GGML_TYPE_TQ3_1S || op->src[0]->type == GGML_TYPE_TQ4_1S)) {
+        (ggml_metal_mul_mm_ne11_uses_mm(ne11, ne11_mm_min) ||
+         op->src[0]->type == GGML_TYPE_TQ3_1S || op->src[0]->type == GGML_TYPE_TQ4_1S)) {
         // Route all TQ weights through the rotated mul_mm path.
         // Gemma4 decode still degrades on the fused mul_mv kernel even after the broader
         // TQ backend fixes, while the rotated mul_mm path matches CPU behavior.
@@ -2766,9 +2794,11 @@ int ggml_metal_op_mul_mat_id(ggml_metal_op_t ctx, int idx) {
     // to the matrix-vector kernel
     // ne20 = n_used_experts
     // ne21 = n_rows (batch size)
-    const int ne21_mm_id_min = is_tq_weight ? 1 : 32;
+    // TASK-066.7/B: MoE shares GGML_METAL_MUL_MM_MIN (default 0). TQ still forces mul_mm_id (min=1).
+    const int ne21_mm_id_min = is_tq_weight ? 1 : ggml_metal_mul_mm_batch_min();
 
-    if (props_dev->has_simdgroup_mm && ne00 >= 64 && (ne21 >= ne21_mm_id_min)) {
+    if (props_dev->has_simdgroup_mm && ne00 >= 64 &&
+        ggml_metal_mul_mm_ne11_uses_mm(ne21, ne21_mm_id_min)) {
         // some Metal matrix data types require aligned pointers
         // ref: https://developer.apple.com/metal/Metal-Shading-Language-Specification.pdf (Table 2.5)
         //switch (op->src[0]->type) {
@@ -3024,21 +3054,50 @@ bool ggml_metal_op_flash_attn_ext_use_vec(const ggml_tensor * op) {
     assert(op->op == GGML_OP_FLASH_ATTN_EXT);
 
     const int64_t ne00 = op->src[0]->ne[0]; // head size
-    const int64_t ne01 = op->src[0]->ne[1]; // batch size
+    const int64_t ne01 = op->src[0]->ne[1]; // batch size (queries)
 
-    // use vec kernel if the batch size is small and if the head size is supported
-    // EXPERIMENT: force non-vec for turbo3 on pre-M5 hardware.
-    // The vec kernel uses nl=8 (4 elements per dequant call) which has 4x more
-    // loop iterations than the non-vec nl=2 path. On M2 Pro, this loop overhead
-    // dominates — the non-vec path may be faster even for batch=1.
-    const ggml_type ktype = op->src[1]->type;
-    if (ktype == GGML_TYPE_TURBO2_0 || ktype == GGML_TYPE_TURBO3_0 || ktype == GGML_TYPE_TURBO4_0) {
-        const char * force_nonvec = getenv("TURBO_FORCE_NONVEC");
-        if (force_nonvec && force_nonvec[0] == '1') {
-            return false;  // force non-vec path
+    // TASK-066 C2 / Thinking Machines batch-invariance:
+    // Legacy gate `(ne01 < 20)` made product ubatch ub=8 take FA-vec while
+    // ub=32/1024 took FA-tile → different reduction kernels for the same
+    // prefill (H6 n=16 both-vec GREEN; H7/C2 n=32 ub8 vs ub32 RED).
+    // Default: always tile. Opt into legacy shape-based vec with GGML_METAL_FA_VEC=1
+    // (perf A/B / #25618 vec-nsg corners only — not product path).
+    const char * allow_vec = getenv("GGML_METAL_FA_VEC");
+    const bool allow_shape_vec = allow_vec && allow_vec[0] == '1';
+
+    bool use_vec = false;
+    if (allow_shape_vec) {
+        // use vec kernel if the batch size is small and if the head size is supported
+        // EXPERIMENT: force non-vec for turbo3 on pre-M5 hardware.
+        // The vec kernel uses nl=8 (4 elements per dequant call) which has 4x more
+        // loop iterations than the non-vec nl=2 path. On M2 Pro, this loop overhead
+        // dominates — the non-vec path may be faster even for batch=1.
+        const ggml_type ktype = op->src[1]->type;
+        if (ktype == GGML_TYPE_TURBO2_0 || ktype == GGML_TYPE_TURBO3_0 || ktype == GGML_TYPE_TURBO4_0) {
+            const char * force_nonvec = getenv("TURBO_FORCE_NONVEC");
+            if (force_nonvec && force_nonvec[0] == '1') {
+                use_vec = false;
+            } else {
+                use_vec = (ne01 < 20) && (ne00 % 32 == 0);
+            }
+        } else {
+            use_vec = (ne01 < 20) && (ne00 % 32 == 0);
         }
     }
-    return (ne01 < 20) && (ne00 % 32 == 0);
+
+    const char * dispatch_log = getenv("GGML_METAL_FA_DISPATCH");
+    if (dispatch_log && dispatch_log[0] == '1') {
+        const ggml_type type_k = op->src[1]->type;
+        const ggml_type type_v = op->src[2]->type;
+        fprintf(stderr,
+                "GGML_METAL_FA_DISPATCH: path=%s ne00=%lld ne01=%lld ne11=%lld K=%s V=%s allow_vec=%d\n",
+                use_vec ? "vec" : "tile",
+                (long long) ne00, (long long) ne01, (long long) op->src[1]->ne[1],
+                ggml_type_name(type_k), ggml_type_name(type_v),
+                allow_shape_vec ? 1 : 0);
+    }
+
+    return use_vec;
 }
 
 // TurboFlash: two-pass fused asymmetric attention for turbo3 V decode
