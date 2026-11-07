@@ -452,6 +452,15 @@ add_executable(test-metal-mul-mm-policy test-metal-mul-mm-policy.cpp)
 add_test(NAME test-metal-mul-mm-policy COMMAND test-metal-mul-mm-policy)
 set_tests_properties(test-metal-mul-mm-policy PROPERTIES LABELS main)
 
+# TASK-068 ST-6.1: q8 head/tail bracket schedule (CPU; no model).
+# Links libllama for llama_kv_cache_q8_brackets_* (declared locally in the test).
+# LABELS main via llama_build_and_test (default) - included in `ctest -L main`.
+llama_build_and_test(test-q8-brackets-schedule.cpp)
+
+# TASK-068 ST-6.2 gated KL ladder is NOT registered in ctest.
+# Operator / reviewer script only: tests/run-task068-q8-brackets-kl.sh
+# (see docs/KV-cache-quantization.md "Regression gates").
+
 # Metal CB split vs ADD fusion (CPU unit; needs static ggml-metal).
 if (GGML_METAL AND NOT GGML_BACKEND_DL)
     add_executable(test-metal-cb-fusion test-metal-cb-fusion.cpp)

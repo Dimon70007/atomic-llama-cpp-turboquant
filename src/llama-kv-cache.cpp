@@ -251,6 +251,8 @@ ggml_type llama_kv_cache_q8_brackets_type_v(
 
     uint32_t m_eff = 0;
     uint32_t n_tail = 0;
+    // n_layer==0 is invalid here (throws via widths). MTP draft stubs must
+    // skip brackets in the llama_kv_cache ctor before calling this helper.
     llama_kv_cache_q8_brackets_widths(n_layer, m_eff, n_tail);
 
     if (il < m_eff || il >= n_layer - n_tail) {
