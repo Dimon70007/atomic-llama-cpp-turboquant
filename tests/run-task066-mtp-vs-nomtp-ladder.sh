@@ -1,16 +1,27 @@
 #!/usr/bin/env bash
-# TASK-066 P3 / M1 — product MTP vs nomtp on the Stage 1 fixture (Metal Terminal).
-# Not in SUITE=followup. Same knobs as run-task066-ubatch-ladder.sh + draft head.
+# TASK-066 P3 / Phase B e2e — MTP vs nomtp on the Stage 1 fixture (Metal Terminal).
+# Not in SUITE=followup. Same host knobs as run-task066-ubatch-ladder.sh + draft head.
+#
+# Gates (066.9 Phase B — fixed):
+#   HARD: non-empty gen; MTP engagement evidence; no Metal OOM/assert.
+#   PRODUCT sample mode: text DIFF vs nomtp is TELEMETRY (not FAIL) — p_min/n_max/sampling
+#     exist precisely because MTP≠nomtp in general. Quality glance on duel prompt.
+#   GREEDY sample mode: optional lossless A/B (temp=0); DIFF = HELP, still not auto-FAIL
+#     unless TASK066_REQUIRE_IDENTICAL=1.
 #
 # Usage:
 #   unset GGML_METAL_MUL_MM_MIN   # product default 0 (ne11>=1 on float-tile mul_mm)
-#   BUILD_DIR=build-task066-cb ./tests/run-task066-mtp-vs-nomtp-ladder.sh
+#   BUILD_DIR=build-task066-cb-ws TASK066_SAMPLE_MODE=product TASK066_UBATCH_LIST=512 \
+#     ./tests/run-task066-mtp-vs-nomtp-ladder.sh
 #
 # Env:
 #   MAIN_GGUF / TASK066_MODEL — target GGUF (default .scratch ...UD-IQ4_XS)
 #   DRAFT_GGUF / TASK066_DRAFT — MTP head (default .scratch ...mtp-...Q8_0 or $HOME/models)
-#   TASK066_UBATCH_LIST — default "16" (M1 fast); use "8 16" for M4 arbiter later
-#   TASK066_SPEC_DRAFT_N_MAX — default 2 (= block size 3 - 1; same as run-gemma4-mtp-server)
+#   TASK066_UBATCH_LIST — default "512" (product ubatch); M1 hist used "16"
+#   TASK066_SPEC_DRAFT_N_MAX — default 2 (product; verify width N=3)
+#   TASK066_SPEC_DRAFT_P_MIN — default 0.95 (product quality KEEP; greedy mode ignores)
+#   TASK066_SAMPLE_MODE — product|greedy (default product)
+#   TASK066_REQUIRE_IDENTICAL=1 — hard-fail on MTP vs nomtp DIFF (greedy lossless only)
 #   TASK066_N_PREDICT, TASK066_CTX, TASK066_CRAM, TASK066_CTXCP, BATCH_* — same as ubatch ladder
 #   DRY_RUN=1, REBUILD=1, TASK066_ALLOW_SHARED_METAL=1, TASK066_STOP_ON_FAIL=1
 #
@@ -59,8 +70,8 @@ DEFAULT_PROMPT="${REPO_ROOT}/tests/fixtures/task066/task066_pierre_dolokhov_duel
 PROMPT="${TASK066_PROMPT:-${DEFAULT_PROMPT}}"
 N_PREDICT="${TASK066_N_PREDICT:-256}"
 CTX="${TASK066_CTX:-3072}"
-# M1 default: ubatch=16 (product pin 32 => mul_mv). Override for M4: "8" or "8 16".
-UBATCH_LIST="${TASK066_UBATCH_LIST:-16}"
+# Product default ubatch=512 (gemma4_26b_a4b_mtp_metal.yaml). Hist M1 used "16".
+UBATCH_LIST="${TASK066_UBATCH_LIST:-512}"
 BATCH_MODE="${TASK066_BATCH_MODE:-floor}"
 BATCH_FLOOR="${TASK066_BATCH_FLOOR:-512}"
 BATCH_MAX="${TASK066_BATCH_MAX:-2048}"
@@ -69,9 +80,17 @@ CTV="turbo4"
 CRAM="${TASK066_CRAM:-0}"
 CTXCP="${TASK066_CTXCP:-32}"
 SPEC_N_MAX="${TASK066_SPEC_DRAFT_N_MAX:-2}"
+SPEC_P_MIN="${TASK066_SPEC_DRAFT_P_MIN:-0.95}"
+SAMPLE_MODE="${TASK066_SAMPLE_MODE:-product}"
+REQUIRE_IDENTICAL="${TASK066_REQUIRE_IDENTICAL:-0}"
 STOP_ON_FAIL="${TASK066_STOP_ON_FAIL:-1}"
 
 fail() { echo "FAIL: $*" >&2; exit 2; }
+
+case "${SAMPLE_MODE}" in
+  product|greedy) ;;
+  *) fail "TASK066_SAMPLE_MODE must be product|greedy (got ${SAMPLE_MODE})" ;;
+esac
 
 [[ -f "${MODEL}" ]] || fail "model not found: ${MODEL}
 hint: ./scripts/setup-gemma4-26b-a4b-models.sh"
@@ -132,43 +151,61 @@ cell_dir() {
 }
 
 # Same capture logic as run-task066-ubatch-ladder.sh (keep in sync).
+# Strip interleaved -lv 3 server timing lines that otherwise pollute generation.txt
+# (and make MTP↔nomtp DIFF look like timing noise).
 extract_generation() {
   local logf="$1"
-  local cleaned
+  local cleaned filtered
   cleaned="$(mktemp "${TMPDIR:-/tmp}/task066-gen.XXXXXX")"
+  filtered="$(mktemp "${TMPDIR:-/tmp}/task066-genf.XXXXXX")"
   LC_ALL=C sed $'s/\x1b\\[[0-9;]*[A-Za-z]//g' "${logf}" > "${cleaned}"
+  # Drop pure log lines; also strip mid-line "0.NN.NNN.NNN I slot print_timing:…" junk.
+  # Progress lines from -lv 3 often splice mid-token into stdout under --simple-io.
+  LC_ALL=C sed -E \
+    -e '/^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+ [IWE] /d' \
+    -e 's/[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+ [IWE] [^[:cntrl:]]*//g' \
+    -e 's/n_decoded[[:space:]]*=[[:space:]]*[0-9]+,[[:space:]]*tg[[:space:]]*=[[:space:]]*[0-9.]+ t\/s,[[:space:]]*tg_3s[[:space:]]*=[[:space:]]*[0-9.]+ t\/s//g' \
+    -e 's/prompt eval time[[:space:]]*=[[:space:]]*[0-9.]+ ms[^[:cntrl:]]*//g' \
+    -e 's/eval time[[:space:]]*=[[:space:]]*[0-9.]+ ms[^[:cntrl:]]*//g' \
+    -e 's/total time[[:space:]]*=[[:space:]]*[0-9.]+ ms[^[:cntrl:]]*//g' \
+    -e 's/draft acceptance[[:space:]]*=[[:space:]]*[0-9.]+[^[:cntrl:]]*//g' \
+    -e 's/graphs reused[[:space:]]*=[[:space:]]*[0-9]+//g' \
+    -e 's/ns \([[:space:]]*[0-9.]+ ms per token[^)]*\)//g' \
+    -e '/^ggml_/d' \
+    -e '/^llama_/d' \
+    "${cleaned}" > "${filtered}"
 
-  if LC_ALL=C grep -E -q '^(Assistant:|assistant:)' "${cleaned}"; then
-    LC_ALL=C awk '/^(Assistant:|assistant:)/{p=1} p{print} /^\[ Prompt:/{exit}' "${cleaned}"
-    rm -f "${cleaned}"
+  if LC_ALL=C grep -E -q '^(Assistant:|assistant:)' "${filtered}"; then
+    LC_ALL=C awk '/^(Assistant:|assistant:)/{p=1} p{print} /^\[ Prompt:/{exit}' "${filtered}"
+    rm -f "${cleaned}" "${filtered}"
     return 0
   fi
-  if LC_ALL=C grep -F -q '(truncated)' "${cleaned}"; then
+  if LC_ALL=C grep -F -q '(truncated)' "${filtered}"; then
     LC_ALL=C awk '
       /\(truncated\)/ {p=1; next}
       /^\[ Prompt:/ {exit}
       /^Exiting\.\.\./ {exit}
       p && NF {print}
-    ' "${cleaned}"
-    rm -f "${cleaned}"
+    ' "${filtered}"
+    rm -f "${cleaned}" "${filtered}"
     return 0
   fi
-  if LC_ALL=C grep -E -q '^> ' "${cleaned}"; then
+  if LC_ALL=C grep -E -q '^> ' "${filtered}"; then
     LC_ALL=C awk '
       /^> / {p=1; next}
       /^\[ Prompt:/ {exit}
       /^Exiting\.\.\./ {exit}
       p && NF {print}
-    ' "${cleaned}"
-    rm -f "${cleaned}"
+    ' "${filtered}"
+    rm -f "${cleaned}" "${filtered}"
     return 0
   fi
   LC_ALL=C awk '
     /^\[ Prompt:/ {exit}
     /^Exiting\.\.\./ {exit}
     NF {print}
-  ' "${cleaned}"
-  rm -f "${cleaned}"
+  ' "${filtered}"
+  rm -f "${cleaned}" "${filtered}"
 }
 
 first_disagree() {
@@ -223,11 +260,10 @@ run_cell() {
     -cram "${CRAM}"
     -ctxcp "${CTXCP}"
     -n "${N_PREDICT}"
-    --temp 0
-    --top-k 1
     --seed 42
     --reasoning off
     --jinja
+    --chat-template-kwargs '{"enable_thinking":false}'
     --conversation
     --single-turn
     --simple-io
@@ -236,6 +272,13 @@ run_cell() {
     # llama-cli defaults to ERROR (-lv 1); INFO needed to prove draft/MTP engaged.
     -lv 3
   )
+
+  if [[ "${SAMPLE_MODE}" == "product" ]]; then
+    # gemma4_26b_a4b_mtp_metal.yaml sampling (Unsloth 1.0/0.95/64).
+    args+=(--temp 1.0 --top-p 0.95 --top-k 64)
+  else
+    args+=(--temp 0 --top-k 1 --top-p 1.0)
+  fi
 
   if [[ "${mode}" == "mtp" ]]; then
     args+=(
@@ -246,6 +289,9 @@ run_cell() {
       -ctkd "${CTK}"
       -ctvd "${CTV}"
     )
+    if [[ "${SAMPLE_MODE}" == "product" ]]; then
+      args+=(--spec-draft-p-min "${SPEC_P_MIN}")
+    fi
   fi
 
   {
@@ -253,10 +299,12 @@ run_cell() {
     echo "mode=${mode}"
     echo "batch=${b}"
     echo "batch_mode=${BATCH_MODE}"
+    echo "sample_mode=${SAMPLE_MODE}"
     echo "ctk=${CTK} ctv=${CTV}"
     echo "cram=${CRAM} ctxcp=${CTXCP} ctx=${CTX}"
     echo "draft=${DRAFT}"
     echo "spec_draft_n_max=${SPEC_N_MAX}"
+    echo "spec_draft_p_min=${SPEC_P_MIN}"
     echo "GGML_METAL_MUL_MM_MIN=${GGML_METAL_MUL_MM_MIN:-<unset:default 0>}"
     echo "cmd=${CLI_BIN} ${args[*]}"
   } > "${dir}/meta.txt"
@@ -311,9 +359,10 @@ run_cell() {
 }
 
 {
-  echo "TASK-066 MTP vs nomtp ladder (P3/M1)"
+  echo "TASK-066 MTP vs nomtp ladder (P3 / Phase B e2e)"
   echo "stamp=${STAMP}"
   echo "fixture=tests/TASK-066-ladder-fixture.md"
+  echo "gate=quality+evidence (product); DIFF vs nomtp is telemetry unless REQUIRE_IDENTICAL=1"
   echo "model=${MODEL}"
   echo "draft=${DRAFT}"
   echo "prompt=${PROMPT}"
@@ -323,7 +372,10 @@ run_cell() {
   echo "cram=${CRAM} ctxcp=${CTXCP}"
   echo "batch_mode=${BATCH_MODE} batch_floor=${BATCH_FLOOR}"
   echo "ubatch_list=${UBATCH_LIST}"
+  echo "sample_mode=${SAMPLE_MODE}"
   echo "spec_draft_n_max=${SPEC_N_MAX}"
+  echo "spec_draft_p_min=${SPEC_P_MIN}"
+  echo "require_identical=${REQUIRE_IDENTICAL}"
   echo "GGML_METAL_MUL_MM_MIN=${GGML_METAL_MUL_MM_MIN:-<unset:default 0>}"
   echo "cli=${CLI_BIN}"
   echo "build_dir=${BUILD_DIR}"
@@ -332,7 +384,7 @@ run_cell() {
 env | grep -E '^(TASK066_|DRAFT_GGUF|MAIN_GGUF|GGML_METAL_MUL_MM_MIN|BUILD_DIR)=' | sort > "${OUT_DIR}/env.txt" || true
 
 if [[ -z "${GGML_METAL_MUL_MM_MIN:-}" ]]; then
-  echo "NOTE: product default MUL_MM_MIN=7 (ne11>=8 on float-tile mul_mm). Legacy =32; N=8 on mv debug =8." >&2
+  echo "NOTE: product default MUL_MM_MIN=0 (ne11>=1 on float-tile mul_mm). Legacy A2=1 / 7 / 32." >&2
 fi
 
 for ub in ${UBATCH_LIST}; do
@@ -341,13 +393,18 @@ for ub in ${UBATCH_LIST}; do
 done
 
 MATRIX="${OUT_DIR}/matrix.md"
+DIFF_N=0
+IDENTICAL_N=0
 {
   echo "# TASK-066 MTP vs nomtp matrix"
   echo
   echo "stamp: ${STAMP}"
+  echo "sample_mode: ${SAMPLE_MODE}"
   echo "MUL_MM_MIN: ${GGML_METAL_MUL_MM_MIN:-<unset:default 0>}"
   echo "draft: ${DRAFT}"
   echo "spec_draft_n_max: ${SPEC_N_MAX}"
+  echo "spec_draft_p_min: ${SPEC_P_MIN}"
+  echo "gate: hard=engagement+non-empty; MTP↔nomtp DIFF is telemetry in product mode"
   echo
   echo "## Cells"
   echo
@@ -359,14 +416,20 @@ MATRIX="${OUT_DIR}/matrix.md"
     echo "| S${ub} mtp | ${b} | \`cells/ub$(printf '%04d' "${ub}")-mtp/generation.txt\` |"
   done
   echo
-  echo "## Auto first-disagree (MTP vs nomtp)"
+  echo "## Auto first-disagree (MTP vs nomtp) — telemetry"
   echo
   echo "| compare | result |"
   echo "|---------|--------|"
   for ub in ${UBATCH_LIST}; do
     g_n="$(cell_dir "${ub}" nomtp)/generation.txt"
     g_m="$(cell_dir "${ub}" mtp)/generation.txt"
-    echo "| S${ub} mtp vs nomtp | $(first_disagree "${g_m}" "${g_n}") |"
+    fd="$(first_disagree "${g_m}" "${g_n}")"
+    echo "| S${ub} mtp vs nomtp | ${fd} |"
+    if [[ "${fd}" == "identical" ]]; then
+      IDENTICAL_N=$((IDENTICAL_N + 1))
+    elif [[ "${fd}" == DIFF* ]]; then
+      DIFF_N=$((DIFF_N + 1))
+    fi
   done
   # Cross-ubatch nomtp reference if both present
   if echo " ${UBATCH_LIST} " | grep -q ' 8 ' && echo " ${UBATCH_LIST} " | grep -q ' 16 '; then
@@ -393,21 +456,42 @@ MATRIX="${OUT_DIR}/matrix.md"
   echo
   echo "## MTP engagement"
   echo
+  miss_ev=0
   for ub in ${UBATCH_LIST}; do
     ev="$(cell_dir "${ub}" mtp)/mtp-evidence.txt"
     if [[ -s "${ev}" ]]; then
       echo "- S${ub} mtp: OK (\`cells/ub$(printf '%04d' "${ub}")-mtp/mtp-evidence.txt\`)"
     else
-      echo "- S${ub} mtp: MISSING evidence (stamp invalid for M1)"
+      echo "- S${ub} mtp: MISSING evidence"
+      miss_ev=$((miss_ev + 1))
     fi
+  done
+  echo
+  echo "## Quality glance (duel KEEP phrases; not bit-exact)"
+  echo
+  # ST-3.2l-2q KEEP: Pierre hits Dolokhov + Dolokhov misses. Soft signal (not bit-exact phrases).
+  for ub in ${UBATCH_LIST}; do
+    for mode in nomtp mtp; do
+      g="$(cell_dir "${ub}" "${mode}")/generation.txt"
+      hits=0
+      # UTF-8 Cyrillic — do not force LC_ALL=C (breaks casefold / matches).
+      if grep -Eqi 'левый бок|попадает в [Дд]олохов|ранен(ый|ого) [Дд]олохов' "${g}" 2>/dev/null; then
+        hits=$((hits + 1))
+      fi
+      if grep -Eqi 'стреляет мимо|промахивается' "${g}" 2>/dev/null; then
+        hits=$((hits + 1))
+      fi
+      echo "- S${ub} ${mode}: duel_hits=${hits}/2 (hit Dolokhov / Dolokhov misses)"
+    done
   done
   echo
   echo "## Operator notes"
   echo
-  echo "- identical + engagement OK => M1 green at this ubatch."
-  echo "- identical without engagement => INVALID (re-run with this script; -lv 3 required)."
-  echo "- DIFF => attach cli.log; run ACC_TRACE / M2 if logic-shaped (not mul_mm noise)."
-  echo "- Finish arbiter (M4): TASK066_UBATCH_LIST=\"8\" (or \"8 16\")."
+  echo "- sample_mode=${SAMPLE_MODE}; DIFF_n=${DIFF_N}; identical_n=${IDENTICAL_N}"
+  echo "- product: engagement OK + non-empty gen => PASS; DIFF vs nomtp expected/OK."
+  echo "- greedy+REQUIRE_IDENTICAL=1: DIFF => FAIL (lossless A/B only)."
+  echo "- engagement missing => INVALID stamp."
+  echo "- Product ubatch pin: TASK066_UBATCH_LIST=512 (or ladder 8 256 512 1024)."
 } > "${MATRIX}"
 
 echo "OK: MTP vs nomtp written to ${OUT_DIR}"
@@ -416,4 +500,13 @@ if grep -q 'EMPTY S\|EMPTY_CAPTURE\|FAIL: .*empty' "${MATRIX}" 2>/dev/null; then
   echo "FAIL: empty generation capture" >&2
   exit 76
 fi
+if grep -q 'MISSING evidence' "${MATRIX}" 2>/dev/null; then
+  echo "FAIL: MTP engagement evidence missing" >&2
+  exit 77
+fi
+if [[ "${REQUIRE_IDENTICAL}" == "1" && "${DIFF_N}" -gt 0 ]]; then
+  echo "FAIL: TASK066_REQUIRE_IDENTICAL=1 and MTP vs nomtp DIFF count=${DIFF_N}" >&2
+  exit 1
+fi
+echo "VERDICT=PASS (engagement+capture; sample_mode=${SAMPLE_MODE}; DIFF telemetry=${DIFF_N})"
 exit 0

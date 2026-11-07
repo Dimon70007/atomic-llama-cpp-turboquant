@@ -14,6 +14,11 @@ Releases before `b10269-1.5.0` predate this file; see the git history.
 
 ### Added
 
+- **TASK-066.9 Phase B e2e (docs+runner+stamp):** `run-task066-mtp-vs-nomtp-ladder.sh` supports
+  `TASK066_SAMPLE_MODE=product|greedy`, product `p_min=0.95` / Unsloth sampling; HARD gate =
+  engagement + non-empty gen; MTP↔nomtp DIFF is telemetry (not FAIL) unless
+  `TASK066_REQUIRE_IDENTICAL=1`. Timing-strip in generation capture. Stamp
+  `logs/task066-mtp-vs-nomtp-20261107T041336Z` (ub=512, acceptance≈0.88, duel 2/2).
 - **TASK-066.9 Phase B MTP verify gate:** `test-mul-mat-batch-invariance --mtp-verify` locks
   row0 N=1 vs `{2,3,4}` (q8_0 / iq4_xs / MoE). Wired into `SUITE=mul-mat-residual` after residual.
   Policy helper `ggml_metal_mtp_verify_cross_kernel_hazard` locks min=1 RED / min=0 GREEN.

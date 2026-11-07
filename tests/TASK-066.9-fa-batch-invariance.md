@@ -1,8 +1,8 @@
 # TASK-066.9 — FA batch-invariance (nomtp-first, MTP second)
 
-**Status:** 🟢 Phase A1 **DONE**; 🟢 **Phase A2 DONE**; 🟢 **Phase B matmul KEEP** (MTP verify N=1 vs `{2,3,4}`); turbo4×spec e2e follow-up  
+**Status:** 🟢 Phase A1 **DONE**; 🟢 **Phase A2 DONE**; 🟢 **Phase B matmul KEEP** + 🟢 **product e2e stamp** (`041336Z`)  
 **Depends on:** [066.7 KEEP](TASK-066.7-mul-mat-residual.md); C2 GREEN (FA always-tile); research below  
-**Next:** turbo4 × speculative e2e / product MTP stamps (optional); FA geometry already GREEN  
+**Next:** optional greedy lossless A/B / more ubatch cells — not blocking  
 **Research:** [task066-hist/draft_mtp_research_task-066_fa.md](task066-hist/draft_mtp_research_task-066_fa.md), [task066-hist/TASK-066-fa-batch-invariance-web-research.md](task066-hist/TASK-066-fa-batch-invariance-web-research.md)  
 **Index:** [README-TASK066.md](README-TASK066.md) · [PR audit](TASK-066-pr-audit-registry.md)
 
@@ -158,11 +158,28 @@ Product default `GGML_METAL_MUL_MM_MIN` **7 → 1** (`ne11≥2` → float-tile m
 - [x] Named root (post-A2 mv/mm for MTP widths; FA already OK)
 - [x] Autotest RED@min1 → GREEN@min0
 - [x] Regress: `mul-mat-residual` / `cb-fusion` / `fa` / C2 / C3 / C1 / C1j GREEN
-- [ ] Turbo4 × speculative product e2e (follow-up; do not drop turbo)
+- [x] Turbo4 × speculative product e2e — stamp `logs/task066-mtp-vs-nomtp-20261107T041336Z`
+  (acceptance 0.88; duel 2/2; DIFF telemetry; tg ~12 vs ~9)
+
+### Phase B e2e gate (fixed)
+
+Product knobs from `gemma4_26b_a4b_mtp_metal.yaml`: `n_max=2`, `p_min=0.95`, FA-on, `ctv=turbo4`,
+`temp=1.0` / `top_p=0.95` / `top_k=64`, ubatch **512**.
+
+| Gate | Rule |
+|------|------|
+| **HARD PASS** | MTP engagement evidence; non-empty gen; no OOM/assert |
+| **TELEMETRY** | first-disagree MTP vs nomtp — **DIFF expected/OK** (knobs exist because paths diverge) |
+| **Quality glance** | hit Dolokhov + Dolokhov misses — soft, not bit-exact |
+| **Optional** | `TASK066_SAMPLE_MODE=greedy` + `REQUIRE_IDENTICAL=1` only for lossless A/B |
+
+Runner: `tests/run-task066-mtp-vs-nomtp-ladder.sh` (`TASK066_SAMPLE_MODE=product`).  
+Stamp: `logs/task066-mtp-vs-nomtp-20261107T041336Z`.
 
 ### Anti-patterns (still)
 
 - Raising `MUL_MM_MIN` to hide mm; FA-off/f16 as product fix; ε-PASS
+- Treating product-sample MTP↔nomtp text DIFF as RED
 
 ---
 
