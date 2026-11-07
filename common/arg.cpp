@@ -326,6 +326,12 @@ const std::vector<ggml_type> kv_cache_types = {
 };
 
 static ggml_type kv_cache_type_from_str(const std::string & s) {
+    // Bracket aliases are V-only (-ctv); reject on -ctk / draft-K paths.
+    if (s == "turbo3.8" || s == "turbo4.8") {
+        throw std::runtime_error(
+            "cache type '" + s + "' is only valid for --cache-type-v / -ctv "
+            "(q8 head/tail brackets; mid V = turbo3 or turbo4)");
+    }
     for (const auto & type : kv_cache_types) {
         if (ggml_type_name(type) == s) {
             return type;
@@ -334,11 +340,40 @@ static ggml_type kv_cache_type_from_str(const std::string & s) {
     throw std::runtime_error("Unsupported cache type: " + s);
 }
 
+// -ctv turbo3.8|turbo4.8: map to mid turbo type and arm q8 brackets via env.
+// Cleared when a non-alias V type is selected (llama-bench sweeps).
+static ggml_type kv_cache_type_v_from_str(const std::string & s) {
+#if defined(_WIN32)
+    _putenv_s("TURBO_LAYER_Q8_BRACKETS", "0");
+#else
+    setenv("TURBO_LAYER_Q8_BRACKETS", "0", 1);
+#endif
+    if (s == "turbo4.8") {
+#if defined(_WIN32)
+        _putenv_s("TURBO_LAYER_Q8_BRACKETS", "1");
+#else
+        setenv("TURBO_LAYER_Q8_BRACKETS", "1", 1);
+#endif
+        return GGML_TYPE_TURBO4_0;
+    }
+    if (s == "turbo3.8") {
+#if defined(_WIN32)
+        _putenv_s("TURBO_LAYER_Q8_BRACKETS", "1");
+#else
+        setenv("TURBO_LAYER_Q8_BRACKETS", "1", 1);
+#endif
+        return GGML_TYPE_TURBO3_0;
+    }
+    return kv_cache_type_from_str(s);
+}
+
 static std::string get_all_kv_cache_types() {
     std::ostringstream msg;
     for (const auto & type : kv_cache_types) {
         msg << ggml_type_name(type) << (&type == &kv_cache_types.back() ? "" : ", ");
     }
+    // Named q8 head/tail bracket schedules (V only; see TASK-068).
+    msg << ", turbo3.8, turbo4.8";
     return msg.str();
 }
 
@@ -2420,12 +2455,14 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
         string_format(
             "KV cache data type for V\n"
             "allowed values: %s\n"
+            "turbo3.8 / turbo4.8 = q8 head+tail brackets, mid turbo3/turbo4 "
+            "(TURBO_LAYER_HEAD/TAIL defaults 2/8; incompatible with TURBO_LAYER_ADAPTIVE)\n"
             "(default: %s)",
             get_all_kv_cache_types().c_str(),
             ggml_type_name(params.cache_type_v)
         ),
         [](common_params & params, const std::string & value) {
-            params.cache_type_v = kv_cache_type_from_str(value);
+            params.cache_type_v = kv_cache_type_v_from_str(value);
         }
     ).set_env("LLAMA_ARG_CACHE_TYPE_V"));
     add_opt(common_arg(
@@ -4204,6 +4241,7 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
             ggml_type_name(params.speculative.draft.cache_type_v)
         ),
         [](common_params & params, const std::string & value) {
+            // Bracket aliases are main -ctv only (process-wide TURBO_LAYER_Q8_BRACKETS).
             params.speculative.draft.cache_type_v = kv_cache_type_from_str(value);
         }
     ).set_env("LLAMA_ARG_SPEC_DRAFT_CACHE_TYPE_V"));

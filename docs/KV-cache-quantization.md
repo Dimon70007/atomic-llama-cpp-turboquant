@@ -51,12 +51,32 @@ K), so V rotation and padding are skipped for them.
 
 | Variable                        | Default | Effect                                                          |
 |---------------------------------|---------|-----------------------------------------------------------------|
-| `TURBO_LAYER_ADAPTIVE`          | `0`     | Layer-adaptive KV precision; `7` = Boundary V (first/last layers in `q8_0`, middle in turbo) |
+| `TURBO_LAYER_ADAPTIVE`          | `0`     | Layer-adaptive KV precision on plain `turbo*`; `7` = Boundary V (first/last layers in `q8_0`, middle in turbo2). **Not** supported with `-ctv turbo3.8\|turbo4.8` (abort) |
+| `TURBO_LAYER_HEAD`              | `2`     | With q8 brackets: # of first layers with V=`q8_0` (optional)   |
+| `TURBO_LAYER_TAIL`              | `8`     | With q8 brackets: # of last layers with V=`q8_0` (optional)    |
+| `TURBO_LAYER_Q8_BRACKETS`       | unset   | Set by `-ctv turbo3.8\|turbo4.8` (do not set by hand)           |
 | `TURBO_AUTO_ASYMMETRIC`         | `1`     | Auto-select asymmetric K/V types for large-GQA models (`0` disables) |
 | `TURBO_SPARSE_V`                | `1`     | Sparse-V dequant skip in flash attention (`0` disables)        |
 | `LLAMA_ATTN_ROT_K_OVERRIDE`     | off     | Enable upstream #21038 attention rotation for K                |
 | `LLAMA_ATTN_ROT_V_OVERRIDE`     | off     | Enable upstream #21038 attention rotation for V                |
 | `LLAMA_ATTN_ROT_DISABLE`        | `0`     | Hard lock-out: force rotation off on both sides (`1` disables) |
+
+### q8 head/tail brackets (`turbo3.8` / `turbo4.8`)
+
+Named `-ctv` / `quant_v` aliases enable a fixed V schedule (K stays as requested, usually `q8_0`):
+
+| Alias       | Layout                                      |
+|-------------|---------------------------------------------|
+| `turbo4.8`  | front q8 + mid **turbo4** + tail q8         |
+| `turbo3.8`  | front q8 + mid **turbo3** + tail q8         |
+
+Widths: `N = min(TAIL, n_layer-HEAD-1)`, `M_eff = min(HEAD, n_layer-N-1)`. Unset HEAD/TAIL → defaults **2/8** with a loud log. Plain `turbo3`/`turbo4` stay uniform (brackets do not auto-enable). Block KV streaming refuses mixed per-layer types (same as `TURBO_LAYER_ADAPTIVE`).
+
+```bash
+llama-server -m model.gguf -c 8192 -ngl 99 -ctk q8_0 -ctv turbo4.8
+# optional:
+# TURBO_LAYER_HEAD=1 TURBO_LAYER_TAIL=8
+```
 
 Upstream attention rotation is off by default: TurboQuant manages rotation
 itself (the WHT applied at cache write is equivalent and interacts with the
