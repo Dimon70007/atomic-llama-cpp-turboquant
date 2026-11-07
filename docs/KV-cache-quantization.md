@@ -63,19 +63,50 @@ K), so V rotation and padding are skipped for them.
 
 ### q8 head/tail brackets (`turbo3.8` / `turbo4.8`)
 
-Named `-ctv` / `quant_v` aliases enable a fixed V schedule (K stays as requested, usually `q8_0`):
+Named `-ctv` / `quant_v` aliases enable a fixed **layer-adaptive V schedule**
+(K stays as requested, usually `q8_0`). They are first-class cache-type
+names, not shorthand for uniform `turbo3`/`turbo4`.
 
-| Alias       | Layout                                      |
-|-------------|---------------------------------------------|
-| `turbo4.8`  | front q8 + mid **turbo4** + tail q8         |
-| `turbo3.8`  | front q8 + mid **turbo3** + tail q8         |
+#### Why (MTP + long context)
 
-Widths: `N = min(TAIL, n_layer-HEAD-1)`, `M_eff = min(HEAD, n_layer-N-1)`. Unset HEAD/TAIL → defaults **2/8** with a loud log. Plain `turbo3`/`turbo4` stay uniform (brackets do not auto-enable). Block KV streaming refuses mixed per-layer types (same as `TURBO_LAYER_ADAPTIVE`).
+Uniform aggressive V (`turbo3` / `turbo4`) is fine on short prompts (~2k
+tokens). Under **MTP speculative decoding** with a **long prompt
+(roughly >= 70k tokens)**, quantization error accumulates in the KV cache
+and shows up as **factual LM errors** (wrong actors / outcomes in long
+summaries), even when short fixtures still look correct.
+
+`turbo3.8` / `turbo4.8` keep the **head** (user question / instructions)
+and the **tail** layers at `q8_0`, and compress only the **middle** with
+`turbo3` or `turbo4`. That cuts mid-depth KV traffic while protecting the
+layers that matter most for instruction fidelity and late-context readout.
+Turning MTP off is **not** the intended product fix for this class of drift.
+
+#### Layout
+
+| Alias       | Mid V    | Layout                                      |
+|-------------|----------|---------------------------------------------|
+| `turbo4.8`  | `turbo4` | front q8 + mid **turbo4** + tail q8         |
+| `turbo3.8`  | `turbo3` | front q8 + mid **turbo3** + tail q8         |
+
+```text
+[ front M_eff x q8_0 ][ mid x turbo4 ][ tail N x q8_0 ]   # -ctv turbo4.8
+[ front M_eff x q8_0 ][ mid x turbo3 ][ tail N x q8_0 ]   # -ctv turbo3.8
+```
+
+Widths: `N = min(TAIL, n_layer-HEAD-1)`, `M_eff = min(HEAD, n_layer-N-1)`.
+At least one mid layer must remain. Unset HEAD/TAIL -> defaults **2/8**
+with a loud log. Plain `turbo3`/`turbo4` stay **uniform** (brackets do
+**not** auto-enable). If `TURBO_LAYER_ADAPTIVE` is set with a bracket
+alias, the server **aborts** (legacy modes `0-7` stay on plain `turbo*`
+only). Block KV streaming refuses mixed per-layer types (same as
+`TURBO_LAYER_ADAPTIVE`). When `n_layer == 0` (MTP draft stub), brackets
+are skipped so the draft context can still start.
 
 ```bash
 llama-server -m model.gguf -c 8192 -ngl 99 -ctk q8_0 -ctv turbo4.8
-# optional:
+# optional width override (no rebuild):
 # TURBO_LAYER_HEAD=1 TURBO_LAYER_TAIL=8
+# FORBIDDEN with aliases: TURBO_LAYER_ADAPTIVE=...
 ```
 
 Upstream attention rotation is off by default: TurboQuant manages rotation
