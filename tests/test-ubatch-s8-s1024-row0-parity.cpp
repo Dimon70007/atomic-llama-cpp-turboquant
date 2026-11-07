@@ -321,6 +321,46 @@ bool run_localize(
         return false;
     }
 
+    // H8+: post-tile threshold — n<=1280 GREEN, n=1536 RED (stamp 233840Z).
+    // Bisect + pure-ubatch twin to separate product (-b/-ub) from multi-step alone.
+    for (int32_t n_try : {256, 768, 1024, 1280, 1344, 1408, 1472, 1536}) {
+        if (n_try > n_full) {
+            continue;
+        }
+        char label[128];
+        snprintf(label, sizeof(label), "H8plus_n%d_b512ub8_vs_b1024ub1024_faON", n_try);
+        if (!one(label, n_try, 512, 8, 1024, 1024, true, ctv_prod)) {
+            return false;
+        }
+    }
+    // Pure ubatch at first RED width (same outer n=batch): ub=8 vs ub=n.
+    if (n_full >= 1536) {
+        if (!one("H9_n1536_b1536_ub8_vs_ub1536_faON", 1536, 1536, 8, 1536, 1536, true, ctv_prod)) {
+            return false;
+        }
+        if (!one("H9f16_n1536_b1536_ub8_vs_ub1536_q8_f16_faON", 1536, 1536, 8, 1536, 1536, true,
+                 GGML_TYPE_F16)) {
+            return false;
+        }
+        // True FA-off isolate: if GREEN → residual still in FA; if RED → non-FA class (066.5 fuse?).
+        if (!one("H9faOFF_n1536_b1536_ub8_vs_ub1536_q8_f16", 1536, 1536, 8, 1536, 1536, false,
+                 GGML_TYPE_F16)) {
+            return false;
+        }
+        // Boundary pair: last GREEN vs first RED (1280 vs 1344) for 066.9 Phase A TDD.
+        if (!one("H10_n1280_b1280_ub8_vs_ub1280_faON", 1280, 1280, 8, 1280, 1280, true, ctv_prod)) {
+            return false;
+        }
+        if (!one("H10_n1344_b1344_ub8_vs_ub1344_faON", 1344, 1344, 8, 1344, 1344, true, ctv_prod)) {
+            return false;
+        }
+    }
+    // H3 sibling: f16 V — is residual still inside FA when turbo is out?
+    if (!one("H3f16_full_prefill_b512ub8_vs_b1024ub1024_q8_f16_faON", n_full, 512, 8, 1024, 1024, true,
+             GGML_TYPE_F16)) {
+        return false;
+    }
+
     printf("LOCALIZE_DONE: see TASK066_DIAG=fa-ablation for true FA-off (ctv=f16)\n");
     return true;
 }
@@ -602,7 +642,49 @@ int main(int argc, char ** argv) {
                    "066.5/066.6 TDD gate open (skip C1 until C2 GREEN)\n");
             return 1;
         }
-        printf("C2 PASS — n=32 ub=8 vs ub=32 bit-exact; continuing to C1 product gate\n");
+        printf("C2 PASS — n=32 ub=8 vs ub=32 bit-exact; continuing to C3 long-prefill gate\n");
+    }
+
+    // C3 — 066.9 Phase A: post-tile threshold (localize 234258Z / 235017Z).
+    // n=1280 pure ubatch bit-exact; n=1344 first RED. FA-off still RED at n=1536
+    // → residual class is not FA-only (fuse / other ops). C3-1280 = REGRESS lock;
+    // C3-1344 = primary TDD RED until fixed.
+    {
+        constexpr int32_t n_ok = 1280;
+        constexpr int32_t n_bad = 1344;
+        if ((int32_t) tokens.size() < n_bad) {
+            fprintf(stderr, "FAIL: prompt needs >= %d tokens for C3 (got %zu)\n", n_bad,
+                    tokens.size());
+            return 2;
+        }
+        printf("UBATCH-S8-S1024-C3 long-prefill ubatch threshold n=%d GREEN / n=%d RED gate\n",
+               n_ok, n_bad);
+        const logits_result ok_a = run_prefill_logits(model, params, tokens, n_ok, n_ok, 8);
+        const logits_result ok_b = run_prefill_logits(model, params, tokens, n_ok, n_ok, n_ok);
+        if (!ok_a.ok || !ok_b.ok) {
+            return 1;
+        }
+        const int32_t n_vocab = llama_vocab_n_tokens(vocab);
+        const logits_cmp c_ok = compare_logits(ok_a.logits.data(), ok_b.logits.data(), n_vocab);
+        print_cmp("C3_n1280", c_ok);
+        if (!c_ok.exact) {
+            printf("RESULT FAIL (REGRESS) — C3 n=1280 was GREEN after always-tile; bit-exact broken\n");
+            return 1;
+        }
+        const logits_result bad_a = run_prefill_logits(model, params, tokens, n_bad, n_bad, 8);
+        const logits_result bad_b = run_prefill_logits(model, params, tokens, n_bad, n_bad, n_bad);
+        if (!bad_a.ok || !bad_b.ok) {
+            return 1;
+        }
+        const logits_cmp c_bad = compare_logits(bad_a.logits.data(), bad_b.logits.data(), n_vocab);
+        print_cmp("C3_n1344", c_bad);
+        if (c_bad.exact) {
+            printf("C3 n=1344 unexpectedly GREEN — continuing to C1\n");
+        } else {
+            printf("RESULT FAIL (RED) — C3 n=1344 multi-step ubatch (066.9 Phase A; "
+                   "FA-off also RED at n=1536 → not FA-only). Skip C1 until C3 GREEN\n");
+            return 1;
+        }
     }
 
     printf("UBATCH-S8-S1024-C1 greedy token-stream bit-exact\n");

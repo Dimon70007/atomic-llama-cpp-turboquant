@@ -8,11 +8,11 @@
 
 ## Status
 
-🟢 **066.7 KEEP** + **066.8 R&D DELIVERED** (2026-11-06). Findings frozen in [TASK-066.8 § Frozen findings](TASK-066.8-fp-comparison-metrics-rd.md).  
-🟢 **FA always-tile (2026-11-07):** C2 GREEN; A0–A4 exact; C1 still RED HELP `first_token_diff` 0→8.  
-🔓 **066.9 FA batch-invariance** — **Phase A (nomtp) active**; **Phase B (MTP) gated** until Phase A DoD. Spec: [TASK-066.9-fa-batch-invariance.md](TASK-066.9-fa-batch-invariance.md).  
-🔓 **066.5 / 066.6** — fuse/CB only if C1 localize points away from FA.  
-📋 **PR audit registry:** [TASK-066-pr-audit-registry.md](TASK-066-pr-audit-registry.md). Prior Stage 1 WAIVE ≠ Done. **MTP blocked** until 066.9 Phase A DoD (or explicit unlock here).
+🟢 **066.7 KEEP** + **066.8 R&D DELIVERED** (2026-11-06).  
+🟢 **FA always-tile (2026-11-07):** C2 GREEN; A0–A4 exact; C1 HELP `first_token_diff` 0→8; ladder `231804Z` DIFF@329.  
+🟢 **066.9 Phase A localize frozen:** C3 n=1280 GREEN / n=1344 RED; **H9faOFF RED** ⇒ **non-FA** long-prefill multi-step. Full freeze: [TASK-066.9 § Frozen results](TASK-066.9-fa-batch-invariance.md). Phase B MTP gated.  
+🔓 **066.5 fusion** — **next implementation** (C3-n1344 RED→GREEN). FA-only pins forbidden.  
+📋 **PR audit:** [TASK-066-pr-audit-registry.md](TASK-066-pr-audit-registry.md). Hist Stage 1 WAIVE ≠ Done. **MTP blocked** until 066.9 Phase A DoD (C3→C1→ladder).
 
 ## Locked decisions
 
@@ -34,16 +34,17 @@
    - same corner **GREEN**; log HELP / NO_EFFECT / REGRESS.
    - Forbidden: production/kernel edits without a new or extended autotest in the same change set; “covered by existing suite” only if that suite already fails closed on *this* gap (prove with RED before).
 2. **For 066.7:** that suite is `SUITE=mul-mat-residual` (vs N=8). Do **not** run e2e ladder as the iteration gate.
-3. **For 066.9 Phase A:** C1 / FA corners + C2 regression lock; ladder confirm after GREEN or named non-FA residual.
+3. **For long-prefill (C3):** primary gate `SUITE=ubatch-s8-s1024` C3-n1344; C2 + C3-n1280 regress locks; C1 after C3 GREEN.
 4. Isolation: one lever → HELP / NO_EFFECT / REGRESS → KEEP or revert.
 
 ## Progressive DoD
 
-1. `SUITE=mul-mat-residual` PASS (all widths vs N=8). ✅ 066.7  
+1. `SUITE=mul-mat-residual` PASS. ✅ 066.7  
 2. C2 FA multi-step bit-exact. ✅ always-tile  
-3. **066.9 Phase A:** C1 GREEN or non-FA residual named; ladder vs `231804Z`.  
-4. **066.9 Phase B** (gated): MTP verify-width FA autotest GREEN; then product MTP stamps.  
-5. 066.8: dual-report mad/ULP + lit (ε is telemetry, not residual PASS). ✅  
+3. Non-FA residual named (H9faOFF). ✅ 066.9 localize  
+4. **C3-n1344 GREEN** (066.5) → C1 GREEN → ladder vs `231804Z`. 🔓 open  
+5. **066.9 Phase B** (gated): MTP FA width autotest GREEN; then product MTP stamps.  
+6. 066.8 metrics R&D. ✅  
 “Owned huge DIFF@80” ≠ Done.
 
 ## Flow
@@ -57,19 +58,17 @@ flowchart TD
   t7[066_7_mul_mat_residual_KEEP]
   t8[066_8_fp_metrics_RD]
   tile[FA_always_tile_C2_GREEN]
-  t9a[066_9_PhaseA_nomtp_FA]
+  loc[066_9_localize_nonFA_C3]
+  t5[066_5_fusion_C3_n1344]
   t9b[066_9_PhaseB_MTP_FA]
-  t5[066_5_fusion_if_needed]
-  t6[066_6_cb_if_needed]
   mtp[MTP_product_stamps]
   t1 --> t2 --> t3 --> t4 --> t7
   t7 --> t8
   t7 --> tile
-  tile --> t9a
-  t9a --> t9b
+  tile --> loc
+  loc --> t5
+  t5 --> t9b
   t9b --> mtp
-  t9a -.-> t5
-  t9a -.-> t6
 ```
 
 ## Out of scope

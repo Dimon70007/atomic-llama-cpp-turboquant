@@ -363,8 +363,13 @@ void run_pair_suite(
     check_c2_boundary(backend, 4096, 2, type_k, type_v, label, fails);
     check_c2_boundary(backend, 4095, 3, type_k, type_v, label, fails);
     // C7: product-class multi-step ubatch (H6 n=16 / H7=C2 n=32).
+    // 066.9 Phase A: also stress longer FA-op chunks (H2 n=512 GREEN at model;
+    // H3 n≈1696 RED — if C7@256 stays GREEN, residual is above pure FA-op).
     check_c7_multistep_ubatch(backend, 16, 8, type_k, type_v, label, fails);
     check_c7_multistep_ubatch(backend, 32, 8, type_k, type_v, label, fails);
+    check_c7_multistep_ubatch(backend, 64, 8, type_k, type_v, label, fails);
+    check_c7_multistep_ubatch(backend, 128, 8, type_k, type_v, label, fails);
+    check_c7_multistep_ubatch(backend, 256, 8, type_k, type_v, label, fails);
 }
 
 } // namespace

@@ -1,17 +1,17 @@
 # TASK-066.5 — Full fusion table parity (draft Step 1)
 
-**Status:** 🔓 **active** (unlocked 2026-11-06 after ladder confirm DIFF@182)  
-**Depends on:** [TASK-066.4](TASK-066.4-short-model-s8-s1024.md) + [066.7 KEEP](TASK-066.7-mul-mat-residual.md); confirm stamp `logs/task066-ubatch-ladder-20261106T212703Z`  
-**Next:** [TASK-066.6-cb-and-invariance-gates.md](TASK-066.6-cb-and-invariance-gates.md)  
+**Status:** 🔓 **active** — **primary next lever** after 066.9 localize (H9faOFF RED)  
+**Depends on:** [066.7 KEEP](TASK-066.7-mul-mat-residual.md); FA always-tile C2 GREEN; [066.9](TASK-066.9-fa-batch-invariance.md) Phase A localize  
+**Next:** C3-n1344 RED→GREEN via fuse/CB (then C1 / ladder); MTP still 066.9 Phase B  
 **Source:** [task066-hist/draft_mtp_research_task-066.md](task066-hist/draft_mtp_research_task-066.md) Step 1  
-**Hypothesis (post-066.7):** remaining S8 vs S1024 text DIFF is **not** mv↔mm (residual GREEN under `MUL_MM_MIN=7`); suspect CB/`fusion_max` vs encoder fuse parity on large vs small ubatch graphs.
+**Hypothesis (post-066.9 localize):** long-prefill multi-step residual for **n≥1344** survives **FA-off** → suspect CB/`fusion_max` vs encoder fuse (or other non-FA ops), not FA kernel shape.
 
 ### TDD entry (before any further fuse/ops edit)
 
-1. ~~Prove product-class RED: C2~~ → **C2 GREEN** after FA always-tile (2026-11-07); primary open gate is **C1** greedy S8 vs S1024 (HELP `first_token_diff` 0→8).
-2. ~~Localize: n=16 GREEN / n=32 RED~~ → root cause was FA **vec vs tile** on `ne01<20`; closed in ops, not fusion table.
-3. Next fuse work: encoder≠`fusion_max` only if C1 still RED after tile + evidence points at CB/fuse (FIRST_DIFF_TENSOR on C1).
-4. Re-check every 066 patch against **C2 GREEN** + C1 (do not regress C2).
+1. ~~C2~~ GREEN (always-tile). **C3** n=1280 GREEN / **n=1344 RED** — primary fuse TDD gate (`SUITE=ubatch-s8-s1024`).
+2. Localize: FA-off still RED at n=1536 → fuse/ops, not FA-only.
+3. FIRST_DIFF_TENSOR / fuse-table mismatch on H10 n=1344 graphs (ub=8 vs one-shot) **before** blind encoder ports.
+4. Re-check C2 + C3-n1280 after every edit; no ε-PASS C3.
 
 ## Goal
 

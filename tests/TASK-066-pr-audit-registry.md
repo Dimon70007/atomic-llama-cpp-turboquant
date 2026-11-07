@@ -1,10 +1,10 @@
 # TASK-066 — Upstream / fork PR audit registry
 
-**Updated:** 2026-11-07 (066.9 FA track unlocked)  
+**Updated:** 2026-11-07 (066.9 Phase A localize frozen)  
 **Index:** [README-TASK066.md](README-TASK066.md)  
 **Artifacts:** `logs/upstream-prs/{pr28164,pr31688,pr30100,pr27781}.diff`  
-**Product findings:** ladder confirm + C2 + FA ablation (below).  
-**Active FA track:** [TASK-066.9-fa-batch-invariance.md](TASK-066.9-fa-batch-invariance.md) — Phase A nomtp; Phase B MTP gated.
+**Full freeze:** [TASK-066.9 § Frozen results](TASK-066.9-fa-batch-invariance.md)  
+**Next code:** [066.5](TASK-066.5-fusion-table-parity.md) on C3-n1344 (not FA pins).
 
 ## Frozen product findings (2026-11-06/07)
 
@@ -33,6 +33,18 @@
 | FA ablation after fix | **A0–A4 all exact=1** (incl. product turbo4) — `logs/task066-regression-after-tile-20261106T231654Z` |
 | Regression pack | `cb-fusion` / `mul-mat-residual` / `fa` **GREEN** |
 
+### 066.9 Phase A localize (2026-11-07) — frozen
+
+| Stamp / gate | Result |
+|--------------|--------|
+| Threshold / bisect / faoff | `logs/task066-localize-{threshold,bisect,faoff}-*` |
+| n≤1280 product + pure ubatch | **GREEN** |
+| n=1344 (C3) | **RED** — primary TDD (`logs/task066-c3-gate-20261106T235908Z`) |
+| n=1536 pure = product | **RED** (multi-step, not `-b`) |
+| H9faOFF (FA-off q8/f16) | **RED** ⇒ residual **not FA-only** |
+| FA C7 ≤256 | GREEN (op-level ≠ C3) |
+| Agreed read | Next lever **066.5 fuse/CB**; FA-only pins forbidden |
+
 ## PR / patch matrix (fidelity vs original intent)
 
 | ID | Role | Fork status | Fidelity check (2026-11-07) | Autotest gate |
@@ -46,15 +58,15 @@
 | **#27441** skinny mm | Small-batch mm tiles | ❌ CLOSED | Do not blind-reapply | residual / ladder |
 | **066.7** float-tile + `MUL_MM_MIN=7` | Unify S8+ on mm | 🟢 KEEP | Orthogonal to C2 | `SUITE=mul-mat-residual` |
 | **TASK-066 FA always-tile** | No `ne01<20` vec/tile flip | ✅ Default tile | C7 RED→GREEN + C2 GREEN | `SUITE=fa` C7 + C2 |
-| **066.9 Phase A** | Nomtp C1 / ladder FA residual | 🔓 Active | After always-tile; C1 still RED HELP | C1 + C2 lock |
+| **066.9 Phase A** | Nomtp C3 n=1344 multi-step | 🔓 Active | n≤1280 GREEN; n≥1344 RED; **H9faOFF RED** ⇒ non-FA | C3 + C2 lock |
 | **066.9 Phase B** | MTP verify widths 1..4 (#28108 spirit) | ⏸ Gated on Phase A DoD | Draft: [task066-hist/draft_mtp_research_task-066_fa.md](task066-hist/draft_mtp_research_task-066_fa.md) | MTP FA autotest (TBD) |
 | **#26358** / TM fixed split-KV | Further prefill invariance | ⬜ Open if C1 stays RED | Owned under **066.9 Phase A** | C1 / ladder |
 | **#28108** (CUDA hist) | Unify FA tile for verify Q widths | ⬜ Metal port in Phase B | Not for Phase A | MTP FA corner |
 
 ## Gaps (not “failed apply”)
 
-1. **C2 closed** via always-tile; **C1 / ladder** → **[066.9 Phase A](TASK-066.9-fa-batch-invariance.md)** (not re-open vec pin; MTP Phase B gated).
-2. **Encoder still hand-rolls fuse** vs `fusion_next` — 066.1 PARTIAL; 066.5 if localize → fuse.
+1. **C2 closed**; **C3-n1344 / C1 / ladder** → **[066.5](TASK-066.5-fusion-table-parity.md)** (H9faOFF: not FA-only; MTP Phase B gated).
+2. **Encoder still hand-rolls fuse** vs `fusion_next` — 066.1 PARTIAL; **066.5 active**.
 3. **#30100 / #27441** — deferred / closed.
 
 ## Re-audit protocol
@@ -67,21 +79,23 @@ BUILD_DIR=build-task066-cb-ws SUITE=mul-mat-residual ./tests/run-task066-metal-c
 BUILD_DIR=build-task066-cb-ws SUITE=fa ./tests/run-task066-metal-corners.sh
 TASK066_MODEL=.scratch/gemma-4-26b-a4b/gemma-4-26B-A4B-it-UD-IQ4_XS.gguf \
 TASK066_CTX=3072 BUILD_DIR=build-task066-cb-ws \
-  SUITE=ubatch-s8-s1024 ./tests/run-task066-metal-corners.sh   # C2 must stay GREEN; C1 may still RED
+  SUITE=ubatch-s8-s1024 ./tests/run-task066-metal-corners.sh
+# C2 + C3-n1280 GREEN; C3-n1344 RED until 066.5
 ```
 
-Log HELP / NO_EFFECT / REGRESS; never ε-PASS residual or C2.
+Log HELP / NO_EFFECT / REGRESS; never ε-PASS residual / C2 / C3.
 
-## Baseline after always-tile (2026-11-07)
+## Baseline after always-tile + localize (2026-11-07)
 
-**Stamps:** `logs/task066-c2-after-tile-*`, `logs/task066-regression-after-tile-20261106T231654Z`
+**Stamps:** `logs/task066-c2-after-tile-*`, `logs/task066-regression-after-tile-20261106T231654Z`, `logs/task066-c3-gate-20261106T235908Z`
 
 | Suite | rc | Verdict |
 |-------|----|---------|
 | `cb-fusion` | 0 | GREEN |
 | `mul-mat-residual` | 0 | GREEN (066.7 KEEP) |
-| `fa` (+ C7) | 0 | GREEN (always-tile; legacy vec RED under `FA_VEC=1`) |
+| `fa` (+ C7) | 0 | GREEN (always-tile) |
 | `ubatch-s8-s1024` **C2** | 0 | **GREEN** |
-| `ubatch-s8-s1024` **C1** | 1 | RED HELP first_token_diff=8 |
+| `ubatch-s8-s1024` **C3** | 1 | n=1280 GREEN / **n=1344 RED** |
+| `ubatch-s8-s1024` **C1** | — | deferred until C3 GREEN |
 
-**Conclusion:** C2 FA multi-step class closed by removing shape-dependent vec/tile selection. Product stays FA-on+turbo4. Next residual = C1/ladder beyond n=32.
+**Conclusion:** Short FA multi-step closed (always-tile). Long residual is **non-FA** multi-step (H9faOFF). Next = 066.5 on C3. Product stays FA-on+turbo4.
