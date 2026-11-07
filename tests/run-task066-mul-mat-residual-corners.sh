@@ -5,7 +5,7 @@
 # Usage:
 #   ./tests/run-task066-mul-mat-residual-corners.sh [OUT_DIR]
 # Env: BUILD_DIR, REBUILD=1
-# Gate: product default GGML_METAL_MUL_MM_MIN=1 (066.9 A2; unset or 1). Other values SKIP (77).
+# Gate: product default GGML_METAL_MUL_MM_MIN=0 (066.9 B; unset or 0). Other values SKIP (77).
 
 set -euo pipefail
 
@@ -17,15 +17,15 @@ mkdir -p "${OUT_DIR}"
 TEST_BIN="${BUILD_DIR}/bin/test-mul-mat-batch-invariance"
 POLICY_BIN="${BUILD_DIR}/bin/test-metal-mul-mm-policy"
 
-# 066.7 residual vs N=8; 066.9 A2 product default min=1 (ne11>=2 → float-tile mul_mm).
-if [[ -n "${GGML_METAL_MUL_MM_MIN:-}" && "${GGML_METAL_MUL_MM_MIN}" != "1" ]]; then
+# 066.7 residual vs N=8; 066.9 B product default min=0 (ne11>=1 → float-tile mul_mm).
+if [[ -n "${GGML_METAL_MUL_MM_MIN:-}" && "${GGML_METAL_MUL_MM_MIN}" != "0" ]]; then
   {
-    echo "track=B5+066.7+066.9A2"
+    echo "track=B5+066.7+066.9B"
     echo "inventory=tests/TASK-066-mul-mat-batch-inventory.md"
     echo "GGML_METAL_MUL_MM_MIN=${GGML_METAL_MUL_MM_MIN}"
-    echo "VERDICT=SKIP (residual suite gates on default MUL_MM_MIN=1; unset env or set 1)"
+    echo "VERDICT=SKIP (residual suite gates on default MUL_MM_MIN=0; unset env or set 0)"
   } | tee "${OUT_DIR}/summary.txt"
-  echo "SKIP: SUITE=mul-mat-residual requires GGML_METAL_MUL_MM_MIN unset or 1 (got ${GGML_METAL_MUL_MM_MIN})" >&2
+  echo "SKIP: SUITE=mul-mat-residual requires GGML_METAL_MUL_MM_MIN unset or 0 (got ${GGML_METAL_MUL_MM_MIN})" >&2
   exit 77
 fi
 
@@ -80,27 +80,41 @@ RC=${PIPESTATUS[0]}
 set -e
 echo "residual_exit=${RC}" | tee "${OUT_DIR}/residual.exit"
 
+echo "==> Phase B MTP verify N=1 vs {2,3,4} (test-mul-mat-batch-invariance --mtp-verify)"
+set +e
+"${TEST_BIN}" --mtp-verify 2>&1 | tee "${OUT_DIR}/mtp-verify.log"
+MTP_RC=${PIPESTATUS[0]}
+set -e
+echo "mtp_verify_exit=${MTP_RC}" | tee "${OUT_DIR}/mtp-verify.exit"
+
 {
-  echo "track=B5+ladder-band+066.9A2-policy"
+  echo "track=B5+ladder-band+066.9A2-policy+066.9B-mtp"
   echo "inventory=tests/TASK-066-mul-mat-batch-inventory.md"
   echo "golden_n=8"
   echo "widths=9,16,32,256,512,1024"
+  echo "mtp_verify_widths=2,3,4"
   echo "policy_exit=${POLICY_RC}"
   echo "residual_exit=${RC}"
-  if [[ "${RC}" -eq 0 ]]; then
+  echo "mtp_verify_exit=${MTP_RC}"
+  if [[ "${RC}" -eq 0 && "${MTP_RC}" -eq 0 ]]; then
     echo "VERDICT=PASS"
-  elif [[ "${RC}" -eq 77 ]]; then
+  elif [[ "${RC}" -eq 77 || "${MTP_RC}" -eq 77 ]]; then
     echo "VERDICT=SKIP (no Metal)"
+  elif [[ "${MTP_RC}" -ne 0 ]]; then
+    echo "VERDICT=FAIL (MTP verify N=1 vs {2,3,4} RED — Phase B)"
   else
     echo "VERDICT=FAIL (residual vs N=8 RED)"
   fi
 } | tee "${OUT_DIR}/summary.txt"
 
-if [[ "${RC}" -eq 77 ]]; then
+if [[ "${RC}" -eq 77 || "${MTP_RC}" -eq 77 ]]; then
   exit 77
 fi
 if [[ "${RC}" -ne 0 ]]; then
   exit "${RC}"
 fi
-echo "OK: TASK-066 mul-mat residual vs N=8 (+ mul_mm policy unit)"
+if [[ "${MTP_RC}" -ne 0 ]]; then
+  exit "${MTP_RC}"
+fi
+echo "OK: TASK-066 mul-mat residual vs N=8 + MTP verify + mul_mm policy unit"
 exit 0

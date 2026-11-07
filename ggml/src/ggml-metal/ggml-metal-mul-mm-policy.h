@@ -10,6 +10,8 @@
 //   upstream-like: mm_min=8  → N=8 on mul_mv
 //   066.7 KEEP:    mm_min=7  → N>=8 on mul_mm; rem∈{2..7} still on mul_mv (A2 hole)
 //   066.9 A2:      mm_min=1  → N>=2 on mul_mm; closes last-ubatch rem cross-kernel
+//   066.9 B:       mm_min=0  → N>=1 on mul_mm; closes MTP verify N=1 vs {2,3,4}
+//                  (Phase B flips DEFAULT after RED autotest; A2 rem lock retained)
 
 #pragma once
 
@@ -21,12 +23,28 @@ extern "C" {
 #endif
 
 #ifndef GGML_METAL_MUL_MM_MIN_DEFAULT
-#define GGML_METAL_MUL_MM_MIN_DEFAULT 1
+#define GGML_METAL_MUL_MM_MIN_DEFAULT 0
 #endif
 
 /** True when the Metal mul_mat path selects mul_mm for this ne11 under mm_min. */
 static inline bool ggml_metal_mul_mm_ne11_uses_mm(int64_t ne11, int mm_min) {
     return ne11 > (int64_t) mm_min;
+}
+
+/**
+ * MTP / speculative verify class: N=1 decode vs verify width N in {2,3,4}.
+ * True when serial and verify disagree on mul_mm vs mul_mv under mm_min.
+ *
+ * Example (066.9 Phase B): mm_min=1 → N=1 mv, N=2..4 mm → hazard.
+ * With mm_min=0 → all on mm → no hazard. Raising min to hide is forbidden.
+ */
+static inline bool ggml_metal_mtp_verify_cross_kernel_hazard(int64_t verify_n, int mm_min) {
+    if (verify_n < 2) {
+        return false;
+    }
+    const bool serial_mm = ggml_metal_mul_mm_ne11_uses_mm(/*ne11=*/1, mm_min);
+    const bool verify_mm = ggml_metal_mul_mm_ne11_uses_mm(verify_n, mm_min);
+    return serial_mm != verify_mm;
 }
 
 /**

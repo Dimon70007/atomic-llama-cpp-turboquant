@@ -1,11 +1,10 @@
-// TASK-066.9 Phase A2 — CPU unit for Metal mul_mm vs mul_mv dispatch policy.
+// TASK-066.9 Phase A2 + B — CPU unit for Metal mul_mm vs mul_mv dispatch policy.
 //
-// Locks the rem cross-kernel class without GPU / model:
-//   jinja ladder prompt n=1708, ub=8 → rem=4
-//   under MUL_MM_MIN=7: full chunks on mm, rem on mv → hazard
-//   under product default (1): both on mm → no hazard
+// Locks without GPU / model:
+//   A2 rem: jinja n=1708, ub=8 → rem=4; min=7 hazard; product default safe
+//   B MTP:  N=1 vs {2,3,4}; min=1 hazard; product default min=0 → no hazard
 //
-// Bad merge that bumps GGML_METAL_MUL_MM_MIN_DEFAULT back to 7 fails here immediately.
+// Bad merge that bumps DEFAULT back to 7 (A2) or 1 (Phase B MTP) fails here.
 // Runner: SUITE=mul-mat-residual (policy gate first) or build target alone.
 // No Metal required.
 
@@ -50,11 +49,13 @@ int main() {
     printf("TASK-066 mul_mm policy unit (CPU; no Metal)\n");
     printf("  GGML_METAL_MUL_MM_MIN_DEFAULT=%d\n", GGML_METAL_MUL_MM_MIN_DEFAULT);
 
-    // Product pin after A2 — do not silently restore 7.
-    expect_eq_int("product_default_min_is_1", GGML_METAL_MUL_MM_MIN_DEFAULT, 1);
+    // Product pin after Phase B — do not silently restore 7 (A2) or 1 (MTP hole).
+    expect_eq_int("product_default_min_is_0", GGML_METAL_MUL_MM_MIN_DEFAULT, 0);
 
     // Dispatch rule: ne11 > mm_min → mul_mm (matches ggml-metal-ops.cpp).
+    expect_true("n1_min0_on_mm", ggml_metal_mul_mm_ne11_uses_mm(1, 0));
     expect_true("n1_min1_on_mv", !ggml_metal_mul_mm_ne11_uses_mm(1, 1));
+    expect_true("n2_min0_on_mm", ggml_metal_mul_mm_ne11_uses_mm(2, 0));
     expect_true("n2_min1_on_mm", ggml_metal_mul_mm_ne11_uses_mm(2, 1));
     expect_true("n8_min7_on_mm", ggml_metal_mul_mm_ne11_uses_mm(8, 7));
     expect_true("n4_min7_on_mv", !ggml_metal_mul_mm_ne11_uses_mm(4, 7));
@@ -84,6 +85,18 @@ int main() {
     expect_true("product_default_safe_for_jinja_1708_ub8",
                 !ggml_metal_ubatch_rem_cross_kernel_hazard(
                         1708, 8, GGML_METAL_MUL_MM_MIN_DEFAULT));
+
+    // 066.9 Phase B — MTP verify N=1 vs {2,3,4}: A2 min=1 leaves N=1 on mv, N>=2 on mm.
+    expect_true("mtp_hazard_n2_min1", ggml_metal_mtp_verify_cross_kernel_hazard(2, 1));
+    expect_true("mtp_hazard_n3_min1", ggml_metal_mtp_verify_cross_kernel_hazard(3, 1));
+    expect_true("mtp_hazard_n4_min1", ggml_metal_mtp_verify_cross_kernel_hazard(4, 1));
+    expect_true("no_mtp_hazard_n2_min0", !ggml_metal_mtp_verify_cross_kernel_hazard(2, 0));
+    expect_true("no_mtp_hazard_n4_min0", !ggml_metal_mtp_verify_cross_kernel_hazard(4, 0));
+    expect_true("no_mtp_hazard_n4_min7", !ggml_metal_mtp_verify_cross_kernel_hazard(4, 7));
+    expect_true("product_default_safe_for_mtp_n2",
+                !ggml_metal_mtp_verify_cross_kernel_hazard(2, GGML_METAL_MUL_MM_MIN_DEFAULT));
+    expect_true("product_default_safe_for_mtp_n4",
+                !ggml_metal_mtp_verify_cross_kernel_hazard(4, GGML_METAL_MUL_MM_MIN_DEFAULT));
 
     if (g_fails != 0) {
         printf("RESULT FAIL (%d assertion(s)) — mul_mm policy regress\n", g_fails);

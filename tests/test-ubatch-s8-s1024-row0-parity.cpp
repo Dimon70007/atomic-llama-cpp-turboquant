@@ -1189,7 +1189,7 @@ int main(int argc, char ** argv) {
     if (const char * mm = std::getenv("GGML_METAL_MUL_MM_MIN"); mm && mm[0]) {
         fprintf(stderr, "GGML_METAL_MUL_MM_MIN=%s\n", mm);
     } else {
-        fprintf(stderr, "GGML_METAL_MUL_MM_MIN=<unset:default 1>\n");
+        fprintf(stderr, "GGML_METAL_MUL_MM_MIN=<unset:default 0>\n");
     }
 
     const bool require_gpu = []() {

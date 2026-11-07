@@ -14,9 +14,12 @@ Releases before `b10269-1.5.0` predate this file; see the git history.
 
 ### Added
 
+- **TASK-066.9 Phase B MTP verify gate:** `test-mul-mat-batch-invariance --mtp-verify` locks
+  row0 N=1 vs `{2,3,4}` (q8_0 / iq4_xs / MoE). Wired into `SUITE=mul-mat-residual` after residual.
+  Policy helper `ggml_metal_mtp_verify_cross_kernel_hazard` locks min=1 RED / min=0 GREEN.
 - **TASK-066.9 A2 mul_mm policy unit:** header `ggml-metal-mul-mm-policy.h` + CPU test
-  `test-metal-mul-mm-policy` (no Metal). Locks `GGML_METAL_MUL_MM_MIN_DEFAULT=1` and rem
-  cross-kernel hazard (`1708%8=4` under min=7). Runs first in `SUITE=mul-mat-residual`.
+  `test-metal-mul-mm-policy` (no Metal). Locks rem cross-kernel hazard (`1708%8=4` under min=7)
+  and (Phase B) product `GGML_METAL_MUL_MM_MIN_DEFAULT=0`. Runs first in `SUITE=mul-mat-residual`.
 - **TASK-066.9 Phase A2 C1j gate:** `test-ubatch-s8-s1024-row0-parity` applies jinja chat template
   (`enable_thinking=false`) then greedy S8 vs S1024 after raw C1. `TASK066_DIAG=c1j` for fast loop.
   Covers ladder class that raw C1 misses (1708 tok prompt).
@@ -30,12 +33,17 @@ Releases before `b10269-1.5.0` predate this file; see the git history.
 
 ### Fixed
 
+- **TASK-066.9 Phase B (MTP verify widths):** after A2 (`MUL_MM_MIN=1`), N=1 decode stayed on
+  `mul_mv` while verify `{2,3,4}` used float-tile `mul_mm` → row0 ULP drift (autotest
+  `--mtp-verify` RED@min1). Product default **1 → 0** (`ne11≥1` → mm). FA op-level C1/C2 already
+  GREEN (always-tile covers #28108 FA class on Metal). Residual suite gate: unset or `0`.
+  A2 rem lock retained (`!hazard(1708,8,0)`).
 - **TASK-066.9 Phase A2 (jinja-ladder S8 vs S1024):** last prefill ubatch remainder with
   `ne11∈{2..7}` stayed on `mul_mv` under `MUL_MM_MIN=7` while full chunks used float-tile
   `mul_mm` (jinja prompt 1708 toks → `1708%8=4`). Product default `GGML_METAL_MUL_MM_MIN`
   **7 → 1** (`ne11≥2` → mm; N=1 decode still mv). C1j RED→GREEN; ladder
   `logs/task066-ubatch-ladder-20261107T023433Z` S8≡S256≡S512≡S1024. Residual suite gate:
-  unset or `1`.
+  unset or `1` (superseded by Phase B → `0`).
 - **TASK-066.5 ISWA `size_swa` batch-invariance (C3-n1344):** stop sizing the SWA KV cache from
   this context’s `n_ubatch` (`n_swa+n_ubatch` made ub=8 → 1280 cells vs large-ub ≫1280). Prefill
   past 1280 then slid only on the small cache → multi-ubatch vs one-shot logits diverged
@@ -46,6 +54,9 @@ Releases before `b10269-1.5.0` predate this file; see the git history.
 
 ### Changed
 
+- **TASK-066.9 Phase B started / matmul KEEP:** FA geometry for MTP widths already GREEN under
+  always-tile; Phase B closes post-A2 mul_mm/mv hole (`MUL_MM_MIN` default **0**). Spec:
+  `tests/TASK-066.9-fa-batch-invariance.md`. Turbo4 × speculative e2e still follow-up.
 - **TASK-066.9 Phase A2 DONE:** ordered **A1 → A2 → B (MTP)**; MTP gated on A2 DoD ✅ + explicit
   start. Spec: `tests/TASK-066.9-fa-batch-invariance.md`.
 - **TASK-066 docs:** PR audit registry + frozen findings (ladder/C2/FA ablation); baseline suites

@@ -1,8 +1,8 @@
 # TASK-066.9 — FA batch-invariance (nomtp-first, MTP second)
 
-**Status:** 🟢 Phase A1 **DONE**; 🟢 **Phase A2 DONE** (jinja-ladder / rem cross-kernel); Phase B MTP gated (explicit start)  
+**Status:** 🟢 Phase A1 **DONE**; 🟢 **Phase A2 DONE**; 🟢 **Phase B matmul KEEP** (MTP verify N=1 vs `{2,3,4}`); turbo4×spec e2e follow-up  
 **Depends on:** [066.7 KEEP](TASK-066.7-mul-mat-residual.md); C2 GREEN (FA always-tile); research below  
-**Next:** Phase B MTP only after explicit start  
+**Next:** turbo4 × speculative e2e / product MTP stamps (optional); FA geometry already GREEN  
 **Research:** [task066-hist/draft_mtp_research_task-066_fa.md](task066-hist/draft_mtp_research_task-066_fa.md), [task066-hist/TASK-066-fa-batch-invariance-web-research.md](task066-hist/TASK-066-fa-batch-invariance-web-research.md)  
 **Index:** [README-TASK066.md](README-TASK066.md) · [PR audit](TASK-066-pr-audit-registry.md)
 
@@ -131,18 +131,38 @@ Product default `GGML_METAL_MUL_MM_MIN` **7 → 1** (`ne11≥2` → float-tile m
 
 - FA-off / `ctv=f16` as product fix; ε-PASS; reopen `#27441`  
 - Treating raw C1 GREEN as ladder Done (need C1j)  
-- Assuming MTP widths {2..7} still share mv with N=1 after A2 (they now use mm)  
+- Assuming MTP widths {2..7} still share mv with N=1 after A2 (they used mm; Phase B put N=1 on mm too)  
 
 ---
 
-## Phase B — MTP (after Phase A2)
+## Phase B — MTP (started 2026-11-07; matmul KEEP)
 
-**Unlock:** **Phase A2 DoD** ✅ **and** explicit start.  
+**Unlock:** **Phase A2 DoD** ✅ **and** explicit start (this session).
 
-1. Autotest RED: verify width N=1 vs `{2,3,4}` FA row0/logits  
-2. Port #28108 spirit on Metal (not CUDA paste)  
-3. Turbo4 × speculative after FA widths; do not drop turbo  
-4. Optional batch-invariant FA pin — YAGNI until RED remains  
+### Findings
+
+| Layer | Status | Note |
+|-------|--------|------|
+| **FA op** N=1 vs `{2,3,4}` (C1/C2, f16 + product q8/turbo4) | **GREEN** already | Always-tile covers #28108 FA class on Metal; no CUDA paste |
+| **mul_mat** N=1 vs `{2,3,4}` after A2 | **was RED** | A2 left N=1 on `mul_mv`, N≥2 on `mul_mm` → max_ulp≈8 |
+| **Fix** | Product `MUL_MM_MIN` **1 → 0** | `ne11≥1` → float-tile mm (same kernel for decode + verify). Not a raise. A2 rem lock retained |
+
+### Autotest
+
+- `--mtp-verify` in `test-mul-mat-batch-invariance` (q8_0 / iq4_xs / MoE `{2,3,4}`)
+- Policy: `ggml_metal_mtp_verify_cross_kernel_hazard`; DEFAULT=0; hazard@min1 / !hazard@min0
+- Wired into `SUITE=mul-mat-residual` after residual-vs-N=8
+
+### Phase B DoD (matmul)
+
+- [x] Named root (post-A2 mv/mm for MTP widths; FA already OK)
+- [x] Autotest RED@min1 → GREEN@min0
+- [x] Regress: `mul-mat-residual` / `cb-fusion` / `fa` / C2 / C3 / C1 / C1j GREEN
+- [ ] Turbo4 × speculative product e2e (follow-up; do not drop turbo)
+
+### Anti-patterns (still)
+
+- Raising `MUL_MM_MIN` to hide mm; FA-off/f16 as product fix; ε-PASS
 
 ---
 
@@ -165,7 +185,7 @@ BUILD_DIR=build-task066-cb-ws SUITE=fa ./tests/run-task066-metal-corners.sh
 TASK066_MODEL=.scratch/gemma-4-26b-a4b/gemma-4-26B-A4B-it-UD-IQ4_XS.gguf \
 TASK066_CTX=3072 BUILD_DIR=build-task066-cb-ws \
   SUITE=ubatch-s8-s1024 ./tests/run-task066-metal-corners.sh
-# Expect A1+A2: C2/C3/C1/C1j GREEN
+# Expect A1+A2+B: C2/C3/C1/C1j GREEN; residual includes --mtp-verify
 # Confirm: ./tests/run-task066-ubatch-ladder.sh  (jinja; S8≡S1024)
 # Diag: TASK066_DIAG=c1j | localize | fa-ablation | c3-bisect | c3-thresh
 ```

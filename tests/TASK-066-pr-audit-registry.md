@@ -59,16 +59,16 @@
 | **066.7** float-tile + min=7 | Unify S8+ on mm | 🟢 KEEP | A2 later set default **1** | `SUITE=mul-mat-residual` |
 | **TASK-066 FA always-tile** | No `ne01<20` vec/tile flip | ✅ Default tile | C7 RED→GREEN + C2 GREEN | `SUITE=fa` C7 + C2 |
 | **066.9 Phase A1** | Nomtp C2/C3/C1 + ISWA | 🟢 Done | C3+C1 GREEN; ISWA `size_swa` KEEP | C2/C3/C1 |
-| **066.9 Phase A2** | Last-ubatch rem cross-kernel | 🟢 Done | `MUL_MM_MIN` default 1; C1j; ladder `023433Z` | C1j + ladder |
-| **066.9 Phase B** | MTP verify widths 1..4 (#28108 spirit) | ⏸ Gated — explicit start | Draft: [task066-hist/draft_mtp_research_task-066_fa.md](task066-hist/draft_mtp_research_task-066_fa.md) | MTP FA autotest (TBD) |
-| **#28108** (CUDA hist) | Unify FA tile for verify Q widths | ⬜ Metal port in Phase B | After explicit start | MTP FA corner |
+| **066.9 Phase A2** | Last-ubatch rem cross-kernel | 🟢 Done | was `MUL_MM_MIN=1`; C1j; ladder `023433Z` | C1j + ladder |
+| **066.9 Phase B** | MTP verify N=1 vs `{2,3,4}` | 🟢 matmul KEEP | FA already GREEN; `MUL_MM_MIN` **1→0**; `--mtp-verify` | `SUITE=mul-mat-residual` mtp-verify |
+| **#28108** (CUDA hist) | Unify FA tile for verify Q widths | ✅ Metal FA already OK (always-tile) | No CUDA paste; matmul unify is Phase B KEEP | FA C1/C2 + `--mtp-verify` |
 
 ## Gaps (not “failed apply”)
 
-1. **A1+A2 closed.** Next: Phase B MTP on **explicit start** ([066.9](TASK-066.9-fa-batch-invariance.md)).
+1. **A1+A2+B(matmul) closed.** Follow-up: turbo4 × speculative product e2e ([066.9](TASK-066.9-fa-batch-invariance.md)).
 2. **Encoder still hand-rolls fuse** vs `fusion_next` — 066.1 PARTIAL; hygiene only if new RED.
 3. **#30100 / #27441** — deferred / closed.
-4. **MTP widths {2..7}:** after A2 they use mm (not mv vs N=1) — revisit in Phase B.
+4. **MTP widths:** Phase B put N=1 on mm with `{2..4}` (`MUL_MM_MIN=0`).
 
 ## Re-audit protocol
 

@@ -16,7 +16,7 @@
 #include <cstdio>
 #include <cstdlib>
 
-// TASK-066.7 / 066.9 Phase A2: env-gated break-even around GGML_METAL_MUL_MM_MIN_DEFAULT.
+// TASK-066.7 / 066.9 A2+B: env-gated break-even around GGML_METAL_MUL_MM_MIN_DEFAULT.
 // Policy helpers: ggml-metal-mul-mm-policy.h (unit-tested). TQ / special cases stay below.
 static int ggml_metal_mul_mm_batch_min(void) {
     static int cached = -1;
@@ -2461,8 +2461,10 @@ int ggml_metal_op_mul_mat(ggml_metal_op_t ctx, int idx) {
 
     // find the break-even point where the matrix-matrix kernel becomes more efficient compared
     // to the matrix-vector kernel
-    // TASK-066.7 float-tile + 066.9 A2 default min=1 (see ggml_metal_mul_mm_batch_min).
-    // Sharing mm for all ne11>=2 avoids last-ubatch rem cross-kernel vs full chunks.
+    // TASK-066.7 float-tile + 066.9 A2 min=1 + Phase B default min=0
+    // (see ggml_metal_mul_mm_batch_min / ggml-metal-mul-mm-policy.h).
+    // Sharing mm for all ne11>=1 avoids: (A2) last-ubatch rem vs full chunks; (B) MTP
+    // verify N=1 vs {2,3,4} (same kernel — #28108 spirit for Metal matmul).
     const int ne11_mm_min = ggml_metal_mul_mm_batch_min();
 
     // first try to use small-batch mat-mv kernels
@@ -2792,7 +2794,7 @@ int ggml_metal_op_mul_mat_id(ggml_metal_op_t ctx, int idx) {
     // to the matrix-vector kernel
     // ne20 = n_used_experts
     // ne21 = n_rows (batch size)
-    // TASK-066.7: MoE shares GGML_METAL_MUL_MM_MIN (default 1). TQ still forces mul_mm_id (min=1).
+    // TASK-066.7/B: MoE shares GGML_METAL_MUL_MM_MIN (default 0). TQ still forces mul_mm_id (min=1).
     const int ne21_mm_id_min = is_tq_weight ? 1 : ggml_metal_mul_mm_batch_min();
 
     if (props_dev->has_simdgroup_mm && ne00 >= 64 &&

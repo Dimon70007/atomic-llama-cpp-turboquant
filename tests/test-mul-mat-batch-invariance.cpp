@@ -418,9 +418,12 @@ bool check_c5_mul_mat_id_vs_golden(
 
 int main(int argc, char ** argv) {
     bool residual = false;
+    bool mtp_verify = false;
     for (int i = 1; i < argc; ++i) {
         if (std::string(argv[i]) == "--residual") {
             residual = true;
+        } else if (std::string(argv[i]) == "--mtp-verify") {
+            mtp_verify = true;
         }
     }
 
@@ -469,9 +472,27 @@ int main(int argc, char ** argv) {
         return 0;
     }
 
+    if (mtp_verify) {
+        // 066.9 Phase B — MTP verify widths: row0(N=1) bit-exact vs row0 of N in {2,3,4}.
+        // Post-A2 hole: default min=1 → N=1 mul_mv, N>=2 mul_mm → cross-kernel RED.
+        // FA op-level C1/C2 already GREEN (always-tile); this gates the matmul class.
+        printf("APPLICABLE Phase-B MTP verify: N=1 vs {2,3,4} row0 bit-exact "
+               "(Q8_0 + IQ4_XS; MoE ne21 same set)\n");
+        const std::vector<int64_t> widths = {2, 3, 4};
+        check_c1_c4_mul_mat(backend, GGML_TYPE_Q8_0, "q8_0-mtp-verify", widths, fails);
+        check_c1_c4_mul_mat(backend, GGML_TYPE_IQ4_XS, "iq4_xs-mtp-verify", widths, fails);
+        check_c5_mul_mat_id(backend, GGML_TYPE_Q8_0, "q8_0-moe-mtp-verify", widths, fails);
+        if (fails != 0) {
+            printf("RESULT FAIL fails=%d (MTP verify N=1 vs {2,3,4}; Phase B)\n", fails);
+            return 1;
+        }
+        printf("RESULT PASS (MTP verify N=1 vs {2,3,4})\n");
+        return 0;
+    }
+
     printf("APPLICABLE patchB(mul_mv_ext): C1,C4(Q8_0),C5(mul_mat_id); IQ4_XS=control; C6=external\n");
-    // 066.7 product min=7: ne11<=7 stays on mul_mv (bit-exact vs N=1). N=8 uses mul_mm
-    // (float-tile; ~1 ULP vs mv) — covered by residual vs golden N=8 instead.
+    // Product default min=0 (066.9 B): all ne11>=1 on float-tile mul_mm → N=1 vs N bit-exact.
+    // Legacy min=7 kept N<=7 on mul_mv; A2 min=1 left N=1 on mv while N>=2 on mm (MTP RED).
     const std::vector<int64_t> widths = {2, 3, 4, 5, 7};
 
     // C4 product-relevant: Q8_0 hits mul_mv_ext for ne11 in 2..8 (skoulik class; ext forced off).
