@@ -327,12 +327,12 @@ def _write_reports(
             recommend = (
                 f"PROMOTE candidate {winner.run_id} "
                 f"(n_max={winner.n_max}, p_min={winner.p_min}) "
-                f"vs KEEP {keep_id} — YAML change requires operator ack"
+                f"vs KEEP {keep_id} - YAML change requires operator ack"
             )
 
     matrix_md = stamp_dir / "matrix.md"
     lines: list[str] = [
-        "# TASK-066.9 Phase C — MTP knobs matrix",
+        "# TASK-066.9 Phase C - MTP knobs matrix",
         "",
         f"stamp_dir: `{stamp_dir}`",
         f"ubatch: {matrix['locks'].get('ubatch')}",
@@ -345,20 +345,20 @@ def _write_reports(
     ]
     if baseline is not None:
         lines.append(
-            f"| {baseline.run_id} | — | — | {'OK' if baseline.hard_ok else 'FAIL'} | "
-            f"{baseline.duel_hits}/2 | {baseline.tg if baseline.tg is not None else '—'} | "
-            f"— | n/a |"
+            f"| {baseline.run_id} | - | - | {'OK' if baseline.hard_ok else 'FAIL'} | "
+            f"{baseline.duel_hits}/2 | {baseline.tg if baseline.tg is not None else '-'} | "
+            f"- | n/a |"
         )
     for c in cells:
         lines.append(
             f"| {c.run_id} | {c.n_max} | {c.p_min} | {'OK' if c.hard_ok else 'FAIL'} | "
-            f"{c.duel_hits}/2 | {c.tg if c.tg is not None else '—'} | "
-            f"{c.acceptance if c.acceptance is not None else '—'} | `{c.first_disagree}` |"
+            f"{c.duel_hits}/2 | {c.tg if c.tg is not None else '-'} | "
+            f"{c.acceptance if c.acceptance is not None else '-'} | `{c.first_disagree}` |"
         )
     lines.extend(
         [
             "",
-            "## Ranking (hard_ok → duel_hits → tg → acceptance)",
+            "## Ranking (hard_ok -> duel_hits -> tg -> acceptance)",
             "",
         ]
     )
@@ -454,7 +454,7 @@ def main(argv: list[str] | None = None) -> int:
         readme.write_text(
             "\n".join(
                 [
-                    "TASK-066.9 Phase C — MTP knobs quality/speed matrix",
+                    "TASK-066.9 Phase C - MTP knobs quality/speed matrix",
                     f"stamp={stamp_dir.name}",
                     f"matrix={args.matrix}",
                     f"ubatch={ubatch}",

@@ -1,6 +1,6 @@
 {
   "task": "TASK-066.9-phase-c",
-  "description": "MTP knobs quality/speed matrix after Phase B KEEP. Axes: n_max × p_min only; locks from product e2e.",
+  "description": "MTP knobs quality/speed matrix after Phase B KEEP. Axes: n_max x p_min only; locks from product e2e.",
   "locks": {
     "ubatch": 512,
     "sample_mode": "product",

@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# TASK-066 P3 / Phase B e2e — MTP vs nomtp on the Stage 1 fixture (Metal Terminal).
+# TASK-066 P3 / Phase B e2e - MTP vs nomtp on the Stage 1 fixture (Metal Terminal).
 # Not in SUITE=followup. Same host knobs as run-task066-ubatch-ladder.sh + draft head.
 #
-# Gates (066.9 Phase B — fixed):
+# Gates (066.9 Phase B - fixed):
 #   HARD: non-empty gen; MTP engagement evidence; no Metal OOM/assert.
-#   PRODUCT sample mode: text DIFF vs nomtp is TELEMETRY (not FAIL) — p_min/n_max/sampling
-#     exist precisely because MTP≠nomtp in general. Quality glance on duel prompt.
+#   PRODUCT sample mode: text DIFF vs nomtp is TELEMETRY (not FAIL) - p_min/n_max/sampling
+#     exist precisely because MTP!=nomtp in general. Quality glance on duel prompt.
 #   GREEDY sample mode: optional lossless A/B (temp=0); DIFF = HELP, still not auto-FAIL
 #     unless TASK066_REQUIRE_IDENTICAL=1.
 #
@@ -15,15 +15,15 @@
 #     ./examples/metal-batch-invariance/run-mtp-vs-nomtp-ladder.sh
 #
 # Env:
-#   MAIN_GGUF / TASK066_MODEL — target GGUF (default .scratch ...UD-IQ4_XS)
-#   DRAFT_GGUF / TASK066_DRAFT — MTP head (default .scratch ...mtp-...Q8_0 or $HOME/models)
-#   TASK066_UBATCH_LIST — default "512" (product ubatch); M1 hist used "16"
-#   TASK066_SPEC_DRAFT_N_MAX — default 2 (product; verify width N=3)
-#   TASK066_SPEC_DRAFT_P_MIN — default 0.95 (product quality KEEP; greedy mode ignores)
-#   TASK066_SAMPLE_MODE — product|greedy (default product)
-#   TASK066_CELL_MODES — both|nomtp|mtp (default both). Phase C matrix uses nomtp once + mtp per knob.
-#   TASK066_REQUIRE_IDENTICAL=1 — hard-fail on MTP vs nomtp DIFF (greedy lossless only)
-#   TASK066_N_PREDICT, TASK066_CTX, TASK066_CRAM, TASK066_CTXCP, BATCH_* — same as ubatch ladder
+#   MAIN_GGUF / TASK066_MODEL - target GGUF (default .scratch ...UD-IQ4_XS)
+#   DRAFT_GGUF / TASK066_DRAFT - MTP head (default .scratch ...mtp-...Q8_0 or $HOME/models)
+#   TASK066_UBATCH_LIST - default "512" (product ubatch); M1 hist used "16"
+#   TASK066_SPEC_DRAFT_N_MAX - default 2 (product; verify width N=3)
+#   TASK066_SPEC_DRAFT_P_MIN - default 0.95 (product quality KEEP; greedy mode ignores)
+#   TASK066_SAMPLE_MODE - product|greedy (default product)
+#   TASK066_CELL_MODES - both|nomtp|mtp (default both). Phase C matrix uses nomtp once + mtp per knob.
+#   TASK066_REQUIRE_IDENTICAL=1 - hard-fail on MTP vs nomtp DIFF (greedy lossless only)
+#   TASK066_N_PREDICT, TASK066_CTX, TASK066_CRAM, TASK066_CTXCP, BATCH_* - same as ubatch ladder
 #   DRY_RUN=1, REBUILD=1, TASK066_ALLOW_SHARED_METAL=1, TASK066_STOP_ON_FAIL=1
 #
 # Writes: logs/task066-mtp-vs-nomtp-<stamp>/{cells/,matrix.md,README.txt}
@@ -114,7 +114,7 @@ esac
 
 preflight_exclusive_metal() {
   if [[ "${TASK066_ALLOW_SHARED_METAL:-0}" == "1" ]]; then
-    echo "NOTE: TASK066_ALLOW_SHARED_METAL=1 — skipping exclusive-Metal preflight" >&2
+    echo "NOTE: TASK066_ALLOW_SHARED_METAL=1 - skipping exclusive-Metal preflight" >&2
     return 0
   fi
   local hits=""
@@ -159,14 +159,14 @@ cell_dir() {
 
 # Same capture logic as run-task066-ubatch-ladder.sh (keep in sync).
 # Strip interleaved -lv 3 server timing lines that otherwise pollute generation.txt
-# (and make MTP↔nomtp DIFF look like timing noise).
+# (and make MTP<->nomtp DIFF look like timing noise).
 extract_generation() {
   local logf="$1"
   local cleaned filtered
   cleaned="$(mktemp "${TMPDIR:-/tmp}/task066-gen.XXXXXX")"
   filtered="$(mktemp "${TMPDIR:-/tmp}/task066-genf.XXXXXX")"
   LC_ALL=C sed $'s/\x1b\\[[0-9;]*[A-Za-z]//g' "${logf}" > "${cleaned}"
-  # Drop pure log lines; also strip mid-line "0.NN.NNN.NNN I slot print_timing:…" junk.
+  # Drop pure log lines; also strip mid-line "0.NN.NNN.NNN I slot print_timing:..." junk.
   # Progress lines from -lv 3 often splice mid-token into stdout under --simple-io.
   LC_ALL=C sed -E \
     -e '/^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+ [IWE] /d' \
@@ -420,7 +420,7 @@ IDENTICAL_N=0
   echo "draft: ${DRAFT}"
   echo "spec_draft_n_max: ${SPEC_N_MAX}"
   echo "spec_draft_p_min: ${SPEC_P_MIN}"
-  echo "gate: hard=engagement+non-empty; MTP↔nomtp DIFF is telemetry in product mode"
+  echo "gate: hard=engagement+non-empty; MTP<->nomtp DIFF is telemetry in product mode"
   echo
   echo "## Cells"
   echo
@@ -436,7 +436,7 @@ IDENTICAL_N=0
     fi
   done
   echo
-  echo "## Auto first-disagree (MTP vs nomtp) — telemetry"
+  echo "## Auto first-disagree (MTP vs nomtp) - telemetry"
   echo
   echo "| compare | result |"
   echo "|---------|--------|"
@@ -457,7 +457,7 @@ IDENTICAL_N=0
       echo "| S16 nomtp vs S8 nomtp | $(first_disagree "$(cell_dir 16 nomtp)/generation.txt" "$(cell_dir 8 nomtp)/generation.txt") |"
     fi
   else
-    echo "| (skipped) | CELL_MODES=${CELL_MODES} — cross-mode DIFF deferred to Phase C orchestrator |"
+    echo "| (skipped) | CELL_MODES=${CELL_MODES} - cross-mode DIFF deferred to Phase C orchestrator |"
   fi
   echo
   echo "## Capture check"
@@ -514,7 +514,7 @@ IDENTICAL_N=0
       fi
       g="$(cell_dir "${ub}" "${mode}")/generation.txt"
       hits=0
-      # UTF-8 Cyrillic — do not force LC_ALL=C (breaks casefold / matches).
+      # UTF-8 Cyrillic - do not force LC_ALL=C (breaks casefold / matches).
       if grep -Eqi 'левый бок|попадает в [Дд]олохов|ранен(ый|ого) [Дд]олохов' "${g}" 2>/dev/null; then
         hits=$((hits + 1))
       fi

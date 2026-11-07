@@ -1,4 +1,4 @@
-# Gemma 4 26B-A4B — local GGUF layout (Metal batch-invariance)
+# Gemma 4 26B-A4B - local GGUF layout (Metal batch-invariance)
 
 Follow the same convention as `scripts/run-gemma4-mtp-server.sh`:
 

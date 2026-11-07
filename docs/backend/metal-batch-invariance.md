@@ -88,7 +88,7 @@ BUILD_DIR=build SUITE=fa              ./tests/run-task066-metal-corners.sh
 BUILD_DIR=build SUITE=cb-fusion       ./tests/run-task066-metal-corners.sh
 ```
 
-## Product e2e / knobs (examples only — not ctest)
+## Product e2e / knobs (examples only - not ctest)
 
 Operator scripts (not registered in `ctest`):
 
@@ -144,7 +144,7 @@ Post-fixtures-move reconfirm: `logs/metal-mtp-vs-nomtp-20261107T063420Z` PASS.
 
 All 12 cells HARD OK + duel 2/2. Speed-Pareto among duel=2/2 was `n4-p085`
 (tg ~13.05, acceptance ~0.72). Operator KEEP for product knobs stays
-`(n_max=2, p_min=0.95)` (acceptance ~0.88, tg ~12.29) — acceptance preferred
+`(n_max=2, p_min=0.95)` (acceptance ~0.88, tg ~12.29) - acceptance preferred
 over the speed-Pareto cell. Product YAML is not auto-promoted by these scripts.
 
 Acceptance-sorted summary:
@@ -174,6 +174,53 @@ Acceptance-sorted summary:
 | `TASK066_MODEL` / `TASK066_DRAFT` | `.scratch/...` if unset | Main / MTP draft GGUF for e2e |
 | `TASK066_PROMPT` | `benchmarks/metal-batch-invariance/pierre_dolokhov_duel_2k.prompt.txt` | Override duel prompt |
 | `TASK066_CTX` | e2e default `3072`; ubatch ctest required | Context; ubatch ctest SKIP 77 if unset |
+
+## Known `test-backend-ops` FAIL list (Metal / help wanted)
+
+After this KEEP stack, run the ggml backend op suite on Apple Silicon with the
+**device name** filter (on this host the Metal device registers as `MTL0`):
+
+```bash
+unset GGML_METAL_MUL_MM_MIN
+# Use the backend name from the tool banner (here: MTL0).
+# `-b Metal` matches nothing and skips every backend (false OK).
+./build/bin/test-backend-ops -b MTL0
+```
+
+Stamp on tip (Apple M4): `logs/metal-test-backend-ops-20261107T071528Z`
+(`summary.md` + full log). Score: **22801 / 22822** passed; backend MTL0 FAIL.
+
+These 21 cases are all TurboQuant **weight** types (`tq3_1s` / `tq4_1s`) on
+`MUL_MAT` / `MUL_MAT_ID` / `MUL_MAT_ID_REDUCE`. They are **out of scope** for the
+batch-invariance KEEP (FA always-tile, ISWA `size_swa`, `MUL_MM_MIN=0`). FA /
+`q8_0` / `q4_0` / `f16` paths in the same run were green. Reviewer help on the
+TQ matmul-id decode (`n=1`) / strided `k_v` views is welcome.
+
+Frozen FAIL names:
+
+```text
+MUL_MAT_ID_REDUCE(type=tq4_1s,m=64,k=256,n_mats=8,n_used=4,ntok=1)
+MUL_MAT(type_a=tq3_1s,type_b=f32,m=256,n=256,k=1536,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=1600,o=1)
+MUL_MAT(type_a=tq4_1s,type_b=f32,m=256,n=256,k=1536,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=1600,o=1)
+MUL_MAT_ID(type_a=tq3_1s,type_b=f32,n_mats=4,n_used=2,b=0,m=64,n=1,k=96)
+MUL_MAT_ID(type_a=tq4_1s,type_b=f32,n_mats=4,n_used=2,b=0,m=64,n=1,k=96)
+MUL_MAT_ID(type_a=tq3_1s,type_b=f32,n_mats=4,n_used=1,b=0,m=512,n=1,k=256)
+MUL_MAT_ID(type_a=tq3_1s,type_b=f32,n_mats=4,n_used=1,b=1,m=512,n=1,k=256)
+MUL_MAT_ID(type_a=tq3_1s,type_b=f32,n_mats=4,n_used=2,b=0,m=512,n=1,k=256)
+MUL_MAT_ID(type_a=tq3_1s,type_b=f32,n_mats=4,n_used=2,b=1,m=512,n=1,k=256)
+MUL_MAT_ID(type_a=tq3_1s,type_b=f32,n_mats=4,n_used=4,b=0,m=512,n=1,k=256)
+MUL_MAT_ID(type_a=tq3_1s,type_b=f32,n_mats=4,n_used=4,b=1,m=512,n=1,k=256)
+MUL_MAT_ID(type_a=tq4_1s,type_b=f32,n_mats=4,n_used=1,b=0,m=512,n=1,k=256)
+MUL_MAT_ID(type_a=tq4_1s,type_b=f32,n_mats=4,n_used=1,b=1,m=512,n=1,k=256)
+MUL_MAT_ID(type_a=tq4_1s,type_b=f32,n_mats=4,n_used=2,b=0,m=512,n=1,k=256)
+MUL_MAT_ID(type_a=tq4_1s,type_b=f32,n_mats=4,n_used=2,b=1,m=512,n=1,k=256)
+MUL_MAT_ID(type_a=tq4_1s,type_b=f32,n_mats=4,n_used=4,b=0,m=512,n=1,k=256)
+MUL_MAT_ID(type_a=tq4_1s,type_b=f32,n_mats=4,n_used=4,b=1,m=512,n=1,k=256)
+MUL_MAT_ID(type_a=tq3_1s,type_b=f32,n_mats=256,n_used=8,b=0,m=512,n=1,k=2048)
+MUL_MAT_ID(type_a=tq3_1s,type_b=f32,n_mats=256,n_used=8,b=0,m=2048,n=1,k=512)
+MUL_MAT_ID(type_a=tq4_1s,type_b=f32,n_mats=256,n_used=8,b=0,m=512,n=1,k=2048)
+MUL_MAT_ID(type_a=tq4_1s,type_b=f32,n_mats=256,n_used=8,b=0,m=2048,n=1,k=512)
+```
 
 ## Related
 

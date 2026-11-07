@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# TASK-066 ST-3.2d — MoE router→top_k→mul_mat_id row0 localizer.
+# TASK-066 ST-3.2d - MoE router->top_k->mul_mat_id row0 localizer.
 # Self-contained in this llama.cpp fork (no external project deps).
 #
 # Usage:
 #   ./tests/run-task066-moe-router-corners.sh [OUT_DIR]
 # Env:
-#   BUILD_DIR — cmake build dir (default: <repo>/build)
-#   REBUILD=1 — rebuild test-moe-router-row0-parity before run
+#   BUILD_DIR - cmake build dir (default: <repo>/build)
+#   REBUILD=1 - rebuild test-moe-router-row0-parity before run
 
 set -euo pipefail
 
@@ -19,7 +19,7 @@ TEST_BIN="${BUILD_DIR}/bin/test-moe-router-row0-parity"
 
 if [[ ! -d "${BUILD_DIR}" ]]; then
   echo "FAIL: BUILD_DIR missing: ${BUILD_DIR}" >&2
-  echo "Configure/build this fork first (cmake -B build …), then re-run." >&2
+  echo "Configure/build this fork first (cmake -B build ...), then re-run." >&2
   exit 1
 fi
 
@@ -43,7 +43,7 @@ echo "moe_router_exit=${RC}" | tee "${OUT_DIR}/moe-router.exit"
   echo "moe_router_exit=${RC}"
   if [[ "${RC}" -eq 0 ]]; then
     echo "VERDICT=GREEN"
-    echo "note=GREEN router→top_k→moe; next live first-diff logits dump"
+    echo "note=GREEN router->top_k->moe; next live first-diff logits dump"
   elif [[ "${RC}" -eq 77 ]]; then
     echo "VERDICT=HOST_SKIP"
   else

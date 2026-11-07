@@ -1,18 +1,18 @@
 #!/usr/bin/env bash
-# TASK-066.5/066.6 — S8 vs S1024 greedy token-stream parity (TDD RED gate).
+# TASK-066.5/066.6 - S8 vs S1024 greedy token-stream parity (TDD RED gate).
 # Product-class autotest for ladder confirm DIFF@text (stamp 20261106T212703Z).
 #
 # Usage (from this repo root):
-#   TASK066_MODEL=… TASK066_CTX=3072 \
+#   TASK066_MODEL=... TASK066_CTX=3072 \
 #     ./tests/run-task066-ubatch-s8-s1024-corners.sh [OUT_DIR]
 # Env:
-#   TASK066_MODEL     — required GGUF (fail-closed)
-#   TASK066_CTX       — required (>= prompt + n_predict); ladder uses 3072
-#   TASK066_PROMPT    — optional; default benchmarks/metal-batch-invariance/...prompt.txt
-#   TASK066_N_PREDICT — optional; default 64 (binary); raise if GREEN but ladder DIFF
-#   TASK066_DIAG=localize|fa-ablation|c3-bisect|c3-thresh — evidence-only (exit 0)
-#   TASK066_BISECT_FILTER / TASK066_BISECT_HASH_ONLY — c3-bisect knobs
-#   TASK066_FA=off + TASK066_CTV=f16 — true FA-off diag (refuse turbo KV); NOT product waiver
+#   TASK066_MODEL     - required GGUF (fail-closed)
+#   TASK066_CTX       - required (>= prompt + n_predict); ladder uses 3072
+#   TASK066_PROMPT    - optional; default benchmarks/metal-batch-invariance/...prompt.txt
+#   TASK066_N_PREDICT - optional; default 64 (binary); raise if GREEN but ladder DIFF
+#   TASK066_DIAG=localize|fa-ablation|c3-bisect|c3-thresh - evidence-only (exit 0)
+#   TASK066_BISECT_FILTER / TASK066_BISECT_HASH_ONLY - c3-bisect knobs
+#   TASK066_FA=off + TASK066_CTV=f16 - true FA-off diag (refuse turbo KV); NOT product waiver
 #   BUILD_DIR, REBUILD=1, TASK066_REQUIRE_GPU (default 1 on Darwin)
 #
 # Not in SUITE=all. Umbrella: SUITE=ubatch-s8-s1024
@@ -31,7 +31,7 @@ DEFAULT_PROMPT="${REPO_ROOT}/benchmarks/metal-batch-invariance/pierre_dolokhov_d
 PROMPT="${TASK066_PROMPT:-${DEFAULT_PROMPT}}"
 
 if [[ -z "${MODEL}" ]]; then
-  # Match ladder default scratch path when unset would fail-closed at binary —
+  # Match ladder default scratch path when unset would fail-closed at binary -
   # still require explicit TASK066_MODEL (no silent product substitution).
   echo "FAIL: missing required TASK066_MODEL=/path/to.gguf (refusing silent model substitution)" >&2
   echo "hint: TASK066_MODEL=${REPO_ROOT}/.scratch/gemma-4-26b-a4b/gemma-4-26B-A4B-it-UD-IQ4_XS.gguf" >&2

@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# TASK-066 ST-3.2d — bisect router localizer crash / RED without sudo.
+# TASK-066 ST-3.2d - bisect router localizer crash / RED without sudo.
 # Self-contained in this llama.cpp fork. Run from a normal terminal (Metal needs GPU access).
 #
 # Usage (from fork root, after cmake -B build && cmake --build build --target test-moe-router-row0-parity):
 #   ./tests/run-task066-moe-router-bisect.sh
 #   BUILD_DIR=/path/to/build ./tests/run-task066-moe-router-bisect.sh [OUT_DIR]
 #
-# Stages: logits → probs → ids → moe. Stops at first non-zero exit (crash→139, FAIL→1, skip→77).
+# Stages: logits -> probs -> ids -> moe. Stops at first non-zero exit (crash->139, FAIL->1, skip->77).
 
 set -euo pipefail
 
@@ -56,5 +56,5 @@ for stage in logits probs ids moe; do
 done
 
 echo "VERDICT=GREEN" | tee -a "${SUMMARY}"
-echo "note=all stages PASS; router→top_k→moe row0 bit-exact on this host"
+echo "note=all stages PASS; router->top_k->moe row0 bit-exact on this host"
 exit 0

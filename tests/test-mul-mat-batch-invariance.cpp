@@ -1,4 +1,4 @@
-// TASK-066 / llama.cpp#25618 — Metal mul_mat / mul_mat_id batch invariance.
+// TASK-066 / llama.cpp#25618 - Metal mul_mat / mul_mat_id batch invariance.
 // Applicable to Metal patch B (disable mul_mv_ext for ne11 in 2..8):
 //   C1 row0 parity, C4 Q8_0 (+ IQ4_XS control), C5 mul_mat_id verify widths,
 //   C6 via separate smoke script (test-backend-ops).
@@ -22,7 +22,7 @@
 
 namespace {
 
-constexpr int64_t kK = 256;   // ne00 % 128 == 0 → eligible for mul_mv_ext
+constexpr int64_t kK = 256;   // ne00 % 128 == 0 -> eligible for mul_mv_ext
 constexpr int64_t kM = 64;    // output rows
 
 std::vector<uint8_t> quantize_weights(ggml_type type, const std::vector<float> & src_f32, int64_t ne0) {
@@ -48,7 +48,7 @@ bool row0_bit_identical(const std::vector<float> & serial, const std::vector<flo
     GGML_ASSERT(batch.size() == size_t(kM * n_cols));
     for (int64_t r = 0; r < kM; ++r) {
         const float a = serial[size_t(r)];
-        const float b = batch[size_t(r)]; // column-major? ggml mul_mat out is [m, n] → element (i,j) at i + j*m
+        const float b = batch[size_t(r)]; // column-major? ggml mul_mat out is [m, n] -> element (i,j) at i + j*m
         // out ne = [m, n] contiguous: index = i + j * ne0 = r + 0 * kM for col0
         if (memcmp(&a, &b, sizeof(float)) != 0) {
             return false;
@@ -473,8 +473,8 @@ int main(int argc, char ** argv) {
     }
 
     if (mtp_verify) {
-        // 066.9 Phase B — MTP verify widths: row0(N=1) bit-exact vs row0 of N in {2,3,4}.
-        // Post-A2 hole: default min=1 → N=1 mul_mv, N>=2 mul_mm → cross-kernel RED.
+        // 066.9 Phase B - MTP verify widths: row0(N=1) bit-exact vs row0 of N in {2,3,4}.
+        // Post-A2 hole: default min=1 -> N=1 mul_mv, N>=2 mul_mm -> cross-kernel RED.
         // FA op-level C1/C2 already GREEN (always-tile); this gates the matmul class.
         printf("APPLICABLE Phase-B MTP verify: N=1 vs {2,3,4} row0 bit-exact "
                "(Q8_0 + IQ4_XS; MoE ne21 same set)\n");
@@ -491,14 +491,14 @@ int main(int argc, char ** argv) {
     }
 
     printf("APPLICABLE patchB(mul_mv_ext): C1,C4(Q8_0),C5(mul_mat_id); IQ4_XS=control; C6=external\n");
-    // Product default min=0 (066.9 B): all ne11>=1 on float-tile mul_mm → N=1 vs N bit-exact.
+    // Product default min=0 (066.9 B): all ne11>=1 on float-tile mul_mm -> N=1 vs N bit-exact.
     // Legacy min=7 kept N<=7 on mul_mv; A2 min=1 left N=1 on mv while N>=2 on mm (MTP RED).
     const std::vector<int64_t> widths = {2, 3, 4, 5, 7};
 
     // C4 product-relevant: Q8_0 hits mul_mv_ext for ne11 in 2..8 (skoulik class; ext forced off).
     check_c1_c4_mul_mat(backend, GGML_TYPE_Q8_0, "q8_0-ext-hot", widths, fails);
 
-    // Control: IQ4_XS stays on mul_mv for ne11<=7 — should already be bit-exact.
+    // Control: IQ4_XS stays on mul_mv for ne11<=7 - should already be bit-exact.
     check_c1_c4_mul_mat(backend, GGML_TYPE_IQ4_XS, "iq4_xs-control", widths, fails);
 
     // C5 MoE: verify widths stay on mul_mv_id (ne21 <= min).

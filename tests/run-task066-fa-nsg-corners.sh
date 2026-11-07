@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# TASK-066 — Metal FA nsg corner suite (C1/C2/C4 in-binary; C5 N/A; C6 smoke).
+# TASK-066 - Metal FA nsg corner suite (C1/C2/C4 in-binary; C5 N/A; C6 smoke).
 # Lives in the turboquant / llama.cpp tree (not linux_to_mac).
 #
 # Usage (from this repo root or any cwd):
 #   ./tests/run-task066-fa-nsg-corners.sh [OUT_DIR]
 # Env:
-#   BUILD_DIR   — cmake build dir (default: <repo>/build)
-#   REBUILD=1   — rebuild test-flash-attn-batch-invariance before run
-#   BACKEND_FILTER — test-backend-ops -b (default: MTL0 on Darwin Metal)
+#   BUILD_DIR   - cmake build dir (default: <repo>/build)
+#   REBUILD=1   - rebuild test-flash-attn-batch-invariance before run
+#   BACKEND_FILTER - test-backend-ops -b (default: MTL0 on Darwin Metal)
 
 set -euo pipefail
 
@@ -21,7 +21,7 @@ OPS_BIN="${BUILD_DIR}/bin/test-backend-ops"
 
 if [[ ! -d "${BUILD_DIR}" ]]; then
   echo "FAIL: BUILD_DIR missing: ${BUILD_DIR}" >&2
-  echo "Configure/build this fork first (cmake -B build …), then re-run." >&2
+  echo "Configure/build this fork first (cmake -B build ...), then re-run." >&2
   exit 1
 fi
 

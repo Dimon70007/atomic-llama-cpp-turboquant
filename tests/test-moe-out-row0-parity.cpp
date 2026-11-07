@@ -1,4 +1,4 @@
-// TASK-066 ST-3.2f-ter-loc — MoE ffn_moe_out dual-topology row0 localizer.
+// TASK-066 ST-3.2f-ter-loc - MoE ffn_moe_out dual-topology row0 localizer.
 //
 // Bisect N=64 (A+B): first value RED at ffn_moe_out-0 under dual topology.
 // Patch C: build_moe_ffn always uses view+ADD for n_expert_used>1 (no decode-only
@@ -46,7 +46,7 @@ bool compare_exact(const std::vector<float> & a, const std::vector<float> & b, d
     return exact;
 }
 
-// Decode path (n_tokens==1): permute → cont → sum_rows → reshape_2d
+// Decode path (n_tokens==1): permute -> cont -> sum_rows -> reshape_2d
 std::vector<float> reduce_permute_sum(
         ggml_backend_t backend,
         const moe_out_shape & sh,
@@ -440,9 +440,9 @@ int main() {
     }
 
     if (fails != 0) {
-        printf("RESULT FAIL fails=%d (RED — unified view+ADD row0 still diverges)\n", fails);
+        printf("RESULT FAIL fails=%d (RED - unified view+ADD row0 still diverges)\n", fails);
         return 1;
     }
-    printf("RESULT PASS (GREEN — MoE ffn_moe_out unified reduce row0 bit-exact)\n");
+    printf("RESULT PASS (GREEN - MoE ffn_moe_out unified reduce row0 bit-exact)\n");
     return 0;
 }

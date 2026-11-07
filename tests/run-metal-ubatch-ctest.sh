@@ -3,10 +3,10 @@
 # SKIP 77 when model/ctx/Metal are missing; no silent substitution.
 #
 # Env:
-#   TASK066_MODEL or METAL_BI_MODEL  — required GGUF
-#   TASK066_CTX   or METAL_BI_CTX    — required context
-#   TASK066_PROMPT or METAL_BI_PROMPT — optional prompt file
-#   TASK066_REQUIRE_GPU — default 1 on Darwin
+#   TASK066_MODEL or METAL_BI_MODEL  - required GGUF
+#   TASK066_CTX   or METAL_BI_CTX    - required context
+#   TASK066_PROMPT or METAL_BI_PROMPT - optional prompt file
+#   TASK066_REQUIRE_GPU - default 1 on Darwin
 
 set -euo pipefail
 

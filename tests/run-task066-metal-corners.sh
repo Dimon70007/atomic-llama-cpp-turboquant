@@ -1,19 +1,19 @@
 #!/usr/bin/env bash
-# TASK-066 — umbrella Metal corner / localizer suite (self-contained in this fork).
+# TASK-066 - umbrella Metal corner / localizer suite (self-contained in this fork).
 #
 # Usage (from this repo root):
 #   SUITE=all ./tests/run-task066-metal-corners.sh [OUT_DIR]
 #   SUITE=moe ./tests/run-task066-metal-corners.sh
 # Env:
-#   SUITE      — required (no silent default):
+#   SUITE      - required (no silent default):
 #                all|fa|mul-mat|longctx|moe|moe-router|moe-out|fullgraph|
 #                cb-fusion|b1-shared-kv|mtp-acc-trace|mul-mat-residual|
 #                ubatch-s8-s1024|followup
 #                RED / follow-up suites are NOT part of `all`
 #                followup = one-shot Track A+B (see run-task066-followup-all.sh)
 #                Product MTP e2e / knobs matrix: examples/metal-batch-invariance/
-#   BUILD_DIR  — cmake build dir (default: <repo>/build)
-#   REBUILD=1  — rebuild suite binaries before run (forwarded to child runners)
+#   BUILD_DIR  - cmake build dir (default: <repo>/build)
+#   REBUILD=1  - rebuild suite binaries before run (forwarded to child runners)
 #
 # Third parties: configure Metal per docs/build.md, build, then run this script.
 # Doc: docs/backend/metal-batch-invariance.md

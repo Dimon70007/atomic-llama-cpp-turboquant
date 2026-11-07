@@ -1,4 +1,4 @@
-// TASK-066.5 / 066.6 — product ubatch S8 vs S1024 greedy token-stream parity (TDD RED gate).
+// TASK-066.5 / 066.6 - product ubatch S8 vs S1024 greedy token-stream parity (TDD RED gate).
 //
 // Ladder confirm class (pre-A2 DIFF@text under MUL_MM_MIN=7). This autotest covers:
 //   C1  raw tokenize + greedy
@@ -7,27 +7,27 @@
 //   Same prompt + product KV/FA knobs; greedy (argmax) decode for N tokens with
 //     A: -b max(512,8)=512  -ub 8
 //     B: -b 1024            -ub 1024
-//   Require identical generated token ids. First mismatch → RED (not ε).
+//   Require identical generated token ids. First mismatch -> RED (not eps).
 //
 // Root-cause diagnostics (no PASS change; evidence only):
-//   TASK066_DIAG=localize     — ubatch step / threshold matrix (product KV)
-//   TASK066_DIAG=fa-ablation  — C2 (n=32 ub8 vs ub32) under FA/KV variants:
-//       product turbo4+FA-on; f16+FA-on; f16+FA-off (true FA-off — turbo forces FA)
-//   TASK066_DIAG=c3-bisect    — FIRST_DIFF_TENSOR on last ubatch graph:
+//   TASK066_DIAG=localize     - ubatch step / threshold matrix (product KV)
+//   TASK066_DIAG=fa-ablation  - C2 (n=32 ub8 vs ub32) under FA/KV variants:
+//       product turbo4+FA-on; f16+FA-on; f16+FA-off (true FA-off - turbo forces FA)
+//   TASK066_DIAG=c3-bisect    - FIRST_DIFF_TENSOR on last ubatch graph:
 //       n=1280 control (expect none) + n=1344 (expect first named drift);
 //       cb_eval only on final decode; store last-token F32/F16 slices only.
 //       Optional TASK066_BISECT_FILTER=regex; TASK066_BISECT_HASH_ONLY=1.
-//   TASK066_DIAG=c3-thresh    — logits-only exact matrix around n_kv 256-pad
+//   TASK066_DIAG=c3-thresh    - logits-only exact matrix around n_kv 256-pad
 //       boundary (1280 GREEN lock vs 1288..1536).
 //   TASK066_FA=off requires TASK066_CTV=<non-turbo> (e.g. f16); else fail-closed.
-//   FA-off / non-turbo runs are LOCALIZATION ONLY — product path stays FA-on+turbo4.
+//   FA-off / non-turbo runs are LOCALIZATION ONLY - product path stays FA-on+turbo4.
 //
 // Fail-closed: -m MODEL, -c CTX, -f PROMPT; TASK066_N_PREDICT (default 64).
 // Runner: tests/run-task066-ubatch-s8-s1024-corners.sh
 //
 // Phase A2 (066.9): after raw C1 GREEN, C1j applies model jinja chat template
 // (user turn + generation prompt, enable_thinking=false == ladder --reasoning off)
-// then greedy S8 vs S1024. Ladder `012625Z` DIFF@22 is this class — raw C1 alone
+// then greedy S8 vs S1024. Ladder `012625Z` DIFF@22 is this class - raw C1 alone
 // does not cover it. TASK066_DIAG=c1j runs only C1j (evidence / fast loop).
 
 #include "arg.h"
@@ -313,7 +313,7 @@ void print_gen_prefix(const char * label, const llama_vocab * vocab, const std::
     printf("  %s first_%d_toks_text=%s\n", label, lim, s.c_str());
 }
 
-// C1j — A2 gate: greedy on jinja-wrapped prompt (ladder class).
+// C1j - A2 gate: greedy on jinja-wrapped prompt (ladder class).
 int run_c1j_gate(
         llama_model * model,
         const llama_vocab * vocab,
@@ -363,12 +363,12 @@ int run_c1j_gate(
     }
 
     if (diff_i >= 0) {
-        printf("RESULT FAIL (RED) — C1j jinja-chat greedy not bit-exact S8 vs S1024; "
+        printf("RESULT FAIL (RED) - C1j jinja-chat greedy not bit-exact S8 vs S1024; "
                "066.9 Phase A2 TDD gate open\n");
         return 1;
     }
 
-    printf("RESULT PASS (GREEN) — C1j jinja-chat greedy S8 vs S1024 identical for n_predict=%d\n",
+    printf("RESULT PASS (GREEN) - C1j jinja-chat greedy S8 vs S1024 identical for n_predict=%d\n",
            n_predict);
     return 0;
 }
@@ -464,7 +464,7 @@ void extract_last_token(const ggml_tensor * t, capture_state & st, tensor_snap &
     snap.row0.clear();
     snap.token_dim = find_token_dim(t, st.n_tokens);
     if (snap.token_dim < 0) {
-        // No token dim — skip bulky full capture (memory / time).
+        // No token dim - skip bulky full capture (memory / time).
         return;
     }
 
@@ -476,7 +476,7 @@ void extract_last_token(const ggml_tensor * t, capture_state & st, tensor_snap &
     }
 
     // Host path: read in-place. Device path: pull only last-token elements
-    // (never full n=1344 tensors — those can be multi-GB on MoE FA).
+    // (never full n=1344 tensors - those can be multi-GB on MoE FA).
     const bool host = t->buffer && ggml_backend_buffer_is_host(t->buffer);
     const uint8_t * host_base = host ? static_cast<const uint8_t *>(t->data) : nullptr;
 
@@ -732,7 +732,7 @@ bool decode_prefix_last_capture(
         }
         if (cap && is_last) {
             cap->active = true;
-            // Internal ubatch width (not outer llama_batch n) — last-token dim.
+            // Internal ubatch width (not outer llama_batch n) - last-token dim.
             cap->n_tokens = std::max(1, (int32_t) llama_n_ubatch(ctx));
             cap->snaps.clear();
         }
@@ -896,7 +896,7 @@ bool is_turbo_kv_type(ggml_type t) {
     return t == GGML_TYPE_TURBO2_0 || t == GGML_TYPE_TURBO3_0 || t == GGML_TYPE_TURBO4_0;
 }
 
-// Minimal name→type for diag overrides (product names only).
+// Minimal name->type for diag overrides (product names only).
 bool parse_kv_type_name(const char * name, ggml_type & out) {
     if (!name || !name[0]) {
         return false;
@@ -931,7 +931,7 @@ bool run_localize(
         p.cache_type_v = ctv;
         p.flash_attn_type = fa_on ? LLAMA_FLASH_ATTN_TYPE_ENABLED : LLAMA_FLASH_ATTN_TYPE_DISABLED;
         if (!fa_on && is_turbo_kv_type(ctv)) {
-            printf("DIAG %s: SKIP — FA-off + turbo ctv is force-re-enabled by llama; "
+            printf("DIAG %s: SKIP - FA-off + turbo ctv is force-re-enabled by llama; "
                    "use ctv=f16 for true FA-off\n", label);
             return true;
         }
@@ -960,12 +960,12 @@ bool run_localize(
     if (!one("H3_full_prefill_b512ub8_vs_b1024ub1024_faON", n_full, 512, 8, 1024, 1024, true, ctv_prod)) {
         return false;
     }
-    // H4: FA-off is invalid with turbo — skipped unless ctv already non-turbo.
+    // H4: FA-off is invalid with turbo - skipped unless ctv already non-turbo.
     if (!one("H4_chunk512_ub8_vs_ub512_faOFF_turbo_SKIP", n_chunk, 512, 8, 512, 512, false, ctv_prod)) {
         return false;
     }
 
-    // H5–H7: scale the *number* of internal ubatch steps (same outer n).
+    // H5-H7: scale the *number* of internal ubatch steps (same outer n).
     if (!one("H5_n8_b8_ub8_vs_ub8_sanity", 8, 8, 8, 8, 8, true, ctv_prod)) {
         return false;
     }
@@ -976,7 +976,7 @@ bool run_localize(
         return false;
     }
 
-    // H8+: post-tile threshold — n<=1280 GREEN, n=1536 RED (stamp 233840Z).
+    // H8+: post-tile threshold - n<=1280 GREEN, n=1536 RED (stamp 233840Z).
     // Bisect + pure-ubatch twin to separate product (-b/-ub) from multi-step alone.
     for (int32_t n_try : {256, 768, 1024, 1280, 1344, 1408, 1472, 1536}) {
         if (n_try > n_full) {
@@ -997,7 +997,7 @@ bool run_localize(
                  GGML_TYPE_F16)) {
             return false;
         }
-        // True FA-off isolate: if GREEN → residual still in FA; if RED → non-FA class (066.5 fuse?).
+        // True FA-off isolate: if GREEN -> residual still in FA; if RED -> non-FA class (066.5 fuse?).
         if (!one("H9faOFF_n1536_b1536_ub8_vs_ub1536_q8_f16", 1536, 1536, 8, 1536, 1536, false,
                  GGML_TYPE_F16)) {
             return false;
@@ -1010,7 +1010,7 @@ bool run_localize(
             return false;
         }
     }
-    // H3 sibling: f16 V — is residual still inside FA when turbo is out?
+    // H3 sibling: f16 V - is residual still inside FA when turbo is out?
     if (!one("H3f16_full_prefill_b512ub8_vs_b1024ub1024_q8_f16_faON", n_full, 512, 8, 1024, 1024, true,
              GGML_TYPE_F16)) {
         return false;
@@ -1020,7 +1020,7 @@ bool run_localize(
     return true;
 }
 
-// C2-shaped FA/KV ablation. Localization only — not a product PASS gate.
+// C2-shaped FA/KV ablation. Localization only - not a product PASS gate.
 bool run_fa_ablation(
         llama_model * model,
         common_params params,
@@ -1031,12 +1031,12 @@ bool run_fa_ablation(
         return false;
     }
 
-    printf("FA_ABLATION: C2 n=32 ub=8 vs ub=32 — LOCALIZATION ONLY "
+    printf("FA_ABLATION: C2 n=32 ub=8 vs ub=32 - LOCALIZATION ONLY "
            "(product remains FA-on + turbo4)\n");
 
     auto row = [&](const char * label, ggml_type ctk, ggml_type ctv, bool fa_on) -> bool {
         if (!fa_on && is_turbo_kv_type(ctv)) {
-            printf("DIAG %s: SKIP — refuse FA-off with turbo ctv "
+            printf("DIAG %s: SKIP - refuse FA-off with turbo ctv "
                    "(llama would force FA back on)\n", label);
             return true;
         }
@@ -1061,7 +1061,7 @@ bool run_fa_ablation(
     if (!row("A0_C2_product_q8_turbo4_faON", GGML_TYPE_Q8_0, GGML_TYPE_TURBO4_0, true)) {
         return false;
     }
-    // A1: same FA-on, V cache f16 — isolates turbo V vs FA.
+    // A1: same FA-on, V cache f16 - isolates turbo V vs FA.
     if (!row("A1_C2_q8_f16_faON", GGML_TYPE_Q8_0, GGML_TYPE_F16, true)) {
         return false;
     }
@@ -1150,7 +1150,7 @@ int main(int argc, char ** argv) {
         }
         params.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_DISABLED;
         fprintf(stderr,
-                "DIAG_ONLY: TASK066_FA=off (ctk=%s ctv=%s) — not a product waiver; "
+                "DIAG_ONLY: TASK066_FA=off (ctk=%s ctv=%s) - not a product waiver; "
                 "later debugging remains FA-on\n",
                 ggml_type_name(params.cache_type_k), ggml_type_name(params.cache_type_v));
     }
@@ -1297,7 +1297,7 @@ int main(int argc, char ** argv) {
         return 0;
     }
 
-    // C2 — fast TDD corner from localize H7 (stamp 20261106T214747Z):
+    // C2 - fast TDD corner from localize H7 (stamp 20261106T214747Z):
     // n=32, same -b=32, ub=8 (4 steps) vs ub=32 (1 step). H6 n=16 was exact.
     {
         const int32_t n32 = 32;
@@ -1316,16 +1316,16 @@ int main(int argc, char ** argv) {
         const logits_cmp c2 = compare_logits(c2a.logits.data(), c2b.logits.data(), n_vocab);
         print_cmp("C2", c2);
         if (!c2.exact) {
-            printf("RESULT FAIL (RED) — C2 n=32 ubatch multi-step vs one-shot; "
+            printf("RESULT FAIL (RED) - C2 n=32 ubatch multi-step vs one-shot; "
                    "066.5/066.6 TDD gate open (skip C1 until C2 GREEN)\n");
             return 1;
         }
-        printf("C2 PASS — n=32 ub=8 vs ub=32 bit-exact; continuing to C3 long-prefill gate\n");
+        printf("C2 PASS - n=32 ub=8 vs ub=32 bit-exact; continuing to C3 long-prefill gate\n");
     }
 
-    // C3 — 066.9 Phase A: post-tile threshold (localize 234258Z / 235017Z).
+    // C3 - 066.9 Phase A: post-tile threshold (localize 234258Z / 235017Z).
     // n=1280 pure ubatch bit-exact; n=1344 first RED. FA-off still RED at n=1536
-    // → residual class is not FA-only (fuse / other ops). C3-1280 = REGRESS lock;
+    // -> residual class is not FA-only (fuse / other ops). C3-1280 = REGRESS lock;
     // C3-1344 = primary TDD RED until fixed.
     {
         constexpr int32_t n_ok = 1280;
@@ -1346,7 +1346,7 @@ int main(int argc, char ** argv) {
         const logits_cmp c_ok = compare_logits(ok_a.logits.data(), ok_b.logits.data(), n_vocab);
         print_cmp("C3_n1280", c_ok);
         if (!c_ok.exact) {
-            printf("RESULT FAIL (REGRESS) — C3 n=1280 was GREEN after always-tile; bit-exact broken\n");
+            printf("RESULT FAIL (REGRESS) - C3 n=1280 was GREEN after always-tile; bit-exact broken\n");
             return 1;
         }
         const logits_result bad_a = run_prefill_logits(model, params, tokens, n_bad, n_bad, 8);
@@ -1357,10 +1357,10 @@ int main(int argc, char ** argv) {
         const logits_cmp c_bad = compare_logits(bad_a.logits.data(), bad_b.logits.data(), n_vocab);
         print_cmp("C3_n1344", c_bad);
         if (c_bad.exact) {
-            printf("C3 n=1344 unexpectedly GREEN — continuing to C1\n");
+            printf("C3 n=1344 unexpectedly GREEN - continuing to C1\n");
         } else {
-            printf("RESULT FAIL (RED) — C3 n=1344 multi-step ubatch (066.9 Phase A; "
-                   "FA-off also RED at n=1536 → not FA-only). Skip C1 until C3 GREEN\n");
+            printf("RESULT FAIL (RED) - C3 n=1344 multi-step ubatch (066.9 Phase A; "
+                   "FA-off also RED at n=1536 -> not FA-only). Skip C1 until C3 GREEN\n");
             return 1;
         }
     }
@@ -1388,15 +1388,15 @@ int main(int argc, char ** argv) {
     }
 
     if (diff_i >= 0) {
-        printf("RESULT FAIL (RED) — greedy token stream not bit-exact S8 vs S1024; "
+        printf("RESULT FAIL (RED) - greedy token stream not bit-exact S8 vs S1024; "
                "066.5/066.6 TDD gate open\n");
         return 1;
     }
 
-    printf("RESULT PASS (GREEN) — greedy S8 vs S1024 identical for n_predict=%d on this prompt\n",
+    printf("RESULT PASS (GREEN) - greedy S8 vs S1024 identical for n_predict=%d on this prompt\n",
            n_predict);
-    printf("note: raw C1 GREEN ≠ A2 Done; continuing to C1j (jinja chat)\n");
+    printf("note: raw C1 GREEN != A2 Done; continuing to C1j (jinja chat)\n");
 
-    // Phase A2 — product ladder class (jinja-wrapped prompt).
+    // Phase A2 - product ladder class (jinja-wrapped prompt).
     return run_c1j_gate(model, vocab, params, params.prompt, n_predict, b_a, ub_a, b_b, ub_b);
 }
