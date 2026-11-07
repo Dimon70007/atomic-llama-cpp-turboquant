@@ -21,7 +21,8 @@ Releases before `b10269-1.5.0` predate this file; see the git history.
   `(2,0.95)`; no YAML auto-promote. Ladder gains `TASK066_CELL_MODES=both|nomtp|mtp`.
   Stamp `logs/task066-mtp-knob-matrix-20261107T043032Z` — all cells HARD+duel 2/2;
   speed-Pareto candidate `n4-p085` (tg≈13.05); **operator KEEP** product `(2,0.95)` for
-  acceptance≈0.88 (YAML untouched).
+  acceptance≈0.88 (YAML untouched). Acceptance-sorted result table frozen in
+  `TASK-066.9` Phase C + stamp `summary.md`.
 - **TASK-066.9 Phase B e2e (docs+runner+stamp):** `run-task066-mtp-vs-nomtp-ladder.sh` supports
   `TASK066_SAMPLE_MODE=product|greedy`, product `p_min=0.95` / Unsloth sampling; HARD gate =
   engagement + non-empty gen; MTP↔nomtp DIFF is telemetry (not FAIL) unless

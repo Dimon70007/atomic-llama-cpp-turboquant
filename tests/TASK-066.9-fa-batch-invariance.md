@@ -217,6 +217,26 @@ Runner: [`run-task066-mtp-knob-matrix.sh`](run-task066-mtp-knob-matrix.sh) → [
 - [x] No auto rewrite of product `gemma4_26b_a4b_mtp_metal.yaml`
 - [x] **Operator ack 2026-11-07:** **KEEP product** `(n_max=2, p_min=0.95)` — prioritize acceptance; do not promote speed-Pareto knobs
 
+### Frozen result — acceptance-sorted (`043032Z`)
+
+All MTP cells HARD OK + duel **2/2**. Baseline nomtp: tg ≈ 9.23 (acceptance н/д).  
+Product KEEP = **`n2-p095`**. Speed-Pareto (tg-first among duel=2/2) was `n4-p085` — not promoted.
+
+| # | id | n_max | p_min | acceptance | tg (tok/s) | duel | hard |
+|--:|----|------:|------:|-----------:|-----------:|:----:|:----:|
+| 1 | n1-p095 | 1 | 0.95 | **0.915** | 11.62 | 2/2 | OK |
+| 2 | n2-p095 | 2 | 0.95 | **0.884** | 12.29 | 2/2 | OK |
+| 3 | n1-p090 | 1 | 0.90 | 0.871 | 11.74 | 2/2 | OK |
+| 4 | n1-p085 | 1 | 0.85 | 0.849 | 11.84 | 2/2 | OK |
+| 5 | n3-p095 | 3 | 0.95 | 0.838 | 12.40 | 2/2 | OK |
+| 6 | n4-p095 | 4 | 0.95 | 0.821 | 12.39 | 2/2 | OK |
+| 7 | n2-p090 | 2 | 0.90 | 0.812 | 12.52 | 2/2 | OK |
+| 8 | n3-p090 | 3 | 0.90 | 0.777 | 12.79 | 2/2 | OK |
+| 9 | n2-p085 | 2 | 0.85 | 0.777 | 12.61 | 2/2 | OK |
+| 10 | n4-p090 | 4 | 0.90 | 0.744 | 12.81 | 2/2 | OK |
+| 11 | n3-p085 | 3 | 0.85 | 0.743 | 13.02 | 2/2 | OK |
+| 12 | n4-p085 | 4 | 0.85 | 0.718 | **13.05** | 2/2 | OK |
+
 ```bash
 cd atomic-llama-cpp-turboquant
 unset GGML_METAL_MUL_MM_MIN
