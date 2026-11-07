@@ -63,12 +63,11 @@ K), so V rotation and padding are skipped for them.
 
 ### q8 head/tail brackets (`turbo3.8` / `turbo4.8`)
 
-Named `-ctv` / `quant_v` aliases enable a fixed V schedule (K stays as requested, usually `q8_0`):
+Named `-ctv` / `quant_v` aliases enable a fixed **layer-adaptive V schedule**
+(K stays as requested, usually `q8_0`). They are first-class cache-type
+names, not shorthand for uniform `turbo3`/`turbo4`.
 
-| Alias       | Layout                                      |
-|-------------|---------------------------------------------|
-| `turbo4.8`  | front q8 + mid **turbo4** + tail q8         |
-| `turbo3.8`  | front q8 + mid **turbo3** + tail q8         |
+#### Why (MTP + long context)
 
 Uniform aggressive V (`turbo3` / `turbo4`) is fine on short prompts (~2k
 tokens). Under **MTP speculative decoding** with a **long prompt
@@ -99,8 +98,9 @@ only). Block KV streaming refuses mixed per-layer types (same as
 
 ```bash
 llama-server -m model.gguf -c 8192 -ngl 99 -ctk q8_0 -ctv turbo4.8
-# optional:
+# optional width override (no rebuild):
 # TURBO_LAYER_HEAD=1 TURBO_LAYER_TAIL=8
+# FORBIDDEN with aliases: TURBO_LAYER_ADAPTIVE=...
 ```
 
 #### Regression gates (TASK-068)

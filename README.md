@@ -313,12 +313,16 @@ target two distinct memory-traffic problems:
 | `turbo2` | 2 | ~6.4× | maximum compression, intended for large-context budgets |
 | `turbo3` | 3 | ~4.3× | **recommended default**; Metal `TurboFlash` decode kernel |
 | `turbo4` | 4 | ~3.8× | highest accuracy of the family, safest fallback |
+| `turbo3.8` / `turbo4.8` | mixed | between q8 and mid turbo* | V schedule: q8 head/tail + mid turbo3\|turbo4; for MTP + long ctx (~>=70k tokens) - see [docs/KV-cache-quantization.md](docs/KV-cache-quantization.md) |
 
 Typical invocation with full GPU offload + Flash-Attention:
 
 ```bash
 llama-server -m model.gguf -c 32768 -ngl 99 \
   -ctk turbo3 -ctv turbo3 -fa on
+
+# q8 brackets (long-ctx / MTP quality arm):
+#   -ctk q8_0 -ctv turbo3.8
 ```
 
 Pair with `--cache-reuse N` and a long `-c` to see the practical KV-budget

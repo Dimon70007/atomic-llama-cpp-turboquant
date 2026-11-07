@@ -54,7 +54,17 @@ Any combination of `f16`/`q8_0`/`turbo2`/`turbo3`/`turbo4` for K and V is suppor
 | `GGML_CUDA_Q8CACHE`         | unset    | `0` disables the per-graph shared-quantize cache in mmvq (gate and up projections reuse one q8_1 copy of the activation) |
 | `LLAMA_ATTN_ROT_K/V_OVERRIDE` | off   | Optional upstream attention rotation (TurboQuant manages its own rotation) |
 
-`-ctv turbo4.8` / `turbo3.8`: q8 head+tail brackets, mid turbo4/turbo3. See `docs/KV-cache-quantization.md`.
+#### q8 brackets (`turbo3.8` / `turbo4.8`)
+
+`-ctv turbo4.8` / `turbo3.8` are named V schedules (not uniform turbo*):
+front q8_0 + mid turbo4|turbo3 + tail q8_0. Defaults HEAD=2 / TAIL=8 when
+env unset (loud log). Plain `turbo3`/`turbo4` stay uniform.
+
+**Why:** cut factual LM errors under MTP on long ctx (~>=70k tokens), where
+uniform turbo* V drifts in the KV cache. Short prompts (~2k) often still
+look fine; brackets protect instruction head + late layers. Do not treat
+MTP-off as the product fix. Abort if `TURBO_LAYER_ADAPTIVE` is set with
+these aliases. Details: `docs/KV-cache-quantization.md`.
 
 **Regression:** `test-q8-brackets-schedule` is in `ctest -L main` (CI/PR).
 Long-ctx KL e2e is **manual only** (`tests/run-task068-q8-brackets-kl.sh`;
