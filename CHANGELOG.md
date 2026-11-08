@@ -25,6 +25,16 @@ Releases before `b10269-1.5.0` predate this file; see the git history.
 
 ### Added
 
+- **TASK-066.10 KV / n_ctx sizing:** fail-closed estimator
+  `tests/estimate_kv_ctx.py` + `tests/run-estimate-kv-ctx.sh` (GGUF + explicit
+  `-ctk`/`-ctv`, ISWA KEEP cell counts, turbo*.8 brackets). SSOT
+  `tests/TASK-066.10-kv-ctx-sizing.md`; pointers in
+  `docs/backend/metal-batch-invariance.md` and `docs/KV-cache-quantization.md`.
+  Gemma4 stamp `066.10-estimate-20261108` matches
+  `logs/kvtype-verify-lv5/turbo3.err` @8192 (639.375 MiB, ~0% delta). Runtime
+  `size_swa` unchanged.   Unit locks for `q8_0`+`turbo3.8` / `q8_0`+`turbo4.8` at **N_CTX=100000**
+  (PAD 100096; HEAD=2 TAIL=8) in `tests/test_estimate_kv_ctx.py`.
+
 - **TASK-068 ST-8 stream logits (no-swap path):** `tools/perplexity/perplexity.cpp`
   streams multi-batch logits when `-b < -c` and `n_seq==1` (no host
   `logits.reserve(n_ctx*n_vocab)`); half-window `log_probs` sizing. Harness

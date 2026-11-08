@@ -187,6 +187,18 @@ itself (the WHT applied at cache write is equivalent and interacts with the
 cache types). `LLAMA_ATTN_ROT_*` only affects the optional upstream rotation
 path for models that benefit from it.
 
+## Sizing KV / n_ctx (TASK-066.10)
+
+Fail-closed operator estimate (bytes/token, KV MiB, optional `n_ctx_max` for an
+explicit KV budget) for arbitrary GGUF + `-ctk`/`-ctv`, including ISWA KEEP
+cell counts and `turbo3.8`/`turbo4.8` brackets:
+
+- SSOT: [`tests/TASK-066.10-kv-ctx-sizing.md`](../tests/TASK-066.10-kv-ctx-sizing.md)
+- Product entry: `make estimate-kv-ctx MODEL=… N_CTX=… CTK=… CTV=… N_SEQ_MAX=… UNIFIED=… SWA_FULL=…`
+
+Weight GGUF quant is **not** KV bytes/elem. Under 066.5 KEEP, long `n_ctx` pays
+full-length SWA cells (`size_swa == n_ctx` when `ctx >= n_swa`).
+
 ## Model-weight quantization (TQ3_1S / TQ4_1S)
 
 ```bash
