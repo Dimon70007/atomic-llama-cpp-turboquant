@@ -98,7 +98,7 @@ echo "==> KL e2e (TASK068_RUN_KL_E2E=1, exclusive GPU)" | tee -a "${SUMMARY}"
 echo "model=${MODEL}" | tee -a "${SUMMARY}"
 echo "ctx=${CTX}" | tee -a "${SUMMARY}"
 echo "task068_batch=${TASK068_BATCH:-}" | tee -a "${SUMMARY}"
-echo "allow_multi_batch_ppl=${TASK068_ALLOW_MULTI_BATCH_PPL:-0}" | tee -a "${SUMMARY}"
+echo "force_batch_eq_ctx=${TASK068_FORCE_BATCH_EQ_CTX:-0}" | tee -a "${SUMMARY}"
 echo "kl_skip_turbo4_gate=${TASK068_KL_SKIP_TURBO4_GATE:-0}" | tee -a "${SUMMARY}"
 
 KL_WORKDIR="${OUT_DIR}/kl"
@@ -111,7 +111,7 @@ if [[ -n "${TASK068_BATCH:-}" ]]; then export TASK068_BATCH; fi
 if [[ -n "${TASK068_UBATCH:-}" ]]; then export TASK068_UBATCH; fi
 if [[ -n "${TASK068_PARALLEL:-}" ]]; then export TASK068_PARALLEL; fi
 if [[ -n "${TASK068_CHUNKS:-}" ]]; then export TASK068_CHUNKS; fi
-if [[ -n "${TASK068_ALLOW_MULTI_BATCH_PPL:-}" ]]; then export TASK068_ALLOW_MULTI_BATCH_PPL; fi
+if [[ -n "${TASK068_FORCE_BATCH_EQ_CTX:-}" ]]; then export TASK068_FORCE_BATCH_EQ_CTX; fi
 if [[ -n "${TASK068_ALLOW_HIGH_CTX_MEM:-}" ]]; then export TASK068_ALLOW_HIGH_CTX_MEM; fi
 if [[ -n "${TASK068_KL_SKIP_TURBO4_GATE:-}" ]]; then export TASK068_KL_SKIP_TURBO4_GATE; fi
 

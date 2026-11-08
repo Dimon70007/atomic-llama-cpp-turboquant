@@ -509,23 +509,19 @@ static results_perplexity perplexity(llama_context * ctx, const common_params & 
 
     llama_batch batch = llama_batch_init(std::min(n_batch, n_ctx*n_seq), 0, 1);
 
+    // ST-8: stream multi-batch logits when n_seq==1 so we never host-reserve n_ctx*n_vocab floats
+    // (~8 GiB @ Gemma vocab / 8k ctx). n_seq>1 keeps the legacy accumulate path.
+    const bool stream_batches = (num_batches > 1) && (n_seq == 1);
+
     std::vector<float> logits;
-    if (num_batches > 1) {
+    if (num_batches > 1 && !stream_batches) {
         logits.reserve(size_t(n_ctx) * n_vocab);
     }
 
-    LOG_INF("%s: calculating perplexity over %d chunks, n_ctx=%d, batch_size=%d, n_seq=%d\n", __func__, n_chunk, n_ctx, n_batch, n_seq);
+    LOG_INF("%s: calculating perplexity over %d chunks, n_ctx=%d, batch_size=%d, n_seq=%d stream_batches=%d\n",
+            __func__, n_chunk, n_ctx, n_batch, n_seq, stream_batches ? 1 : 0);
 
     std::vector<std::thread> workers(std::thread::hardware_concurrency() - 1);
-
-    std::vector<uint16_t> log_probs;
-    if (!params.logits_file.empty()) {
-        logits_stream.write((const char *)&n_vocab, sizeof(n_vocab));
-        logits_stream.write((const char *)&n_chunk, sizeof(n_chunk));
-        logits_stream.write((const char *)tokens.data(), n_chunk*n_ctx*sizeof(tokens[0]));
-        const int nv = 2*((n_vocab + 1)/2) + 4;
-        log_probs.resize(size_t(n_ctx) * nv);
-    }
 
     // We get the logits for all the tokens in the context window (params.n_ctx)
     // from llama_decode below.  Now, based on https://huggingface.co/docs/transformers/perplexity,
@@ -540,6 +536,18 @@ static results_perplexity perplexity(llama_context * ctx, const common_params & 
     // last 256 tokens.  Then, we split the input up into context window size chunks to
     // process the entire prompt.
     const int first = n_ctx/2;
+    const int n_half_tok = n_ctx - 1 - first;
+    const int nv = 2*((n_vocab + 1)/2) + 4;
+
+    std::vector<uint16_t> log_probs;
+    if (!params.logits_file.empty()) {
+        logits_stream.write((const char *)&n_vocab, sizeof(n_vocab));
+        logits_stream.write((const char *)&n_chunk, sizeof(n_chunk));
+        logits_stream.write((const char *)tokens.data(), n_chunk*n_ctx*sizeof(tokens[0]));
+        // Only half-window tokens are written; size for one streamed batch or full half-window.
+        const int n_buf = stream_batches ? std::min(n_batch, n_half_tok) : n_half_tok;
+        log_probs.resize(size_t(n_buf) * nv);
+    }
 
     for (int i = 0; i < n_chunk; i += n_seq) {
         const int start =     i * n_ctx;
@@ -551,6 +559,8 @@ static results_perplexity perplexity(llama_context * ctx, const common_params & 
 
         // clear the KV cache
         llama_memory_clear(llama_get_memory(ctx), true);
+
+        int n_streamed = 0; // tokens processed via stream_batches for seq0
 
         for (int j = 0; j < num_batches; ++j) {
             const int batch_start = start + j * n_batch;
@@ -593,7 +603,28 @@ static results_perplexity perplexity(llama_context * ctx, const common_params & 
 
             if (num_batches > 1 && n_outputs > 0) {
                 const auto * batch_logits = llama_get_logits(ctx);
-                logits.insert(logits.end(), batch_logits, batch_logits + size_t(n_outputs) * n_vocab);
+                if (stream_batches) {
+                    // Decode may request logits for the final ctx position; NLL uses n_half_tok only.
+                    const int pos0 = j * n_batch;
+                    const int out_pos0 = std::max(pos0, first);
+                    const int n_proc = std::min(n_outputs, n_half_tok - n_streamed);
+                    if (n_proc > 0) {
+                        llama_token * tokens_data = tokens.data() + start + out_pos0;
+                        if (!params.logits_file.empty()) {
+                            process_logits(logits_stream, n_vocab, batch_logits,
+                                    tokens_data, n_proc, workers, log_probs, nll, nll2);
+                        } else {
+                            process_logits(n_vocab, batch_logits,
+                                    tokens_data, n_proc, workers, nll, nll2,
+                                    logit_history.data() + start + out_pos0,
+                                    prob_history.data()  + start + out_pos0);
+                        }
+                        n_streamed += n_proc;
+                        count += n_proc;
+                    }
+                } else {
+                    logits.insert(logits.end(), batch_logits, batch_logits + size_t(n_outputs) * n_vocab);
+                }
             }
         }
 
@@ -611,26 +642,14 @@ static results_perplexity perplexity(llama_context * ctx, const common_params & 
             LOG("%.2f minutes\n", total_seconds / 60.0);
         }
 
-        for (int seq = 0; seq < n_seq_batch; seq++) {
-            const float * all_logits = num_batches > 1 ? logits.data() : llama_get_logits_ith(ctx, seq*n_ctx + first);
-
-            llama_token * tokens_data = tokens.data() + start + seq*n_ctx + first;
-            if (!params.logits_file.empty()) {
-                process_logits(logits_stream, n_vocab, all_logits,
-                        tokens_data, n_ctx - 1 - first,
-                        workers, log_probs, nll, nll2);
-            } else {
-                process_logits(n_vocab, all_logits,
-                        tokens_data, n_ctx - 1 - first,
-                        workers, nll, nll2,
-                        logit_history.data() + start + seq*n_ctx + first,
-                        prob_history.data()  + start + seq*n_ctx + first);
+        if (stream_batches) {
+            if (n_streamed != n_half_tok) {
+                LOG_ERR("%s: stream_batches wrote %d tokens, expected %d\n", __func__, n_streamed, n_half_tok);
+                llama_batch_free(batch);
+                return {tokens, -1, logit_history, prob_history};
             }
-            count += n_ctx - first - 1;
-
-            // perplexity is e^(average negative log-likelihood)
             if (params.ppl_output_type == 0) {
-                LOG("[%d]%.4lf,", i + seq + 1, std::exp(nll / count));
+                LOG("[%d]%.4lf,", i + 1, std::exp(nll / count));
             } else {
                 double av = nll/count;
                 double av2 = nll2/count - av*av;
@@ -638,6 +657,36 @@ static results_perplexity perplexity(llama_context * ctx, const common_params & 
                     av2 = sqrt(av2/(count-1));
                 }
                 LOG("%8d  %.4lf  %4lf  %4lf\n", i*n_ctx, std::exp(nll / count), av, av2);
+            }
+        } else {
+            for (int seq = 0; seq < n_seq_batch; seq++) {
+                const float * all_logits = num_batches > 1 ? logits.data() : llama_get_logits_ith(ctx, seq*n_ctx + first);
+
+                llama_token * tokens_data = tokens.data() + start + seq*n_ctx + first;
+                if (!params.logits_file.empty()) {
+                    process_logits(logits_stream, n_vocab, all_logits,
+                            tokens_data, n_half_tok,
+                            workers, log_probs, nll, nll2);
+                } else {
+                    process_logits(n_vocab, all_logits,
+                            tokens_data, n_half_tok,
+                            workers, nll, nll2,
+                            logit_history.data() + start + seq*n_ctx + first,
+                            prob_history.data()  + start + seq*n_ctx + first);
+                }
+                count += n_half_tok;
+
+                // perplexity is e^(average negative log-likelihood)
+                if (params.ppl_output_type == 0) {
+                    LOG("[%d]%.4lf,", i + seq + 1, std::exp(nll / count));
+                } else {
+                    double av = nll/count;
+                    double av2 = nll2/count - av*av;
+                    if (av2 > 0) {
+                        av2 = sqrt(av2/(count-1));
+                    }
+                    LOG("%8d  %.4lf  %4lf  %4lf\n", i*n_ctx, std::exp(nll / count), av, av2);
+                }
             }
         }
 
@@ -1755,15 +1804,22 @@ static void kl_divergence(llama_context * ctx, const common_params & params) {
 
     llama_batch batch = llama_batch_init(std::min(n_batch, static_cast<int>(n_ctx)*n_seq), 0, 1);
 
-    std::vector<uint16_t> log_probs_uint16(size_t(n_ctx - 1 - n_ctx/2) * nv);
-    std::vector<float>    kld_values(size_t(n_ctx - 1 - n_ctx/2)*n_chunk);
-    std::vector<float> p_diff_values(size_t(n_ctx - 1 - n_ctx/2)*n_chunk);
+    const int first = static_cast<int>(n_ctx) / 2;
+    const int n_half_tok = static_cast<int>(n_ctx) - 1 - first;
+    // ST-8: stream multi-batch when n_seq==1 (no host logits.reserve(n_ctx*n_vocab)).
+    const bool stream_batches = (num_batches > 1) && (n_seq == 1);
+
+    std::vector<uint16_t> log_probs_uint16(
+            size_t(stream_batches ? std::min(n_batch, n_half_tok) : n_half_tok) * nv);
+    std::vector<float>    kld_values(size_t(n_half_tok) * n_chunk);
+    std::vector<float> p_diff_values(size_t(n_half_tok) * n_chunk);
     std::vector<float> logits;
-    if (num_batches > 1) {
+    if (num_batches > 1 && !stream_batches) {
         logits.reserve(size_t(n_ctx) * n_vocab);
     }
 
-    LOG_INF("%s: computing over %d chunks, n_ctx=%u, batch_size=%d, n_seq=%d\n", __func__, n_chunk, n_ctx, n_batch, n_seq);
+    LOG_INF("%s: computing over %d chunks, n_ctx=%u, batch_size=%d, n_seq=%d stream_batches=%d\n",
+            __func__, n_chunk, n_ctx, n_batch, n_seq, stream_batches ? 1 : 0);
 
     std::vector<std::thread> workers(std::thread::hardware_concurrency() - 1);
 
@@ -1789,8 +1845,6 @@ static void kl_divergence(llama_context * ctx, const common_params & params) {
     auto    kld_ptr =    kld_values.data();
     auto p_diff_ptr = p_diff_values.data();
 
-    const int first = n_ctx/2;
-
     for (int i = 0; i < n_chunk; i += n_seq) {
         const int start =     i * n_ctx;
         const int end   = start + n_ctx;
@@ -1801,6 +1855,8 @@ static void kl_divergence(llama_context * ctx, const common_params & params) {
 
         // clear the KV cache
         llama_memory_clear(llama_get_memory(ctx), true);
+
+        int n_streamed = 0;
 
         for (int j = 0; j < num_batches; ++j) {
             const int batch_start = start + j * n_batch;
@@ -1839,7 +1895,27 @@ static void kl_divergence(llama_context * ctx, const common_params & params) {
 
             if (num_batches > 1 && n_outputs > 0) {
                 const auto * batch_logits = llama_get_logits(ctx);
-                logits.insert(logits.end(), batch_logits, batch_logits + size_t(n_outputs) * n_vocab);
+                if (stream_batches) {
+                    const int pos0 = j * n_batch;
+                    const int out_pos0 = std::max(pos0, first);
+                    const int n_proc = std::min(n_outputs, n_half_tok - n_streamed);
+                    if (n_proc > 0) {
+                        if (in.read((char *)log_probs_uint16.data(),
+                                    size_t(n_proc) * nv * sizeof(uint16_t)).fail()) {
+                            LOG_ERR("%s: failed reading log-probs for chunk %d (streamed)\n",
+                                    __func__, i);
+                            llama_batch_free(batch);
+                            return;
+                        }
+                        process_logits(n_vocab, batch_logits, tokens.data() + start + out_pos0, n_proc,
+                                workers, log_probs_uint16, kld, kld_ptr, p_diff_ptr);
+                        p_diff_ptr += n_proc;
+                        kld_ptr    += n_proc;
+                        n_streamed += n_proc;
+                    }
+                } else {
+                    logits.insert(logits.end(), batch_logits, batch_logits + size_t(n_outputs) * n_vocab);
+                }
             }
         }
 
@@ -1858,22 +1934,14 @@ static void kl_divergence(llama_context * ctx, const common_params & params) {
             LOG("chunk             PPL               ln(PPL(Q)/PPL(base))          KL Divergence              Δp RMS            Same top p\n");
         }
 
-        // Read log probs for each sequence in the batch
-        for (int seq = 0; seq < n_seq_batch; seq++) {
-            if (in.read((char *)log_probs_uint16.data(), log_probs_uint16.size()*sizeof(uint16_t)).fail()) {
-                LOG_ERR("%s: failed reading log-probs for chunk %d\n", __func__, i + seq);
+        if (stream_batches) {
+            if (n_streamed != n_half_tok) {
+                LOG_ERR("%s: stream_batches processed %d tokens, expected %d\n",
+                        __func__, n_streamed, n_half_tok);
                 llama_batch_free(batch);
                 return;
             }
-
-            const float * all_logits = num_batches > 1 ? logits.data() : llama_get_logits_ith(ctx, seq*n_ctx + first);
-
-            process_logits(n_vocab, all_logits, tokens.data() + start + seq*n_ctx + first, n_ctx - 1 - first,
-                    workers, log_probs_uint16, kld, kld_ptr, p_diff_ptr);
-            p_diff_ptr += n_ctx - 1 - first;
-            kld_ptr    += n_ctx - 1 - first;
-
-            LOG("%4d", i + seq + 1);
+            LOG("%4d", i + 1);
 
             auto log_ppl = mean_and_uncertainty(kld.sum_nll, kld.sum_nll2, kld.count);
             const double ppl_val = exp(log_ppl.first);
@@ -1899,6 +1967,49 @@ static void kl_divergence(llama_context * ctx, const common_params & params) {
             LOG("    %6.3lf ± %6.3lf %%", 100.0*p_top_val, 100.0*p_top_unc);
 
             LOG("\n");
+        } else {
+            // Read log probs for each sequence in the batch
+            for (int seq = 0; seq < n_seq_batch; seq++) {
+                if (in.read((char *)log_probs_uint16.data(), size_t(n_half_tok) * nv * sizeof(uint16_t)).fail()) {
+                    LOG_ERR("%s: failed reading log-probs for chunk %d\n", __func__, i + seq);
+                    llama_batch_free(batch);
+                    return;
+                }
+
+                const float * all_logits = num_batches > 1 ? logits.data() : llama_get_logits_ith(ctx, seq*n_ctx + first);
+
+                process_logits(n_vocab, all_logits, tokens.data() + start + seq*n_ctx + first, n_half_tok,
+                        workers, log_probs_uint16, kld, kld_ptr, p_diff_ptr);
+                p_diff_ptr += n_half_tok;
+                kld_ptr    += n_half_tok;
+
+                LOG("%4d", i + seq + 1);
+
+                auto log_ppl = mean_and_uncertainty(kld.sum_nll, kld.sum_nll2, kld.count);
+                const double ppl_val = exp(log_ppl.first);
+                const double ppl_unc = ppl_val * log_ppl.second;
+                LOG("    %9.4lf ± %9.4lf", ppl_val, ppl_unc);
+
+                auto log_ppl_base = mean_and_uncertainty(kld.sum_nll_base, kld.sum_nll_base2, kld.count);
+                const double log_ppl_cov = covariance(kld.sum_nll, kld.sum_nll_base, kld.sum_nll_nll_base, kld.count);
+                const double log_ppl_ratio_val = log_ppl.first - log_ppl_base.first;
+                const double log_ppl_ratio_unc = sqrt(log_ppl.second*log_ppl.second + log_ppl_base.second*log_ppl_base.second - 2.0*log_ppl_cov);
+                LOG("    %10.5lf ± %10.5lf", log_ppl_ratio_val, log_ppl_ratio_unc);
+
+                auto kl_div = mean_and_uncertainty(kld.sum_kld, kld.sum_kld2, kld.count);
+                LOG("    %10.5lf ± %10.5lf", kl_div.first, kl_div.second);
+
+                auto p_diff_mse   = mean_and_uncertainty(kld.sum_p_diff2, kld.sum_p_diff4, kld.count);
+                const double p_diff_rms_val = sqrt(p_diff_mse.first);
+                const double p_diff_rms_unc = 0.5/p_diff_rms_val * p_diff_mse.second;
+                LOG("    %6.3lf ± %6.3lf %%", 100.0*p_diff_rms_val, 100.0*p_diff_rms_unc);
+
+                double p_top_val = 1.*kld.n_same_top/kld.count;
+                double p_top_unc = sqrt(p_top_val*(1 - p_top_val)/(kld.count - 1));
+                LOG("    %6.3lf ± %6.3lf %%", 100.0*p_top_val, 100.0*p_top_unc);
+
+                LOG("\n");
+            }
         }
 
         logits.clear();

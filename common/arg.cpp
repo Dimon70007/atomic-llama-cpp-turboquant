@@ -340,6 +340,32 @@ static ggml_type kv_cache_type_from_str(const std::string & s) {
     throw std::runtime_error("Unsupported cache type: " + s);
 }
 
+// -ctvd turbo3.8|turbo4.8: map to mid type only (no TURBO_LAYER_Q8_BRACKETS).
+// Brackets are process-wide and armed by main -ctv; draft must not re-arm.
+static ggml_type kv_cache_type_draft_from_str(const std::string & s) {
+    if (s == "turbo3.8") {
+        return GGML_TYPE_TURBO3_0;
+    }
+    if (s == "turbo4.8") {
+        return GGML_TYPE_TURBO4_0;
+    }
+    for (const auto & type : kv_cache_types) {
+        if (ggml_type_name(type) == s) {
+            return type;
+        }
+    }
+    throw std::runtime_error("Unsupported cache type: " + s);
+}
+
+static std::string get_all_kv_cache_types_draft() {
+    std::ostringstream msg;
+    for (const auto & type : kv_cache_types) {
+        msg << ggml_type_name(type) << (&type == &kv_cache_types.back() ? "" : ", ");
+    }
+    msg << "; turbo3.8/turbo4.8 map to mid turbo3/turbo4 (no q8 brackets on draft)";
+    return msg.str();
+}
+
 // -ctv turbo3.8|turbo4.8: map to mid turbo type and arm q8 brackets via env.
 // Cleared when a non-alias V type is selected (llama-bench sweeps).
 static ggml_type kv_cache_type_v_from_str(const std::string & s) {
@@ -4223,7 +4249,7 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
         string_format(
             "KV cache data type for K for the draft model\n"
             "allowed values: %s\n"
-            "(default: %s)",
+            "(default: %s; if omitted and main is quantized, inherits main -ctk)",
             get_all_kv_cache_types().c_str(),
             ggml_type_name(params.speculative.draft.cache_type_k)
         ),
@@ -4236,13 +4262,13 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
         string_format(
             "KV cache data type for V for the draft model\n"
             "allowed values: %s\n"
-            "(default: %s)",
-            get_all_kv_cache_types().c_str(),
+            "(default: %s; if omitted and main is quantized, inherits main -ctv)",
+            get_all_kv_cache_types_draft().c_str(),
             ggml_type_name(params.speculative.draft.cache_type_v)
         ),
         [](common_params & params, const std::string & value) {
-            // Bracket aliases are main -ctv only (process-wide TURBO_LAYER_Q8_BRACKETS).
-            params.speculative.draft.cache_type_v = kv_cache_type_from_str(value);
+            // Aliases map to mid; brackets stay main -ctv only (process-wide).
+            params.speculative.draft.cache_type_v = kv_cache_type_draft_from_str(value);
         }
     ).set_env("LLAMA_ARG_SPEC_DRAFT_CACHE_TYPE_V"));
     add_opt(common_arg(

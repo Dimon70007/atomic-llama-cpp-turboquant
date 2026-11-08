@@ -141,8 +141,9 @@ export TASK068_MODEL=/path/to/model.gguf
 export TASK068_CTX=8192    # Darwin: prefer 8192; CTX>8192 needs TASK068_ALLOW_HIGH_CTX_MEM=1
 # optional: TASK068_PROMPT=/path/to/prompt.txt  # must tokenize to >= 2*CTX tokens
 # optional: TASK068_CHUNKS=2 (default)  # cap logits file
-# Darwin ST-8: default TASK068_BATCH=CTX (num_batches=1; no host logits.reserve).
-# Product-like -b 2048 with CTX=8192 needs TASK068_ALLOW_MULTI_BATCH_PPL=1 (swap risk).
+# Darwin ST-8: default TASK068_BATCH=min(2048,CTX) (product-like). perplexity.cpp
+# streams logits when -b < -c and -np 1 (no host logits.reserve(n_ctx*n_vocab)).
+# Legacy single-batch: TASK068_FORCE_BATCH_EQ_CTX=1 (higher half-window peak).
 # optional: TASK068_UBATCH=512 TASK068_PARALLEL=1
 # Exclusive Metal/CUDA: stop other llama-server / minillm first.
 ./tests/run-task068-q8-brackets-kl.sh ./build/bin/llama-perplexity
@@ -150,8 +151,8 @@ export TASK068_CTX=8192    # Darwin: prefer 8192; CTX>8192 needs TASK068_ALLOW_H
 # Cross-mid turbo3.8 vs turbo4 is NOT a gate (mid bitwidth confound).
 # Opt-out turbo4 arms: TASK068_KL_SKIP_TURBO4_GATE=1 (5 PPL runs -> 3; Darwin RAM).
 # Missing env or GPU busy: exit 77 (skip).
-# Darwin RAM: --chunks 2, CTX<=8192 unless ALLOW_HIGH_CTX_MEM; BATCH=CTX default;
-#   BATCH < CTX refused unless ALLOW_MULTI_BATCH_PPL; logits cleaned after parse.
+# Darwin RAM: --chunks 2, CTX<=8192 unless ALLOW_HIGH_CTX_MEM; BATCH=min(2048,CTX);
+#   -np 1 required when BATCH < CTX (stream path); logits cleaned after parse.
 # ST-8 mem probe (host Terminal): TASK068_MEM_PHASE=product|base|kl_one|kl_full|batch_eq_ctx \
 #   ./tests/run-task068-mem-st8-probe.sh  -> logs/task068-mem-st8-<stamp>/
 ```
@@ -171,7 +172,8 @@ export TASK068_CTX=8192   # Darwin; >8192 needs TASK068_ALLOW_HIGH_CTX_MEM=1
 TASK068_RUN_KL_E2E=1 BUILD_DIR=./build-st7-post-rebase \
   ./tests/run-task068-post-rebase-verify.sh
 # Or KL alone: ./tests/run-task068-q8-brackets-kl.sh ./build-st7-post-rebase/bin/llama-perplexity
-# KL defaults: -b = CTX (ST-8); both same-mid gates; SKIP turbo4: TASK068_KL_SKIP_TURBO4_GATE=1
+# KL defaults: -b = min(2048,CTX) stream (ST-8); both same-mid gates;
+#   SKIP turbo4: TASK068_KL_SKIP_TURBO4_GATE=1
 # Logs: logs/task068-kl-post-rebase-<stamp>/summary.txt
 ```
 

@@ -17,10 +17,11 @@
 #   TASK068_WORKDIR - scratch dir for logits / padded prompt
 #   LLAMA_PERPLEXITY - override binary (else arg1)
 #   TASK068_CHUNKS - max chunks (default 2)
-#   TASK068_BATCH  - llama -b  (default = CTX; avoids logits.reserve when -b < -c)
+#   TASK068_BATCH  - llama -b  (default = min(2048,CTX); product-like; perplexity
+#                    streams logits when -b < -c and -np 1 — no full-window reserve)
 #   TASK068_UBATCH - llama -ub (default 512)
 #   TASK068_PARALLEL - llama -np (default 1; product-like, one sequence)
-#   TASK068_ALLOW_MULTI_BATCH_PPL=1 - permit BATCH < CTX (host accumulate reserve path)
+#   TASK068_FORCE_BATCH_EQ_CTX=1 - force BATCH=CTX (legacy single-batch; higher peak)
 #   TASK068_ALLOW_HIGH_CTX_MEM=1 - permit CTX>8192 despite host RAM risk
 #   TASK068_KL_SKIP_TURBO4_GATE=1 - skip turbo4/turbo4.8 arms (Darwin RAM; not default)
 #
@@ -77,11 +78,18 @@ if ! [[ "${CHUNKS}" =~ ^[0-9]+$ ]] || [[ "${CHUNKS}" -lt 2 ]]; then
   exit 1
 fi
 
-# Default BATCH=CTX so num_batches==1 and perplexity skips logits.reserve(n_ctx*n_vocab).
-# Product-like -b 2048 with CTX=8192 is opt-in via TASK068_ALLOW_MULTI_BATCH_PPL=1 (ST-8).
-if [[ -z "${TASK068_BATCH:-}" ]]; then
+# ST-8: default product-like BATCH=min(2048,CTX). perplexity.cpp streams when -b < -c
+# and -np 1 (no logits.reserve(n_ctx*n_vocab)). FORCE_BATCH_EQ_CTX keeps legacy path.
+if [[ "${TASK068_FORCE_BATCH_EQ_CTX:-0}" == "1" ]]; then
   BATCH="${CTX}"
-  BATCH_SOURCE="default_eq_ctx"
+  BATCH_SOURCE="force_eq_ctx"
+elif [[ -z "${TASK068_BATCH:-}" ]]; then
+  if [[ "${CTX}" -lt 2048 ]]; then
+    BATCH="${CTX}"
+  else
+    BATCH=2048
+  fi
+  BATCH_SOURCE="default_product_2048"
 else
   BATCH="${TASK068_BATCH}"
   BATCH_SOURCE="env"
@@ -109,14 +117,16 @@ if [[ "${BATCH}" -ge "${CTX}" ]] && (( BATCH % CTX != 0 )); then
   echo "fail-closed: TASK068_BATCH=${BATCH} >= CTX=${CTX} must be a multiple of CTX (perplexity assert)" >&2
   exit 1
 fi
-# Multi-batch chunk eval reserves n_ctx*n_vocab floats on host (~GiB-class on Gemma vocab).
-if [[ "${BATCH}" -lt "${CTX}" && "${TASK068_ALLOW_MULTI_BATCH_PPL:-0}" != "1" ]]; then
-  echo "fail-closed: TASK068_BATCH=${BATCH} < CTX=${CTX} enables perplexity logits.reserve(n_ctx*n_vocab) (ST-8 swap risk)." >&2
-  echo "  Safe default: unset TASK068_BATCH (uses BATCH=CTX=${CTX}) or export TASK068_BATCH=${CTX}" >&2
-  echo "  Explicit opt-in: export TASK068_ALLOW_MULTI_BATCH_PPL=1" >&2
+# Streaming path requires -np 1; multi-seq still accumulates (legacy reserve risk).
+if [[ "${BATCH}" -lt "${CTX}" && "${PARALLEL}" -ne 1 ]]; then
+  echo "fail-closed: TASK068_BATCH=${BATCH} < CTX=${CTX} with TASK068_PARALLEL=${PARALLEL} != 1" >&2
+  echo "  Streaming avoid-reserve path needs -np 1. Use PARALLEL=1 or FORCE_BATCH_EQ_CTX=1." >&2
   exit 1
 fi
-ALLOW_MULTI_BATCH="${TASK068_ALLOW_MULTI_BATCH_PPL:-0}"
+STREAM_EXPECTED=0
+if [[ "${BATCH}" -lt "${CTX}" && "${PARALLEL}" -eq 1 ]]; then
+  STREAM_EXPECTED=1
+fi
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WORKDIR="${TASK068_WORKDIR:-${REPO_ROOT}/logs/task068-kl-$$}"
@@ -149,11 +159,13 @@ else
 fi
 EST_LOGITS_GIB="$(awk -v c="${CHUNKS}" -v ctx="${CTX}" 'BEGIN { printf "%.1f", c * (ctx/16384.0) * 4.0 }')"
 EST_HALF_LOGITS_GIB="$(awk -v ctx="${CTX}" 'BEGIN { printf "%.1f", (ctx/2.0) * 262144.0 * 4.0 / (1024.0*1024.0*1024.0) }')"
-EST_RESERVE_GIB="$(awk -v ctx="${CTX}" 'BEGIN { printf "%.1f", ctx * 262144.0 * 4.0 / (1024.0*1024.0*1024.0) }')"
+EST_STREAM_BATCH_GIB="$(awk -v b="${BATCH}" 'BEGIN { printf "%.1f", b * 262144.0 * 4.0 / (1024.0*1024.0*1024.0) }')"
 echo "prompt_bytes=$(wc -c < "${PROMPT_FILE}" | tr -d ' ') min_tokens_required=${MIN_TOKENS} target_bytes=${TARGET_BYTES}"
-echo "mem_guard: --chunks ${CHUNKS} -b ${BATCH} -ub ${UBATCH} -np ${PARALLEL} CTX=${CTX}; batch_source=${BATCH_SOURCE}; allow_multi_batch_ppl=${ALLOW_MULTI_BATCH}; est_logits_file~${EST_LOGITS_GIB}GiB; est_halfwin_logits_peak~${EST_HALF_LOGITS_GIB}GiB; est_full_reserve_if_multibatch~${EST_RESERVE_GIB}GiB (vocab~262k)"
-if [[ "${BATCH}" -lt "${CTX}" ]]; then
-  echo "mem_note: -b < -c => perplexity reserves n_ctx*n_vocab float buffer (ALLOWED via TASK068_ALLOW_MULTI_BATCH_PPL=1)"
+echo "mem_guard: --chunks ${CHUNKS} -b ${BATCH} -ub ${UBATCH} -np ${PARALLEL} CTX=${CTX}; batch_source=${BATCH_SOURCE}; stream_expected=${STREAM_EXPECTED}; est_logits_file~${EST_LOGITS_GIB}GiB; est_halfwin_if_batch_eq_ctx~${EST_HALF_LOGITS_GIB}GiB; est_stream_batch_logits~${EST_STREAM_BATCH_GIB}GiB (vocab~262k)"
+if [[ "${STREAM_EXPECTED}" -eq 1 ]]; then
+  echo "mem_note: -b < -c && -np 1 => perplexity stream_batches=1 (no host logits.reserve)"
+elif [[ "${BATCH}" -ge "${CTX}" ]]; then
+  echo "mem_note: BATCH>=CTX => single-batch; half-window float logits stay resident (~est_halfwin)"
 fi
 
 BASE_LOGITS="${WORKDIR}/base-q8.logits"
@@ -217,6 +229,13 @@ fi
 if [[ "${RC_BASE}" -ne 0 ]]; then
   echo "fail: base logits run failed (exit=${RC_BASE}); see ${LOG_BASE}" >&2
   exit 1
+fi
+if [[ "${STREAM_EXPECTED}" -eq 1 ]]; then
+  if ! grep -qE 'stream_batches=1' "${LOG_BASE}"; then
+    echo "fail-closed: expected stream_batches=1 in base log (rebuild llama-perplexity with ST-8 stream); see ${LOG_BASE}" >&2
+    exit 1
+  fi
+  echo "stream_batches=1 confirmed in base log"
 fi
 BASE_SZ="$(wc -c < "${BASE_LOGITS}" | tr -d ' ')"
 if [[ ! -f "${BASE_LOGITS}" || "${BASE_SZ}" -lt 1024 ]]; then

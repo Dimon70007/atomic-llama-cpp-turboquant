@@ -2875,8 +2875,23 @@ common_params common_base_params_to_speculative(const common_params & params) {
         }
     }
 
-    result.cache_type_k  = params_spec.cache_type_k;
-    result.cache_type_v  = params_spec.cache_type_v;
+    // TASK-068 ST-9: draft defaults are F16. Copying them over main params
+    // silently allocates F16 draft KV at full n_ctx (Metal OOM @ ~160k).
+    // When -ctkd/-ctvd omitted (still F16) and main is quantized, inherit main.
+    if (params_spec.cache_type_k == GGML_TYPE_F16 && params.cache_type_k != GGML_TYPE_F16) {
+        LOG_WRN("%s: draft -ctkd omitted (still f16); inheriting main cache_type_k=%s\n",
+                __func__, ggml_type_name(params.cache_type_k));
+        result.cache_type_k = params.cache_type_k;
+    } else {
+        result.cache_type_k = params_spec.cache_type_k;
+    }
+    if (params_spec.cache_type_v == GGML_TYPE_F16 && params.cache_type_v != GGML_TYPE_F16) {
+        LOG_WRN("%s: draft -ctvd omitted (still f16); inheriting main cache_type_v=%s\n",
+                __func__, ggml_type_name(params.cache_type_v));
+        result.cache_type_v = params.cache_type_v;
+    } else {
+        result.cache_type_v = params_spec.cache_type_v;
+    }
     // The first block-streaming implementation owns only the target cache.
     // MTP keeps its ordinary cache until both contexts can share one pool.
     result.kv_stream_arena_mib = 0;

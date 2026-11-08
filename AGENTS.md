@@ -72,7 +72,8 @@ Everyday UNIT: `tests/run-task068-unit-verify.sh` (brackets + Metal smoke /
 or `TASK068_RUN_KL_E2E=1 ./tests/run-task068-post-rebase-verify.sh` (Metal host;
 not agent sandbox). Same-mid PASS: `KL(turbo3.8)<KL(turbo3)` and
 `KL(turbo4.8)<KL(turbo4)` (`TASK068_KL_SKIP_TURBO4_GATE=1` opt-out). Darwin ST-8:
-default `TASK068_BATCH=CTX`; mem probe `tests/run-task068-mem-st8-probe.sh`.
+default `TASK068_BATCH=min(2048,CTX)` with perplexity `stream_batches`
+  (no full-window reserve); mem probe `tests/run-task068-mem-st8-probe.sh`.
 Docs: `docs/KV-cache-quantization.md` Regression gates.
 
 ### Test gates (all must pass before touching quant/backend code)

@@ -14,7 +14,7 @@
 #   TASK068_MEM_PHASE
 # Env (optional):
 #   BUILD_DIR / LLAMA_PERPLEXITY / TASK068_PROMPT / TASK068_CHUNKS / TASK068_BATCH
-#   TASK068_UBATCH / TASK068_PARALLEL / TASK068_ALLOW_MULTI_BATCH_PPL
+#   TASK068_UBATCH / TASK068_PARALLEL / TASK068_FORCE_BATCH_EQ_CTX
 #   TASK068_ALLOW_HIGH_CTX_MEM / TASK068_CTX_PRODUCT / TASK068_DRAFT
 #   TASK068_PRODUCT_HOLD_SEC (default 20; product phase idle hold)
 #   TASK068_CTV_PRODUCT (default turbo3.8)
@@ -135,7 +135,21 @@ if [[ "${PHASE}" == "product" ]]; then
   )
   if [[ -n "${TASK068_DRAFT:-}" ]]; then
     [[ -f "${TASK068_DRAFT}" ]] || fail_closed "TASK068_DRAFT not a file: ${TASK068_DRAFT}"
-    CLI_ARGS+=(--model-draft "${TASK068_DRAFT}" --spec-type draft-mtp --spec-draft-n-max 2 --spec-draft-p-min 0.95)
+    # TASK-068 ST-9: never omit draft KV (fork defaults F16 @ full ctx).
+    # Bracket aliases are main -ctv only; draft mid = turbo3|turbo4.
+    case "${CTV_PRODUCT}" in
+      turbo3.8) CTVD_PRODUCT="turbo3" ;;
+      turbo4.8) CTVD_PRODUCT="turbo4" ;;
+      *) CTVD_PRODUCT="${CTV_PRODUCT}" ;;
+    esac
+    CLI_ARGS+=(
+      -ctkd q8_0
+      -ctvd "${CTVD_PRODUCT}"
+      --model-draft "${TASK068_DRAFT}"
+      --spec-type draft-mtp
+      --spec-draft-n-max 2
+      --spec-draft-p-min 0.95
+    )
   fi
   set +e
   "${CLI_BIN}" "${CLI_ARGS[@]}" >"${OUT_DIR}/product.log" 2>&1 &
@@ -169,9 +183,9 @@ if [[ -n "${TASK068_PROMPT:-}" ]]; then
 fi
 
 if [[ "${PHASE}" == "batch_eq_ctx" ]]; then
-  export TASK068_BATCH="${CTX}"
-  unset TASK068_ALLOW_MULTI_BATCH_PPL || true
-  echo "forced TASK068_BATCH=${CTX} (batch_eq_ctx)" | tee -a "${SUMMARY}"
+  export TASK068_FORCE_BATCH_EQ_CTX=1
+  unset TASK068_BATCH || true
+  echo "forced TASK068_FORCE_BATCH_EQ_CTX=1 (batch_eq_ctx legacy path)" | tee -a "${SUMMARY}"
 fi
 
 if [[ "${PHASE}" == "base" || "${PHASE}" == "kl_one" ]]; then
@@ -179,15 +193,21 @@ if [[ "${PHASE}" == "base" || "${PHASE}" == "kl_one" ]]; then
   # with the same fail-closed batch policy as the KL script (source checks by calling it
   # with a dry path is overkill - duplicate the guard via env and call PPL).
   CHUNKS="${TASK068_CHUNKS:-2}"
-  if [[ -z "${TASK068_BATCH:-}" ]]; then
+  if [[ "${TASK068_FORCE_BATCH_EQ_CTX:-0}" == "1" ]]; then
     BATCH="${CTX}"
+  elif [[ -z "${TASK068_BATCH:-}" ]]; then
+    if [[ "${CTX}" -lt 2048 ]]; then
+      BATCH="${CTX}"
+    else
+      BATCH=2048
+    fi
   else
     BATCH="${TASK068_BATCH}"
   fi
   UBATCH="${TASK068_UBATCH:-512}"
   PARALLEL="${TASK068_PARALLEL:-1}"
-  if [[ "${BATCH}" -lt "${CTX}" && "${TASK068_ALLOW_MULTI_BATCH_PPL:-0}" != "1" ]]; then
-    fail_closed "TASK068_BATCH=${BATCH} < CTX=${CTX} needs TASK068_ALLOW_MULTI_BATCH_PPL=1 (logits.reserve path)"
+  if [[ "${BATCH}" -lt "${CTX}" && "${PARALLEL}" -ne 1 ]]; then
+    fail_closed "TASK068_BATCH=${BATCH} < CTX=${CTX} needs PARALLEL=1 (stream path)"
   fi
   TARGET_BYTES=$((CTX * CHUNKS * 8))
   PROMPT_FILE="${TASK068_WORKDIR}/prompt.txt"
