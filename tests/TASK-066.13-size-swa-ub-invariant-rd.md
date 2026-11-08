@@ -47,11 +47,11 @@ size_swa = PAD(min(size_base, n_swa_eff*(unified?n_seq_max:1) + n_batch), 256)
 
 C2 closes the **ub-only** invariance class (066.11 root). Remaining product C1/ladder DIFF when the harness also changes `-b` with `-ub`.
 
-**Next fix TASK options (pick one):**
+**Next:** [`TASK-066.14-c1-s8-s1024-localize-rd.md`](TASK-066.14-c1-s8-s1024-localize-rd.md) — localize C1 RED first (H1 equal-`-b` control), then pick KEEP:
 
-1. **C1:** fixed `n_swa_headroom` cap ≥ product max `-b` (fail-closed knob) — invariant to both `-ub` and `-b` sweeps within cap.
-2. Lock C1/ladder / product harness to **same `-b`** across ub cells (already true for KLD-UB).
-3. Accept C2 + document that changing `-b` reallocates SWA (operator contract).
+1. Fixed `n_swa_headroom` cap ≥ product max `-b`.
+2. Lock C1/ladder harness to **same `-b`** across ub cells.
+3. Accept C2 + document that changing `-b` reallocates SWA (only if H1 KEEP and product agrees).
 
 ## Code / tooling landed with this R&D
 

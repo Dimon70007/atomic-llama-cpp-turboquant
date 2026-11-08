@@ -10,7 +10,8 @@
 #   TASK066_CTX       — required (>= prompt + n_predict); ladder uses 3072
 #   TASK066_PROMPT    — optional; default tests/fixtures/task066/...prompt.txt
 #   TASK066_N_PREDICT — optional; default 64 (binary); raise if GREEN but ladder DIFF
-#   TASK066_DIAG=localize|fa-ablation|c3-bisect|c3-thresh — evidence-only (exit 0)
+#   TASK066_DIAG=localize|fa-ablation|c3-bisect|c3-thresh|c1|c1j — evidence / fast gates
+#   TASK066_C1_BATCH=<n> — 066.14 H1: equal -b both C1 sides (ub 8 vs 1024); unset=product pair
 #   TASK066_BISECT_FILTER / TASK066_BISECT_HASH_ONLY — c3-bisect knobs
 #   TASK066_FA=off + TASK066_CTV=f16 — true FA-off diag (refuse turbo KV); NOT product waiver
 #   BUILD_DIR, REBUILD=1, TASK066_REQUIRE_GPU (default 1 on Darwin)
@@ -84,6 +85,8 @@ echo "==> UBATCH-S8-S1024-C1 (test-ubatch-s8-s1024-row0-parity)"
 echo "    model=${MODEL}"
 echo "    ctx=${CTX} prompt=${PROMPT}"
 echo "    n_predict=${TASK066_N_PREDICT:-64}"
+echo "    TASK066_DIAG=${TASK066_DIAG-<unset>}"
+echo "    TASK066_C1_BATCH=${TASK066_C1_BATCH-<unset:product pair b=512/1024>}"
 echo "    GGML_METAL_MUL_MM_MIN=${GGML_METAL_MUL_MM_MIN-<unset:default 0>}"
 set +e
 "${TEST_BIN}" "${ARGS[@]}" 2>&1 | tee "${OUT_DIR}/ubatch-s8-s1024.log"
@@ -99,6 +102,8 @@ echo "ubatch_s8_s1024_exit=${RC}" | tee "${OUT_DIR}/ubatch-s8-s1024.exit"
   echo "ctx=${CTX}"
   echo "prompt=${PROMPT}"
   echo "n_predict=${TASK066_N_PREDICT:-64}"
+  echo "TASK066_DIAG=${TASK066_DIAG:-}"
+  echo "TASK066_C1_BATCH=${TASK066_C1_BATCH:-}"
   echo "ubatch_s8_s1024_exit=${RC}"
   if [[ "${RC}" -eq 0 ]]; then
     echo "VERDICT=GREEN"

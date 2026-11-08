@@ -14,6 +14,8 @@ Releases before `b10269-1.5.0` predate this file; see the git history.
 
 ### Changed
 
+- **TASK-066.14 (spec only):** R&D `tests/TASK-066.14-c1-s8-s1024-localize-rd.md` —
+  localize C1 S8↔S1024 RED after C2 (H1: unequal `-b` first). Status TODO / not started.
 - **TASK-066.13 C2 KEEP:** `size_swa` uses `n_batch` headroom (not live `-ub`).
   Call sites pass `cparams.n_batch`; estimator requires `--n-batch`. Stamp
   `logs/task066-13-c2-nbatch-headroom-20261108T220220Z` — C3-n1536 GREEN; KLD-UB

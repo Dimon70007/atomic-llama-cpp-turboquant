@@ -29,6 +29,12 @@
 // (user turn + generation prompt, enable_thinking=false == ladder --reasoning off)
 // then greedy S8 vs S1024. Ladder `012625Z` DIFF@22 is this class — raw C1 alone
 // does not cover it. TASK066_DIAG=c1j runs only C1j (evidence / fast loop).
+//
+// 066.14 H1 control (localization only; product default pair unchanged):
+//   TASK066_C1_BATCH=<n>  — both C1/C1j sides use n_batch=n; ub stays 8 vs 1024.
+//       Unset = product pair A b=512 ub=8 / B b=1024 ub=1024.
+//       Set  = equal -b (expect equal size_swa under 066.13 C2). Refuse n < max(ub).
+//   TASK066_DIAG=c1       — skip C2/C3; run raw C1 only (fast H1/H2 loop).
 
 #include "arg.h"
 #include "chat.h"
@@ -1170,11 +1176,38 @@ int main(int argc, char ** argv) {
     const bool do_c3_bisect = diag && std::strcmp(diag, "c3-bisect") == 0;
     const bool do_c3_thresh = diag && std::strcmp(diag, "c3-thresh") == 0;
     const bool do_c1j = diag && std::strcmp(diag, "c1j") == 0;
+    const bool do_c1_only = diag && std::strcmp(diag, "c1") == 0;
 
     const int32_t ub_a = 8;
     const int32_t ub_b = 1024;
-    const int32_t b_a = 512;
-    const int32_t b_b = 1024;
+    int32_t b_a = 512;
+    int32_t b_b = 1024;
+    // 066.14 H1: lock equal -b both sides (ub still 8 vs 1024). Unset keeps product pair.
+    if (const char * c1b = std::getenv("TASK066_C1_BATCH"); c1b && c1b[0]) {
+        char * end = nullptr;
+        const long v = std::strtol(c1b, &end, 10);
+        if (end == c1b || *end != '\0' || v < 1) {
+            fprintf(stderr,
+                    "FAIL: TASK066_C1_BATCH must be a positive integer (got %s); "
+                    "refusing silent batch substitution\n",
+                    c1b);
+            return 2;
+        }
+        const int32_t n_batch_lock = (int32_t) v;
+        const int32_t ub_max = std::max(ub_a, ub_b);
+        if (n_batch_lock < ub_max) {
+            fprintf(stderr,
+                    "FAIL: TASK066_C1_BATCH=%d < max(ub)=%d (n_batch must cover ubatch)\n",
+                    n_batch_lock, ub_max);
+            return 2;
+        }
+        b_a = n_batch_lock;
+        b_b = n_batch_lock;
+        fprintf(stderr,
+                "DIAG_ONLY: TASK066_C1_BATCH=%d — equal -b both sides "
+                "(H1 size_swa control; product default pair unchanged when unset)\n",
+                n_batch_lock);
+    }
 
     fprintf(stderr,
             "product_lock: ngl=%d ctk=%s ctv=%s fa=%s cram=%d t=%d tb=%d np=%d ctx=%d\n",
@@ -1262,6 +1295,35 @@ int main(int argc, char ** argv) {
         // Fast A2 loop: skip C2/C3/C1 raw; exit code is the C1j gate (RED/GREEN).
         printf("UBATCH-S8-S1024-DIAG C1j only (066.9 Phase A2)\n");
         return run_c1j_gate(model, vocab, params, params.prompt, n_predict, b_a, ub_a, b_b, ub_b);
+    }
+
+    if (do_c1_only) {
+        // 066.14 fast H1/H2: skip C2/C3; raw C1 only (honors TASK066_C1_BATCH).
+        printf("UBATCH-S8-S1024-DIAG C1 only (066.14 localize; C2/C3 skipped)\n");
+        printf("  model=%s\n", params.model.path.c_str());
+        printf("  n_prompt_tokens=%zu n_predict=%d\n", tokens.size(), n_predict);
+        printf("HYPOTHESIS: greedy ids under ubatch_pair above (equal-b if TASK066_C1_BATCH set)\n");
+        const gen_result a = run_greedy_ubatch(model, params, tokens, n_predict, b_a, ub_a);
+        if (!a.ok) {
+            return 1;
+        }
+        const gen_result b = run_greedy_ubatch(model, params, tokens, n_predict, b_b, ub_b);
+        if (!b.ok) {
+            return 1;
+        }
+        const int32_t diff_i = first_token_diff(a.tokens, b.tokens);
+        printf("  gen_len_a=%zu gen_len_b=%zu first_token_diff=%d\n",
+               a.tokens.size(), b.tokens.size(), diff_i);
+        if (diff_i >= 0 && diff_i < (int32_t) a.tokens.size() &&
+            diff_i < (int32_t) b.tokens.size()) {
+            printf("  tok_a=%d tok_b=%d\n", a.tokens[size_t(diff_i)], b.tokens[size_t(diff_i)]);
+        }
+        if (diff_i >= 0) {
+            printf("RESULT FAIL (RED) — C1-only greedy not bit-exact; 066.14 H1/H2 evidence\n");
+            return 1;
+        }
+        printf("RESULT PASS (GREEN) — C1-only greedy bit-exact for n_predict=%d\n", n_predict);
+        return 0;
     }
 
     if (do_localize) {
