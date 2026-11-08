@@ -14,6 +14,30 @@ Releases before `b10269-1.5.0` predate this file; see the git history.
 
 ### Added
 
+- **TASK-068 unit vs e2e split:** everyday `tests/run-task068-unit-verify.sh`
+  (brackets + Metal smoke / ctest); KL only via `run-task068-q8-brackets-kl.sh`
+  or `TASK068_RUN_KL_E2E=1` on `run-task068-post-rebase-verify.sh` (no silent e2e).
+- **TASK-068 KL same-mid both mids:** `run-task068-q8-brackets-kl.sh` gates
+  `KL(turbo3.8)<KL(turbo3)` **and** `KL(turbo4.8)<KL(turbo4)` vs q8_V (5 PPL
+  runs). Opt-out: `TASK068_KL_SKIP_TURBO4_GATE=1`. Cross-mid still not a gate.
+- **TASK-068 ST-8 Darwin KL RAM contain:** `run-task068-q8-brackets-kl.sh` defaults
+  `TASK068_BATCH=CTX` (avoids perplexity `logits.reserve(n_ctx*n_vocab)` when `-b < -c`);
+  `BATCH < CTX` fail-closed unless `TASK068_ALLOW_MULTI_BATCH_PPL=1`. Mem probe:
+  `tests/run-task068-mem-st8-probe.sh` + `tests/task068_mem_sample.py` ->
+  `logs/task068-mem-st8-*`. Post-rebase forwards batch/allow knobs;
+  `TASK068_SKIP_CTEST=1` alone no longer forces `PASS_WITH_TRIAGE` (needs
+  `TASK068_PRIOR_TRIAGE=1`). Docs: Regression gates in `KV-cache-quantization.md`.
+- **TASK-068 ST-7 host runner:** `tests/run-task068-post-rebase-verify.sh`
+  orchestrates post-`dev` rebase gates on a Metal host (tip SHA /
+  `TURBOQUANT_VERSION` meta, `ctest -L main` with required green
+  `test-q8-brackets-schedule`, long-ctx KL via `run-task068-q8-brackets-kl.sh`).
+  Agent sandboxes cannot init Metal - run from a real Terminal. Docs:
+  `docs/KV-cache-quantization.md` Regression gates + `AGENTS.md`.
+- **TASK-068 KL mem + batching:** `run-task068-q8-brackets-kl.sh` uses `-ub 512` /
+  `-np 1`, `--chunks 2`, same-mid gate `KL(turbo3.8)<KL(turbo3)`,
+  `CTX>8192` needs `TASK068_ALLOW_HIGH_CTX_MEM=1`, logits file removed after
+  Mean KLD parse. (ST-8: default `BATCH=CTX` unless `ALLOW_MULTI_BATCH_PPL`;
+  both same-mid gates turbo3.8 and turbo4.8.)
 - **TASK-066.9 Phase C MTP knobs matrix:** `tests/task066_mtp_knob_matrix.json` +
   `tests/task066_mtp_knob_matrix.py` + `tests/run-task066-mtp-knob-matrix.sh` compose the
   MTP-vs-nomtp ladder across `n_maxin{1,2,3,4}` x `p_minin{0.85,0.9,0.95}` (ub=512 locks).

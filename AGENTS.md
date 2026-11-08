@@ -67,9 +67,13 @@ MTP-off as the product fix. Abort if `TURBO_LAYER_ADAPTIVE` is set with
 these aliases. Details: `docs/KV-cache-quantization.md`.
 
 **Regression:** `test-q8-brackets-schedule` is in `ctest -L main` (CI/PR).
-Long-ctx KL e2e is **manual only** (`tests/run-task068-q8-brackets-kl.sh`;
-not registered in ctest) - see `docs/KV-cache-quantization.md` Regression
-gates for how to reproduce KV drift vs brackets.
+Everyday UNIT: `tests/run-task068-unit-verify.sh` (brackets + Metal smoke /
+`ctest -L main`; no model). Holiday KL e2e: `tests/run-task068-q8-brackets-kl.sh`
+or `TASK068_RUN_KL_E2E=1 ./tests/run-task068-post-rebase-verify.sh` (Metal host;
+not agent sandbox). Same-mid PASS: `KL(turbo3.8)<KL(turbo3)` and
+`KL(turbo4.8)<KL(turbo4)` (`TASK068_KL_SKIP_TURBO4_GATE=1` opt-out). Darwin ST-8:
+default `TASK068_BATCH=CTX`; mem probe `tests/run-task068-mem-st8-probe.sh`.
+Docs: `docs/KV-cache-quantization.md` Regression gates.
 
 ### Test gates (all must pass before touching quant/backend code)
 
