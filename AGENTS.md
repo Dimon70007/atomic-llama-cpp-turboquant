@@ -66,9 +66,10 @@ look fine; brackets protect instruction head + late layers. Do not treat
 MTP-off as the product fix. Abort if `TURBO_LAYER_ADAPTIVE` is set with
 these aliases. Details: `docs/KV-cache-quantization.md`.
 
-**Regression:** `test-q8-brackets-schedule` is in `ctest -L main` (CI/PR).
-Everyday UNIT: `tests/run-task068-unit-verify.sh` (brackets + Metal smoke /
-`ctest -L main`; no model). Holiday KL e2e: `tests/run-task068-q8-brackets-kl.sh`
+**Regression:** `test-q8-brackets-schedule` and
+`test-turbo-layer-adaptive-schedule` are in `ctest -L main` (CI/PR).
+Everyday UNIT: `tests/run-task068-unit-verify.sh` (brackets + adaptive + Metal
+smoke / `ctest -L main`; no model). Holiday KL e2e: `tests/run-task068-q8-brackets-kl.sh`
 or `TASK068_RUN_KL_E2E=1 ./tests/run-task068-post-rebase-verify.sh` (Metal host;
 not agent sandbox). Same-mid PASS: `KL(turbo3.8)<KL(turbo3)` and
 `KL(turbo4.8)<KL(turbo4)` (`TASK068_KL_SKIP_TURBO4_GATE=1` opt-out). Darwin ST-8:
@@ -82,6 +83,7 @@ Docs: `docs/KV-cache-quantization.md` Regression gates.
 - `test-quantize-fns` - includes TQ3_1S/TQ4_1S and rotated-domain buffer sizing
 - `test-backend-ops` - full sweep on CPU + CUDA0 (23k+ cases on the RTX 5090 dev box); rejects 0/0 as FAIL
 - `test-q8-brackets-schedule` - turbo3.8/turbo4.8 layer schedule + fail-closed env (`ctest -L main`)
+- `test-turbo-layer-adaptive-schedule` - `TURBO_LAYER_ADAPTIVE` modes 0-7 + traps (`ctest -L main`)
 - `llama-bench` with `-ctk/-ctv turboN`; type parser accepts `tq3_1s`/`tq4_1s`
 
 ### What the test gates do and do not cover

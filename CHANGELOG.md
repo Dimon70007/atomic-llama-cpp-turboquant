@@ -12,6 +12,17 @@ Releases before `b10269-1.5.0` predate this file; see the git history.
 
 ## Unreleased
 
+### Fixed
+
+- **ISWA `size_swa` KEEP locked (C3 > long-ctx RAM):** pure windowed
+  `PAD(min(n_ctx, n_swa), 256)` re-broke C3 (`find_slot n_tokens=1280 > size=1024`,
+  stamp `logs/iswa-windowed-c3-verify-*`). Restored TASK-066.5 headroom
+  `PAD(min(size_base, n_swa*[n_seq] + size_base), 256)` ⇒ `size_swa == n_ctx` when
+  ctx ≥ n_swa: ub-independent (anti-drift KEEP), oneshot fits. At ~2k validation
+  ctx this is ~2k cells (not ~12 GiB); long product ctx pays full-SWA RAM as a
+  known side effect — separate lever from undoing C3. Helper
+  `llama_kv_cache_iswa_calc_size_swa` + CPU unit `test-iswa-size-swa`.
+
 ### Added
 
 - **TASK-068 ST-8 stream logits (no-swap path):** `tools/perplexity/perplexity.cpp`

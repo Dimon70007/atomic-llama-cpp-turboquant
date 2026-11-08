@@ -26,7 +26,7 @@ ASCII only in this file (project AGENTS.md).
 | Fix | Code / knob | After |
 |-----|-------------|-------|
 | FA always-tile | `ggml_metal_op_flash_attn_ext_use_vec` default always tile; legacy shape-vec only with `GGML_METAL_FA_VEC=1` | FA C2 / multi-step C7 bit-exact on Metal |
-| ISWA capacity | `size_swa` perpendicular to `n_ubatch` (sliding window sized from model `n_swa`, not ubatch) | Long-prefill C3 (`n=1344`) + product S8 vs S1024 greedy stream GREEN |
+| ISWA capacity | KEEP: never size from this context's `n_ubatch` (old `n_swa+n_ubatch` → C3-n1344 drift at ~2k). Formula: `PAD(min(n_ctx, n_swa*[n_seq]+n_ctx), 256)` ⇒ `size_swa == n_ctx` (oneshot fits). Pure windowed `PAD(n_swa)` RED on C3 (`1280 > 1024`). At ~2k ctx cells≈ctx (not ~12 GiB); long product ctx pays full-SWA RAM as a side effect | Long-prefill C3 (`n=1344`) + product S8 vs S1024 greedy stream GREEN |
 | Float-tile mm for all `ne11` | Product `GGML_METAL_MUL_MM_MIN` default **0**; policy header `ggml/src/ggml-metal/ggml-metal-mul-mm-policy.h` | Prefill rem + MTP N=1 share `mul_mm` with verify widths; residual + `--mtp-verify` GREEN |
 
 Do not raise `MUL_MM_MIN` to "hide" mm. Opt into legacy FA vec only for A/B (`GGML_METAL_FA_VEC=1`).

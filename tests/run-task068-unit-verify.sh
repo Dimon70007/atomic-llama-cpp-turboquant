@@ -19,6 +19,7 @@
 #   U1 meta + binary presence
 #   U2 Metal smoke (fail-closed on null device)
 #   U3 test-q8-brackets-schedule (must Pass; via ctest -L main or direct binary)
+#   U3b test-turbo-layer-adaptive-schedule (must Pass; same path as U3)
 #
 # E2E KL: tests/run-task068-q8-brackets-kl.sh
 # Holiday combo: TASK068_RUN_KL_E2E=1 ./tests/run-task068-post-rebase-verify.sh
@@ -34,6 +35,7 @@ mkdir -p "${OUT_DIR}"
 
 PPL_BIN="${BUILD_DIR}/bin/llama-perplexity"
 BRACKETS_BIN="${BUILD_DIR}/bin/test-q8-brackets-schedule"
+ADAPTIVE_BIN="${BUILD_DIR}/bin/test-turbo-layer-adaptive-schedule"
 NCPU="$(sysctl -n hw.ncpu 2>/dev/null || nproc 2>/dev/null || echo 4)"
 
 SUMMARY="${OUT_DIR}/summary.txt"
@@ -137,8 +139,28 @@ fi
 
 # --- U3 brackets / ctest ---
 UNRELATED_FAILS=0
+run_adaptive_unit() {
+  if [[ ! -x "${ADAPTIVE_BIN}" ]]; then
+    echo "FAIL: missing ${ADAPTIVE_BIN} (rebuild with REBUILD=1)" >&2
+    record "test-turbo-layer-adaptive-schedule" 127 "FAIL"
+    echo "VERDICT=FAIL" | tee -a "${SUMMARY}"
+    exit 1
+  fi
+  set +e
+  "${ADAPTIVE_BIN}" >"${OUT_DIR}/adaptive-unit.log" 2>&1
+  local rc=${PIPESTATUS[0]}
+  set -e
+  if [[ "${rc}" -ne 0 ]]; then
+    record "test-turbo-layer-adaptive-schedule" "${rc}" "FAIL"
+    echo "FAIL: test-turbo-layer-adaptive-schedule; see ${OUT_DIR}/adaptive-unit.log" >&2
+    echo "VERDICT=FAIL" | tee -a "${SUMMARY}"
+    exit 1
+  fi
+  record "test-turbo-layer-adaptive-schedule" 0 "PASS"
+}
+
 if [[ "${TASK068_SKIP_CTEST:-0}" == "1" ]]; then
-  echo "==> U3 SKIP full ctest (TASK068_SKIP_CTEST=1); run brackets unit binary only"
+  echo "==> U3 SKIP full ctest (TASK068_SKIP_CTEST=1); run brackets + adaptive units"
   echo "ctest_skipped=1" | tee -a "${SUMMARY}"
   set +e
   "${BRACKETS_BIN}" >"${OUT_DIR}/brackets-unit.log" 2>&1
@@ -151,6 +173,7 @@ if [[ "${TASK068_SKIP_CTEST:-0}" == "1" ]]; then
     exit 1
   fi
   record "test-q8-brackets-schedule" 0 "PASS"
+  run_adaptive_unit
   if [[ "${TASK068_PRIOR_TRIAGE:-0}" == "1" ]]; then
     echo "prior_triage=1 (operator documents prior unrelated ctest)" | tee -a "${SUMMARY}"
     record "ctest-main" 0 "SKIP_PRIOR_TRIAGE"
@@ -176,6 +199,22 @@ else
     BRACKETS_OK=0
   fi
 
+  ADAPTIVE_LINE="$(grep -E 'test-turbo-layer-adaptive-schedule' "${OUT_DIR}/ctest-main.log" | tail -n1 || true)"
+  echo "adaptive_ctest_line=${ADAPTIVE_LINE}" | tee -a "${SUMMARY}"
+  if echo "${ADAPTIVE_LINE}" | grep -q 'Passed'; then
+    record "test-turbo-layer-adaptive-schedule" 0 "PASS"
+    ADAPTIVE_OK=1
+  else
+    # Fresh target may be missing until cmake reconfigure; fall back to binary.
+    if [[ -x "${ADAPTIVE_BIN}" ]]; then
+      run_adaptive_unit
+      ADAPTIVE_OK=1
+    else
+      record "test-turbo-layer-adaptive-schedule" 1 "FAIL"
+      ADAPTIVE_OK=0
+    fi
+  fi
+
   FAILED_LIST="$(awk '/The following tests FAILED:/{flag=1; next} flag && /^$/{exit} flag' "${OUT_DIR}/ctest-main.log" || true)"
   {
     echo "ctest_main_exit=${RC_CTEST}"
@@ -190,6 +229,11 @@ else
 
   if [[ "${BRACKETS_OK}" -ne 1 ]]; then
     echo "FAIL: test-q8-brackets-schedule not Passed in ctest -L main" >&2
+    echo "VERDICT=FAIL" | tee -a "${SUMMARY}"
+    exit 1
+  fi
+  if [[ "${ADAPTIVE_OK}" -ne 1 ]]; then
+    echo "FAIL: test-turbo-layer-adaptive-schedule not Passed" >&2
     echo "VERDICT=FAIL" | tee -a "${SUMMARY}"
     exit 1
   fi

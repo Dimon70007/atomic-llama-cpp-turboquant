@@ -18,6 +18,7 @@
 #   TASK068_ALLOW_HIGH_CTX_MEM / TASK068_CTX_PRODUCT / TASK068_DRAFT
 #   TASK068_PRODUCT_HOLD_SEC (default 20; product phase idle hold)
 #   TASK068_CTV_PRODUCT (default turbo3.8)
+#   TASK068_PRODUCT_BATCH / TASK068_PRODUCT_UBATCH (product -b/-ub; default 2048/512)
 #
 # Logs: logs/task068-mem-st8-<stamp>/
 # Agent sandboxes cannot init Metal - run in a real Terminal; stop minillm first.
@@ -109,21 +110,32 @@ if [[ "${PHASE}" == "product" ]]; then
   CTX_PRODUCT="${TASK068_CTX_PRODUCT:-160000}"
   CTV_PRODUCT="${TASK068_CTV_PRODUCT:-turbo3.8}"
   HOLD_SEC="${TASK068_PRODUCT_HOLD_SEC:-20}"
+  BATCH_PRODUCT="${TASK068_PRODUCT_BATCH:-2048}"
+  UBATCH_PRODUCT="${TASK068_PRODUCT_UBATCH:-512}"
   if ! [[ "${CTX_PRODUCT}" =~ ^[0-9]+$ ]] || [[ "${CTX_PRODUCT}" -lt 1 ]]; then
     fail_closed "TASK068_CTX_PRODUCT must be a positive integer"
   fi
   if ! [[ "${HOLD_SEC}" =~ ^[0-9]+$ ]] || [[ "${HOLD_SEC}" -lt 1 ]]; then
     fail_closed "TASK068_PRODUCT_HOLD_SEC must be a positive integer"
   fi
-  echo "product_ctx=${CTX_PRODUCT} ctv=${CTV_PRODUCT} hold_sec=${HOLD_SEC}" | tee -a "${SUMMARY}"
+  if ! [[ "${BATCH_PRODUCT}" =~ ^[0-9]+$ ]] || [[ "${BATCH_PRODUCT}" -lt 1 ]]; then
+    fail_closed "TASK068_PRODUCT_BATCH must be a positive integer"
+  fi
+  if ! [[ "${UBATCH_PRODUCT}" =~ ^[0-9]+$ ]] || [[ "${UBATCH_PRODUCT}" -lt 1 ]]; then
+    fail_closed "TASK068_PRODUCT_UBATCH must be a positive integer"
+  fi
+  if [[ "${UBATCH_PRODUCT}" -gt "${BATCH_PRODUCT}" ]]; then
+    fail_closed "TASK068_PRODUCT_UBATCH (${UBATCH_PRODUCT}) must be <= TASK068_PRODUCT_BATCH (${BATCH_PRODUCT})"
+  fi
+  echo "product_ctx=${CTX_PRODUCT} ctv=${CTV_PRODUCT} hold_sec=${HOLD_SEC} batch=${BATCH_PRODUCT} ubatch=${UBATCH_PRODUCT}" | tee -a "${SUMMARY}"
   PROMPT_FILE="${OUT_DIR}/product-prompt.txt"
   printf 'ST-8 product idle probe.\n' > "${PROMPT_FILE}"
   CLI_ARGS=(
     -m "${MODEL}"
     -f "${PROMPT_FILE}"
     -c "${CTX_PRODUCT}"
-    -b 2048
-    -ub 512
+    -b "${BATCH_PRODUCT}"
+    -ub "${UBATCH_PRODUCT}"
     -np 1
     -ngl 99
     -fa on

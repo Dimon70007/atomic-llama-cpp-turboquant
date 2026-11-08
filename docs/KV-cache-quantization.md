@@ -115,12 +115,17 @@ llama-server -m model.gguf -c 8192 -ngl 99 -ctk q8_0 -ctv turbo4.8
 **CI / PR (`ctest -L main`):** only the CPU schedule unit is in the default suite.
 
 ```bash
-ctest --test-dir build -L main -R test-q8-brackets-schedule --output-on-failure
+ctest --test-dir build -L main -R 'test-q8-brackets-schedule|test-turbo-layer-adaptive-schedule' --output-on-failure
 ```
 
 `test-q8-brackets-schedule` locks HEAD/TAIL defaults (incl. HEAD=0/1, min 1+1),
 mid turbo3|turbo4, ADAPTIVE abort, `n_layer==0` throw on `type_v` (ctor still
 skips MTP draft stubs), width overflow, and bad env ints.
+
+`test-turbo-layer-adaptive-schedule` locks `TURBO_LAYER_ADAPTIVE` modes 0-7
+(mode select / auto-7 for turbo2-V / schedules) plus traps: mode 1 V gated on
+`type_k` being turbo*; modes 5/6/7 force mid V to turbo2 even when `-ctv` was
+turbo3/turbo4; modes 3/4 are no-ops.
 
 **Manual e2e (not in ctest):** long-ctx KL ladder for reviewers who need to
 reproduce the drift class and see why brackets help.
@@ -160,7 +165,7 @@ export TASK068_CTX=8192    # Darwin: prefer 8192; CTX>8192 needs TASK068_ALLOW_H
 **Regression entry points (split unit vs e2e):**
 
 ```bash
-# Everyday UNIT (no model, no KL): Metal smoke + test-q8-brackets-schedule / ctest -L main
+# Everyday UNIT (no model, no KL): Metal smoke + brackets + adaptive / ctest -L main
 BUILD_DIR=./build-st7-post-rebase ./tests/run-task068-unit-verify.sh
 # Optional: TASK068_SKIP_CTEST=1; TASK068_ALLOW_UNRELATED_CTEST_FAILS=1; REBUILD=1
 # Logs: logs/task068-unit-<stamp>/

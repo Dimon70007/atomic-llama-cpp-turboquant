@@ -168,3 +168,13 @@ private:
 
     const llama_memory_status status;
 };
+
+// Pure size_swa helper. TASK-066.5 KEEP: n_ubatch must not affect the result
+// (C3-n1344). Headroom = size_base unless swa_full. Used by ctor + CPU unit.
+uint32_t llama_kv_cache_iswa_calc_size_swa(
+        uint32_t size_base,
+        uint32_t n_swa,
+        uint32_t n_seq_max,
+        bool     unified,
+        bool     swa_full,
+        uint32_t n_ubatch);

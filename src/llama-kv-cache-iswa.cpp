@@ -7,6 +7,40 @@
 #include <algorithm>
 #include <cassert>
 
+uint32_t llama_kv_cache_iswa_calc_size_swa(
+        uint32_t size_base,
+        uint32_t n_swa,
+        uint32_t n_seq_max,
+        bool     unified,
+        bool     swa_full,
+        uint32_t n_ubatch) {
+    (void) n_ubatch; // must not affect capacity (batch-invariance across -ub)
+    if (swa_full) {
+        return size_base;
+    }
+    // note: the SWA cache is always padded to 256 for performance
+    //       https://github.com/ggml-org/llama.cpp/issues/17037
+    //
+    // TASK-066.5 / C3-n1344 KEEP: do NOT add this context's n_ubatch into size_swa.
+    // Old formula `n_swa + n_ubatch` made SWA capacity depend on -ub:
+    //   Gemma4 n_swa=1024, ub=8  -> PAD(1032,256)=1280
+    //   ub=1344 / ub=1024        -> PAD(1024+ub,256) >> 1280
+    // Prefill past 1280 then slides on the small cache but not the large one ->
+    // multi-ubatch vs one-shot logits diverge (c3-thresh: n=1280 GREEN, n=1288
+    // first RED; FIRST_DIFF=kqv_out; H9faOFF still RED - not FA-only).
+    // Drift reproduced with MTP off at ~2k ctx - the KEEP is ub-independence.
+    //
+    // Headroom = size_base so (a) every -ub shares the same capacity and
+    // (b) a oneshot ubatch up to n_ctx still fits. min() => size_swa == size_base
+    // whenever ctx >= n_swa (full-length SWA cells; same as swa_full for that case).
+    // Pure windowed PAD(n_swa) re-broke C3: find_slot n_tokens=1280 > size=1024
+    // (logs/iswa-windowed-c3-verify-*). At ~2k validation ctx this is ~2k cells,
+    // not ~12 GiB; long product ctx (160k) pays full-SWA RAM as a side effect.
+    // docs/backend/metal-batch-invariance.md
+    const uint32_t swa_window = n_swa * (unified ? n_seq_max : 1);
+    return GGML_PAD(std::min(size_base, swa_window + size_base), 256);
+}
+
 //
 // llama_kv_cache_iswa
 //
@@ -75,30 +109,13 @@ llama_kv_cache_iswa::llama_kv_cache_iswa(
 
     const uint32_t size_base = kv_size;
 
-    // note: the SWA cache is always padded to 256 for performance
-    //       https://github.com/ggml-org/llama.cpp/issues/17037
-    //
-    // TASK-066.5 / C3-n1344: do NOT add this context's n_ubatch into size_swa.
-    // Old formula `n_swa + n_ubatch` made SWA capacity depend on -ub:
-    //   Gemma4 n_swa=1024, ub=8  -> PAD(1032,256)=1280
-    //   ub=1344 / ub=1024        -> PAD(1024+ub,256) >> 1280
-    // Prefill past 1280 then slides on the small cache but not the large one ->
-    // multi-ubatch vs one-shot logits diverge (c3-thresh: n=1280 GREEN, n=1288
-    // first RED; FIRST_DIFF=kqv_out; H9faOFF still RED - not FA-only).
-    // Headroom = size_base so (a) every -ub shares the same capacity and
-    // (b) a oneshot ubatch up to n_ctx still fits. min() => size_swa == size_base
-    // whenever ctx ≥ n_swa (full-length SWA cells; same as swa_full for that case).
-    const uint32_t swa_window = hparams.n_swa * (unified ? n_seq_max : 1);
-    uint32_t size_swa = GGML_PAD(std::min(size_base, swa_window + size_base), 256);
-    (void) n_ubatch; // retained in ctor signature; must not affect SWA capacity
-
-    // when using full-size SWA cache, we set the SWA cache size to be equal to the base cache size
     if (swa_full) {
         LLAMA_LOG_WARN("%s: using full-size SWA cache (ref: %s)\n",
                 __func__, "https://github.com/ggml-org/llama.cpp/pull/13194#issuecomment-2868343055");
-
-        size_swa = size_base;
     }
+
+    const uint32_t size_swa = llama_kv_cache_iswa_calc_size_swa(
+            size_base, hparams.n_swa, n_seq_max, unified, swa_full, n_ubatch);
 
     LLAMA_LOG_INFO("%s: creating non-SWA KV cache, size = %u cells\n", __func__, size_base);
 

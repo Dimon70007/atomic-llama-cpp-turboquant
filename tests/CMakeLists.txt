@@ -457,6 +457,13 @@ set_tests_properties(test-metal-mul-mm-policy PROPERTIES LABELS main)
 # LABELS main via llama_build_and_test (default) - included in `ctest -L main`.
 llama_build_and_test(test-q8-brackets-schedule.cpp)
 
+# TURBO_LAYER_ADAPTIVE modes 0-7 schedule (CPU; no model).
+# Locks mode legend + traps (mode1 gated on type_k; modes 5/6/7 force mid turbo2).
+llama_build_and_test(test-turbo-layer-adaptive-schedule.cpp)
+
+# ISWA size_swa: windowed from n_swa, independent of n_ubatch (not full n_ctx).
+llama_build_and_test(test-iswa-size-swa.cpp)
+
 # TASK-068 ST-6.2 gated KL ladder is NOT registered in ctest.
 # Operator / reviewer script only: tests/run-task068-q8-brackets-kl.sh
 # (see docs/KV-cache-quantization.md "Regression gates").
