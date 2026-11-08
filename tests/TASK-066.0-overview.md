@@ -13,8 +13,9 @@
 🟢 **066.9 Phase A1 DONE:** C3-n1344 + C1 GREEN via **066.5 ISWA `size_swa`**.  
 🟢 **066.9 Phase A2 DONE:** last-ubatch rem cross-kernel → product `MUL_MM_MIN` default **1**; C1j + ladder `023433Z` S8≡S1024.  
 🟢 **066.9 Phase B matmul KEEP:** MTP verify N=1 vs `{2,3,4}` → default **0**; `--mtp-verify`. Freeze: [TASK-066.9](TASK-066.9-fa-batch-invariance.md).  
-⬜ **066.5 TODO** — ideas `size_swa` (pad128 + `n_ubatch`); prior size_base KEEP superseded; C3 + KLD vs FP16 @ 4K/16K/64K open.  
+⬜ **066.5 TODO** — ideas `size_swa` (pad128 + `n_ubatch`); C3 / CTX-KLD / KLD-UB still RED/FAIL; not Done.  
 ⬜ **066.10 TODO** — KV / `n_ctx` estimator under ideas formula; not closed.  
+⬜ **066.11 TODO** — R&D small-CTX cross-ub logit divergence with **q8_0 + turbo3** (not started).  
 📋 **PR audit:** [TASK-066-pr-audit-registry.md](TASK-066-pr-audit-registry.md). Hist Stage 1 WAIVE ≠ Done. **MTP blocked** until explicit start (A2 DoD ✅).
 
 ## Locked decisions

@@ -1,11 +1,12 @@
 # TASK-066.5 — ISWA size_swa / long-ctx TurboQuant drift
 
-**Status:** ⬜ **TODO** (not done) — ideas pad128 landed; **T-066.5-C3 RED** stamped; **T-066.5-KLD FAIL** (full 4K/16K/64K; turbo4 4K->16K walks up); DoD open on C3/product  
+**Status:** ⬜ **TODO** (not Done) — gates still RED/FAIL after 066.12 re-stamp `…210925Z-post06612` (C3-n1536 + CTX-KLD + KLD-UB 256/512/1024 + ladder DIFF unchanged)  
 
 **Depends on:** [066.7 KEEP](TASK-066.7-mul-mat-residual.md); FA always-tile C2 GREEN; [066.9](TASK-066.9-fa-batch-invariance.md) Phase A localize  
 **Product pointer:** [`tasks/TASK-066-nomtp-ubatch-s8-s1024.md`](../../../tasks/TASK-066-nomtp-ubatch-s8-s1024.md) (Ideas recommendation)  
 **Ideas note:** [`ideas/llamacpp_swa_size_calculate.md`](../../../ideas/llamacpp_swa_size_calculate.md)  
-**Sizing SSOT:** [TASK-066.10-kv-ctx-sizing.md](TASK-066.10-kv-ctx-sizing.md)
+**Sizing SSOT:** [TASK-066.10-kv-ctx-sizing.md](TASK-066.10-kv-ctx-sizing.md)  
+**Follow-up R&D (turbo3 small-CTX):** [TASK-066.11-small-ctx-q8-turbo3-cross-ub-rd.md](TASK-066.11-small-ctx-q8-turbo3-cross-ub-rd.md) — TODO, not started
 
 **Current lever:** ISWA `size_swa` = windowed + TurboQuant KV block align (pad128)  
 **Prior KEEP (superseded for RAM):** `size_base` headroom made `size_swa == n_ctx` when `ctx >= n_swa` (C3 GREEN, long-ctx RAM side effect)  
@@ -127,42 +128,60 @@ TASK066_DIAG=c3-thresh …   # pad/SWA threshold matrix
 ### TDD / stamps (summary)
 
 1. CPU unit: `test-iswa-size-swa` (pad128 + ubatch cases) — **PASS** Mac `build-task066-cb-ws` 2026-11-08.
-2. **T-066.5-C3:** `SUITE=ubatch-s8-s1024` — C2 + C3-n1280 + **C3-n1344** + C1 after formula change.
-3. **T-066.5-KLD:** FP16 ref vs `q8_0/turbo3` and `q8_0/turbo4` @ 4096 / 16384 / 65536; stamp under `logs/task066-iswa-kld-<UTC>/`.
-4. Historical KEEP stamps remain evidence of the size_base path (not current runtime).
+2. **T-066.5-C3:** `SUITE=ubatch-s8-s1024` — C2 + C3-n1280 + **C3-n1536** (+ C1 when C3 GREEN).
+3. **T-066.5-KLD:** FP16 vs `q8_0/turbo{3,4}` @ 4096 / 16384 / 65536 — `tests/run-task066-iswa-kld.sh`.
+4. **T-066.5-KLD-UB:** same CTX, sweep ub (`256 512 1024`) — `tests/run-task066-iswa-kld-ubatch.sh` (vs-f16 + cross-ub).
+5. Historical KEEP stamps remain evidence of the size_base path (not current runtime).
 
 ### Host findings (2026-11-08) — ideas formula stamps
 
 **T-066.5-C3 — RED (documented; no waive)**  
-Stamp: `logs/task066-metal-corners-ubatch-s8-s1024-20261108T185227Z/` (+ `T-066.5-C3-VERDICT.txt`).  
-Bisect: `logs/task066-c3-bisect-20261108T185548Z/`.
+Primary gate: **n=1536** (ub=8 vs ub=1536; oneshot on turbo `%128` grid; was n1344).  
+Stamps: `logs/task066-metal-corners-c3-n1536-*` / triple `logs/task066-triple-ubatch-256-512-1024-20261108T203714Z/c3/`.  
+Historical n1344: `…185227Z` + bisect `…185548Z` (`kqv_out-0`).
 
 | Probe | Result |
 |-------|--------|
-| C2 n=32 | GREEN (exact) |
-| C3-n1280 | GREEN (exact) |
-| C3-n1344 | **RED** (`mad≈2.35`, `first_diff_i=0`) |
-| Bisect n1280 | `FIRST_DIFF=<none>` |
-| Bisect n1344 | `FIRST_DIFF_TENSOR_SUMMARY=kqv_out-0` |
+| C2 n=32 | GREEN |
+| C3-n1280 | GREEN |
+| C3-n1536 | **RED** (`mad≈7.63`, `first_diff_i=0`) |
 | C1 | skipped (C3 RED) |
 
-Class: windowed `+n_ubatch` restores cross-ub capacity asymmetry (ub8 → `size_swa=1280`; ub1344 → `2560`). Same class as pre-KEEP root; size_base KEEP had made C3 GREEN at RAM cost.
+Class: windowed `+n_ubatch` capacity asymmetry (ub8 → `size_swa=1280`; large ub → larger window).
 
-**T-066.5-KLD — FAIL (full curve; honest)**  
-Merged stamp: `logs/task066-iswa-kld-20261108T194452Z-merged/` (4K/16K from `…190211Z` N_BATCH=512; 64K from `…194452Z-c64k` N_BATCH=2048). Runner: `tests/run-task066-iswa-kld.sh`.  
-Argv lock: **`-fa on`**; explicit `N_UBATCH` / `N_BATCH`; **`BATCH_EQ_CTX=1` only for CTX <= 2000**.  
-Stream fix: `tools/perplexity/perplexity.cpp` processes logit rows per ubatch (no `n_ctx*n_vocab` f32 reserve; `log_probs` sized to `n_batch`).
+**T-066.5-KLD (CTX sweep) — FAIL honest**  
+Merged: `logs/task066-iswa-kld-20261108T194452Z-merged/`. Stream logits cleared 64K HOST_OOM.
 
 | cand | KLD@4096 | KLD@16384 | KLD@65536 |
 |------|----------|-----------|-----------|
 | turbo3 | 2.334418 | 2.284085 (down) | 2.192946 (down) |
 | turbo4 | 1.009278 | 1.284858 (up) | 1.282610 (flat) |
 
-- f16 vs f16 self-KLD = 0 (stream smoke). Absolute PPL on IT IQ4+wikitext — ignore PPL.
-- 64K HOST_OOM cleared by stream path (base logits file ~16GiB on disk; host RSS no longer ~66GiB).
-- Honest FAIL: turbo4 **4K->16K walks up**; 16K->64K does not continue. turbo3 monotone down. C3 remains RED.
+**T-066.5-KLD-UB + ladder (ub 256/512/1024) — FAIL / DIFF; not Done**  
+Master: `logs/task066-triple-ubatch-256-512-1024-20261108T203714Z/`.  
+Runner: `tests/run-task066-iswa-kld-ubatch.sh` (refuse ub `%128 != 0`).
 
-Product pointer Findings mirror: [`tasks/TASK-066-nomtp-ubatch-s8-s1024.md`](../../../tasks/TASK-066-nomtp-ubatch-s8-s1024.md).
+| kind | ub256 | ub512 | ub1024 |
+|------|-------|-------|--------|
+| vs-f16 (turbo4, CTX=4096) | 1.053 | 1.009 | 1.054 |
+| cross-ub vs ub1024 | 0.565 | 0.551 | 0 (self) |
+
+Ladder: S512 vs S1024 generation **DIFF**. Three metrics agree on cross-ub break. **Do not mark Done.**
+
+**Post-066.12 re-stamp (2026-11-08) — still RED/FAIL (no waive)**  
+Master: `logs/task066-triple-ubatch-256-512-1024-20261108T210925Z-post06612/`.  
+066.12 fixed `seq_pos_*`/`seq_rm`/overflow/`init_batch` — **does not change** C3/KLD-UB/ladder:
+
+| Probe | Result |
+|-------|--------|
+| C2 / C3-n1280 | GREEN |
+| C3-n1536 | **RED** (`mad≈7.6348028`, `first_diff_i=0`) — same as pre-fix |
+| ladder S512 vs S1024 | **DIFF @byte 316** |
+| KLD-UB turbo4 cross-ub vs 1024 | ub256 **0.565357** / ub512 **0.550938** / ub1024 0 — same class |
+
+Root remains windowed `size_swa ∝ n_ubatch` capacity asymmetry (066.5 / next lever; not 066.12).
+
+Product pointer: [`tasks/TASK-066-nomtp-ubatch-s8-s1024.md`](../../../tasks/TASK-066-nomtp-ubatch-s8-s1024.md).
 
 ## Goal (original fuse-table — deferred)
 
@@ -181,8 +200,10 @@ Product pointer Findings mirror: [`tasks/TASK-066-nomtp-ubatch-s8-s1024.md`](../
 - [x] Lever documented for ideas path (ISWA `size_swa` / pad128 + T-066.5-KLD; not FA / not fuse-table).
 - [x] Ideas formula landed in `llama_kv_cache_iswa_calc_size_swa` (draft; C3/KLD gates open).
 - [x] CPU unit `test-iswa-size-swa` locks pad128 + ubatch cases (**PASS** Mac 2026-11-08).
-- [x] **T-066.5-C3:** C3 re-stamp after ideas formula — **RED documented** (C1 skipped; no waive) `20261108T185227Z`.
-- [x] **T-066.5-KLD:** full 4K/16K/64K curve stamped — **FAIL honest** (`…194452Z-merged`; turbo4 4K->16K up; stream path unblocked 64K).
+- [x] **T-066.5-C3:** re-stamp under ideas formula — **RED** (n1536 gate; historical n1344 also RED).
+- [x] **T-066.5-KLD:** full 4K/16K/64K curve — **FAIL honest** (`…194452Z-merged`).
+- [x] **T-066.5-KLD-UB** tooling + stamp ub=256/512/1024 — **FAIL** (cross-ub KLD != 0); ladder DIFF companion.
+- [ ] **Gates GREEN** (C3 + KLD-UB cross-ub + ladder) — **open; task not Done**.
 - [x] FP16-SWA fallback explicitly left unimplemented (out of scope).
 - [x] Handed to 066.9 Phase A2 historically — **DONE** (`MUL_MM_MIN` default 1; ladder `023433Z`).
 
@@ -191,6 +212,7 @@ Product pointer Findings mirror: [`tasks/TASK-066-nomtp-ubatch-s8-s1024.md`](../
 - [x] FIRST_DIFF / thresh before Metal/ops guess (historical + 2026-11-08 bisect).
 - [x] One non-FA lever confirmed under ideas formula (ISWA capacity / block align; C3 RED class).
 - [x] No blind encoder fuse ports.
-- [x] Ladder confirm stamped (HELP) under prior KEEP (historical).
-- [x] **T-066.5-C3** stamp under ideas formula (**RED**).
-- [ ] **T-066.5-KLD** stamp complete under ideas formula (partial FAIL; 64K open).
+- [x] Cross-ub verification path locked (C3 logits + KLD-UB + ladder) — evidence RED/FAIL.
+- [x] **T-066.5-C3** stamp (**RED**, n1536).
+- [x] **T-066.5-KLD** full curve stamped (**FAIL honest**).
+- [ ] Fix until C3 / KLD-UB / ladder cross-ub GREEN — then mark Done.

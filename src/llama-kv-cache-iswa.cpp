@@ -5,7 +5,7 @@
 #include "llama-model.h"
 
 #include <algorithm>
-#include <cassert>
+#include <cstdint>
 
 // TurboQuant KV block size (turbo2/3/4). SWA window must be a multiple so
 // quantized blocks align with cache rotation (ideas/llamacpp_swa_size_calculate.md).
@@ -30,6 +30,7 @@ uint32_t llama_kv_cache_iswa_calc_size_swa(
     // Replaces size_base headroom KEEP (RAM side effect at long product n_ctx).
     // n_ubatch is back in the formula (capacity depends on -ub again; C3
     // cross-ub must be re-stamped).
+    // TASK-066.12 P1: compute window in uint64 to avoid uint32 wrap.
     uint32_t n_swa_eff = n_swa;
     if (n_swa % TURBO_KV_BLOCK_SIZE != 0) {
         n_swa_eff = ((n_swa + TURBO_KV_BLOCK_SIZE - 1) / TURBO_KV_BLOCK_SIZE) * TURBO_KV_BLOCK_SIZE;
@@ -37,7 +38,12 @@ uint32_t llama_kv_cache_iswa_calc_size_swa(
                        "padding effective SWA size to %u to prevent context drift\n",
                        __func__, n_swa, TURBO_KV_BLOCK_SIZE, n_swa_eff);
     }
-    const uint32_t swa_window = n_swa_eff * (unified ? n_seq_max : 1);
+    const uint64_t swa_window_64 = (uint64_t) n_swa_eff * (unified ? n_seq_max : 1);
+    if (swa_window_64 + (uint64_t) n_ubatch > (uint64_t) UINT32_MAX) {
+        LLAMA_LOG_WARN("%s: SWA window calculation overflow, clamping to base size\n", __func__);
+        return size_base;
+    }
+    const uint32_t swa_window = (uint32_t) swa_window_64;
     return GGML_PAD(std::min(size_base, swa_window + n_ubatch), 256);
 }
 
@@ -163,6 +169,19 @@ void llama_kv_cache_iswa::clear(bool data) {
 }
 
 bool llama_kv_cache_iswa::seq_rm(llama_seq_id seq_id, llama_pos p0, llama_pos p1) {
+    // TASK-066.12 P0: if the trim starts before the SWA window, SWA already
+    // rotated those rows away and cannot mirror the base trim. Fail closed
+    // before mutating either cache (upstream iSWA semantics).
+    if (seq_id >= 0 && p0 >= 0) {
+        const llama_pos swa_min = kv_swa->seq_pos_min(seq_id);
+        if (swa_min >= 0 && swa_min > p0) {
+            LLAMA_LOG_WARN("%s: cannot remove from pos %d for seq %d: "
+                           "SWA cache starts at %d (window already rotated)\n",
+                           __func__, (int) p0, (int) seq_id, (int) swa_min);
+            return false;
+        }
+    }
+
     bool res = true;
 
     res = res & kv_base->seq_rm(seq_id, p0, p1);
@@ -192,12 +211,12 @@ void llama_kv_cache_iswa::seq_div(llama_seq_id seq_id, llama_pos p0, llama_pos p
 }
 
 llama_pos llama_kv_cache_iswa::seq_pos_min(llama_seq_id seq_id) const {
-    // the base cache is a superset of the SWA cache, so we can just check the SWA cache
-    return kv_swa->seq_pos_min(seq_id);
+    // TASK-066.12 P0: base keeps the full sequence; SWA is only a window.
+    return kv_base->seq_pos_min(seq_id);
 }
 
 llama_pos llama_kv_cache_iswa::seq_pos_max(llama_seq_id seq_id) const {
-    return kv_swa->seq_pos_max(seq_id);
+    return kv_base->seq_pos_max(seq_id);
 }
 
 std::map<ggml_backend_buffer_type_t, size_t> llama_kv_cache_iswa::memory_breakdown() const {
@@ -258,7 +277,14 @@ llama_memory_context_ptr llama_kv_cache_iswa::init_batch(llama_batch_allocr & ba
             break;
         }
 
-        assert(sinfos_base.size() == sinfos_swa.size());
+        // TASK-066.12 P2: assert is stripped under NDEBUG; mismatch must not
+        // build a context with unequal slot infos.
+        if (sinfos_base.size() != sinfos_swa.size()) {
+            LLAMA_LOG_WARN("%s: base/swa sinfos size mismatch (%zu vs %zu), "
+                           "retrying with equal split\n",
+                           __func__, sinfos_base.size(), sinfos_swa.size());
+            break;
+        }
 
         return std::make_unique<llama_kv_cache_iswa_context>(
                 this, std::move(sinfos_base), std::move(sinfos_swa), std::move(ubatches));
@@ -294,7 +320,11 @@ llama_memory_context_ptr llama_kv_cache_iswa::init_batch(llama_batch_allocr & ba
             break;
         }
 
-        assert(sinfos_base.size() == sinfos_swa.size());
+        if (sinfos_base.size() != sinfos_swa.size()) {
+            LLAMA_LOG_WARN("%s: base/swa sinfos size mismatch (%zu vs %zu) on equal split\n",
+                           __func__, sinfos_base.size(), sinfos_swa.size());
+            break;
+        }
 
         return std::make_unique<llama_kv_cache_iswa_context>(
                 this, std::move(sinfos_base), std::move(sinfos_swa), std::move(ubatches));
@@ -315,6 +345,8 @@ llama_memory_context_ptr llama_kv_cache_iswa::init_update(llama_context * lctx, 
 }
 
 bool llama_kv_cache_iswa::get_can_shift() const {
+    // TASK-066.12 P2 KEEP: partial SWA (swa_full=false) sizes base != swa, so
+    // context shift stays disabled. Equal-size check is intentional, not a bug.
     return kv_base->get_can_shift() &&
            kv_swa->get_can_shift() &&
            kv_base->get_size() == kv_swa->get_size();

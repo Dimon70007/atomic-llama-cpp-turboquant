@@ -94,6 +94,17 @@ int main() {
             llama_kv_cache_iswa_calc_size_swa(ctx, n_swa, /*n_seq_max*/ 4, false, false, 8),
             1280);
 
+    // TASK-066.12 P1: uint32 overflow in n_swa_eff * n_seq_max must not wrap.
+    // 2^31 * 2 overflows uint32; fixed path clamps to size_base.
+    {
+        const uint32_t n_swa_huge = 1u << 31; // already % 128 == 0
+        const uint32_t size_base  = 100000;
+        expect_u32(
+                "overflow_unified_n_seq_max_2_clamps_to_size_base",
+                llama_kv_cache_iswa_calc_size_swa(size_base, n_swa_huge, /*n_seq_max*/ 2, true, false, 8),
+                size_base);
+    }
+
     if (g_fails != 0) {
         printf("RESULT FAIL fails=%d\n", g_fails);
         return 1;

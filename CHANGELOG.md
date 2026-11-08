@@ -14,6 +14,13 @@ Releases before `b10269-1.5.0` predate this file; see the git history.
 
 ### Changed
 
+- **TASK-066.12 ISWA KV logic fixes (Done; 066.5 gates still RED):** `seq_pos_min`/
+  `seq_pos_max` read from `kv_base`; `seq_rm` fails closed before mutate when SWA
+  window already rotated past `p0`; `calc_size_swa` uint64 + overflow clamp (unit);
+  `init_batch` release-safe sinfos mismatch; `get_can_shift` equal-size KEEP documented.
+  Re-stamp `logs/task066-triple-ubatch-256-512-1024-20261108T210925Z-post06612` —
+  C3-n1536 RED / KLD-UB FAIL / ladder DIFF **unchanged** vs pre-fix (orthogonal to
+  `size_swa∝ub`).
 - **TASK-066.5 ISWA `size_swa` ideas formula:** replace size_base headroom KEEP with
   windowed `PAD(min(size_base, n_swa_eff*(unified?n_seq_max:1)+n_ubatch),256)` where
   `n_swa_eff` is ceil-aligned to TurboQuant KV block 128. Helper
@@ -25,11 +32,16 @@ Releases before `b10269-1.5.0` predate this file; see the git history.
 ### Added
 
 - **TASK-066.5 host stamps (2026-11-08):** CPU `test-iswa-size-swa` PASS; **T-066.5-C3 RED**
-  (`logs/task066-metal-corners-ubatch-s8-s1024-20261108T185227Z`, bisect `kqv_out-0` @ n1344);
-  **T-066.5-KLD** runner `tests/run-task066-iswa-kld.sh` (fail-closed `FA_MODE=on`, explicit
-  `N_BATCH`/`N_UBATCH`; `BATCH_EQ_CTX=1` only for CTX<=2000). Full curve stamp
-  `logs/task066-iswa-kld-20261108T194452Z-merged` (4K/16K + 64K stream): turbo3 monotone
-  down; turbo4 4K->16K walks up then flat @64K — **FAIL honest**. C3 RED remains.
+  (gate **n=1536** ub8 vs ub1536; historical n1344 also RED); **T-066.5-KLD** CTX curve
+  `…194452Z-merged` **FAIL honest** (turbo4 4K->16K up); stream logits in `perplexity.cpp`
+  cleared 64K HOST_OOM. **T-066.5-KLD-UB** runner `tests/run-task066-iswa-kld-ubatch.sh`
+  (same CTX, ub `%128`, tables vs-f16 + cross-ub); stamp
+  `logs/task066-triple-ubatch-256-512-1024-20261108T203714Z` — cross-ub KLD != 0 + ladder
+  S512/S1024 DIFF. **066.5 remains TODO (not Done)** while gates RED/FAIL.
+- **TASK-066.11 (spec only):** R&D subtask
+  `tests/TASK-066.11-small-ctx-q8-turbo3-cross-ub-rd.md` — investigate small-CTX logit
+  divergence under `-ctk q8_0 -ctv turbo3` across ub 256/512/1024. Status TODO / not started;
+  not a product fix KEEP.
 - **TASK-066.9 Phase C MTP knobs matrix:** `tests/task066_mtp_knob_matrix.json` +
   `tests/task066_mtp_knob_matrix.py` + `tests/run-task066-mtp-knob-matrix.sh` compose the
   MTP-vs-nomtp ladder across `n_max∈{1,2,3,4}` × `p_min∈{0.85,0.9,0.95}` (ub=512 locks).

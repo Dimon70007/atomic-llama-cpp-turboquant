@@ -6,7 +6,7 @@ Self-contained in **this** llama.cpp / ggml fork. Other developers: start here.
 **Active track:** **[066.9](TASK-066.9-fa-batch-invariance.md)** — **A1+A2+B+C Done** (Phase C `043032Z`; **operator KEEP** `(2,0.95)`).  
 **PR fidelity:** **[TASK-066-pr-audit-registry.md](TASK-066-pr-audit-registry.md)** (re-check after every Metal edit + suites).  
 **Done:** **[066.7 KEEP](TASK-066.7-mul-mat-residual.md)** + **[066.8](TASK-066.8-fp-comparison-metrics-rd.md)** + FA always-tile + **A2** + **B** + **C** knobs matrix.  
-**Open (ideas reopen):** **[066.5](TASK-066.5-fusion-table-parity.md)** + **[066.10](TASK-066.10-kv-ctx-sizing.md)** — TODO (pad128 / KLD / estimator closeout).  
+**Open (ideas reopen):** **[066.5](TASK-066.5-fusion-table-parity.md)** + **[066.10](TASK-066.10-kv-ctx-sizing.md)** + **[066.11](TASK-066.11-small-ctx-q8-turbo3-cross-ub-rd.md)** — TODO (pad128 / KLD / estimator / turbo3 small-CTX cross-ub R&D).  
 **Priority:** `A1 → A2 → B (MTP) → C (knobs Pareto)`. Hist Stage 1 WAIVE ≠ Done.
 
 ## Evidence hierarchy (hard)
@@ -27,6 +27,7 @@ Self-contained in **this** llama.cpp / ggml fork. Other developers: start here.
 | **066.5** | [TASK-066.5-fusion-table-parity.md](TASK-066.5-fusion-table-parity.md) | 066.9 localize (H9faOFF) | ⬜ **TODO** (ideas pad128; C3 + KLD open) |
 | **066.6** | [TASK-066.6-cb-and-invariance-gates.md](TASK-066.6-cb-and-invariance-gates.md) | after 066.5 / parallel | 🟢 C2/C7 (C3 historically via prior 066.5 KEEP) |
 | **066.10** | [TASK-066.10-kv-ctx-sizing.md](TASK-066.10-kv-ctx-sizing.md) | 066.5 ideas | ⬜ **TODO** (estimator; not closed) |
+| **066.11** | [TASK-066.11-small-ctx-q8-turbo3-cross-ub-rd.md](TASK-066.11-small-ctx-q8-turbo3-cross-ub-rd.md) | 066.5 tooling | ⬜ **TODO** (R&D: small-CTX q8+turbo3 cross-ub) |
 | **066.7** | [TASK-066.7-mul-mat-residual.md](TASK-066.7-mul-mat-residual.md) | 066.4 done; residual was RED | 🟢 **KEEP** |
 | **066.8** | [TASK-066.8-fp-comparison-metrics-rd.md](TASK-066.8-fp-comparison-metrics-rd.md) ([lit](task066-hist/TASK-066.8-lit-notes.md)) | 066.7 KEEP | 🟢 **R&D DELIVERED** |
 | **066.9** | [TASK-066.9-fa-batch-invariance.md](TASK-066.9-fa-batch-invariance.md) ([draft](task066-hist/draft_mtp_research_task-066_fa.md)) | C2 GREEN + 066.7 | 🟢 A1+A2+B+C (`043032Z`; KEEP `(2,0.95)`) |
