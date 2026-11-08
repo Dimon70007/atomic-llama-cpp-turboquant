@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Fail-closed KV / n_ctx estimator for this TurboQuant fork (TASK-066.10).
 
-Mirrors llama.cpp ISWA size_swa under TASK-066.5 ideas formula:
+Mirrors llama.cpp ISWA size_swa under TASK-066.5 ideas + TASK-066.13 C2:
   n_swa_eff = ceil(n_swa / 128) * 128
-  size_swa  = PAD(min(size_base, n_swa_eff * (unified ? n_seq_max : 1) + n_ubatch), 256)
+  size_swa  = PAD(min(size_base, n_swa_eff * (unified ? n_seq_max : 1) + n_swa_headroom), 256)
+  n_swa_headroom = n_batch (NOT live -ub; 066.11 root)
 """
 
 from __future__ import annotations
@@ -81,16 +82,16 @@ def calc_size_swa(
     n_seq_max: int,
     unified: bool,
     swa_full: bool,
-    n_ubatch: int,
+    n_swa_headroom: int,
 ) -> int:
-    """Python port of llama_kv_cache_iswa_calc_size_swa (ideas formula)."""
-    if n_ubatch < 0:
-        die("n_ubatch must be >= 0")
+    """Python port of llama_kv_cache_iswa_calc_size_swa (ideas + 066.13 C2)."""
+    if n_swa_headroom < 0:
+        die("n_swa_headroom (n_batch) must be >= 0")
     if swa_full:
         return size_base
     n_swa_eff = pad128(n_swa) if n_swa > 0 else 0
     swa_window = n_swa_eff * (n_seq_max if unified else 1)
-    return ggml_pad(min(size_base, swa_window + n_ubatch), 256)
+    return ggml_pad(min(size_base, swa_window + n_swa_headroom), 256)
 
 
 def embd_gqa_eff(n_head_kv: int, head_dim: int, type_name: str) -> int:
@@ -266,6 +267,7 @@ class EstimateResult:
     ctk: str
     ctv: str
     n_seq_max: int
+    n_batch: int
     n_ubatch: int
     unified: bool
     swa_full: bool
@@ -315,6 +317,7 @@ def compute_kv_from_meta(
     n_seq_max: int,
     unified: bool,
     swa_full: bool,
+    n_batch: int,
     n_ubatch: int,
     kv_budget_mib: float | None = None,
     model_label: str = "<meta>",
@@ -324,8 +327,10 @@ def compute_kv_from_meta(
         die("--n-ctx must be > 0")
     if n_seq_max <= 0:
         die("--n-seq-max must be > 0")
+    if n_batch <= 0:
+        die("--n-batch must be > 0 (066.13 C2 size_swa headroom)")
     if n_ubatch < 0:
-        die("--n-ubatch must be >= 0")
+        die("--n-ubatch must be >= 0 (telemetry; not used in size_swa)")
     ctk_l = ctk.strip().lower()
     ctv_l = ctv.strip().lower()
     if ctk_l not in _CTK_TYPES:
@@ -334,13 +339,14 @@ def compute_kv_from_meta(
         die(f"--ctv must be one of {sorted(_CTV_TYPES)}")
 
     size_base = ggml_pad(n_ctx, 256)
+    # TASK-066.13 C2: headroom = n_batch (ub-invariant when only -ub changes).
     size_swa = calc_size_swa(
         size_base,
         int(meta["n_swa"]),
         n_seq_max,
         unified,
         swa_full,
-        n_ubatch=n_ubatch,
+        n_swa_headroom=n_batch,
     )
     n_stream = 1 if unified else n_seq_max
     n_layer = int(meta["n_layer"])
@@ -391,6 +397,7 @@ def compute_kv_from_meta(
         ctk=ctk_l,
         ctv=ctv_l,
         n_seq_max=n_seq_max,
+        n_batch=n_batch,
         n_ubatch=n_ubatch,
         unified=unified,
         swa_full=swa_full,
@@ -415,6 +422,7 @@ def estimate(
     n_seq_max: int,
     unified: bool,
     swa_full: bool,
+    n_batch: int,
     n_ubatch: int,
     kv_budget_mib: float | None,
 ) -> EstimateResult:
@@ -427,6 +435,7 @@ def estimate(
         n_seq_max=n_seq_max,
         unified=unified,
         swa_full=swa_full,
+        n_batch=n_batch,
         n_ubatch=n_ubatch,
         kv_budget_mib=kv_budget_mib,
         model_label=str(model),
@@ -442,7 +451,18 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--ctk", required=True, help="Cache type K (required)")
     p.add_argument("--ctv", required=True, help="Cache type V (required; uniform only)")
     p.add_argument("--n-seq-max", required=True, type=int, help="--parallel / n_seq_max")
-    p.add_argument("--n-ubatch", required=True, type=int, help="-ub / n_ubatch (required)")
+    p.add_argument(
+        "--n-batch",
+        required=True,
+        type=int,
+        help="-b / n_batch (required; TASK-066.13 C2 size_swa headroom)",
+    )
+    p.add_argument(
+        "--n-ubatch",
+        required=True,
+        type=int,
+        help="-ub / n_ubatch (required telemetry; NOT used in size_swa)",
+    )
     p.add_argument("--unified", required=True, help="true|false (KV unified)")
     p.add_argument("--swa-full", required=True, help="true|false (--swa-full)")
     p.add_argument("--kv-budget-mib", type=float, default=None, help="Optional KV budget")
@@ -464,6 +484,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         n_seq_max=int(args.n_seq_max),
         unified=parse_bool(str(args.unified), "--unified"),
         swa_full=parse_bool(str(args.swa_full), "--swa-full"),
+        n_batch=int(args.n_batch),
         n_ubatch=int(args.n_ubatch),
         kv_budget_mib=args.kv_budget_mib,
     )
@@ -475,7 +496,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     print("### summary")
     print(
         f"size_base={result.size_base} size_swa={result.size_swa} "
-        f"n_ubatch={result.n_ubatch} n_stream={result.n_stream}"
+        f"n_batch={result.n_batch} n_ubatch={result.n_ubatch} "
+        f"(size_swa headroom=n_batch) n_stream={result.n_stream}"
     )
     print(
         f"layers={result.n_layer} swa_layers={result.n_swa_layers} "

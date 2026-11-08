@@ -1,9 +1,10 @@
 # TASK-066.11 — R&D: small-CTX logit divergence with q8_0 + turbo3 (cross-ubatch)
 
-**Status:** ⬜ **TODO** (not started / not Done) — investigation only; no fix KEEP until named root + GREEN stamps  
+**Status:** 🟨 **root named** (2026-11-08) — H1 KEEP; **not Done** as product fix (no size_swa KEEP shipped here)  
 **Depends on:** 066.5 tooling locked (C3-n1536, `run-task066-iswa-kld-ubatch.sh`, ladder); ideas windowed `size_swa`  
 **KV lock for this subtask:** `-ctk q8_0 -ctv turbo3` (not turbo4; not layer-bracket `*.8`)  
-**FA:** on (product / ideas; refuse FA-off as primary path)
+**FA:** on (product / ideas; refuse FA-off as primary path)  
+**Stamp:** `logs/task066-11-localize-20261108T212103Z/`
 
 ## Why
 
@@ -34,13 +35,43 @@ Explain **why** next-token logits diverge when only `-ub` changes, at small fixe
 
 ## Hypotheses to prove/refute (one lever at a time)
 
-| ID | Hypothesis | How to test |
-|----|------------|-------------|
-| H1 | ISWA `size_swa ∝ n_ubatch` capacity asymmetry (same class as C3) | size_swa log lines + C3-n1280 GREEN vs n1536 RED under turbo3 |
-| H2 | Turbo3-specific (not general windowed SWA) | Same matrix with `ctv=f16` / `q8_0` / `turbo4` controls |
-| H3 | First differing tensor is SWA attn / kqv (not embed) | `c3-bisect` FIRST_DIFF under turbo3 |
-| H4 | Small-CTX only (vanishes if CTX << size_swa both sides) | CTX=512/1024 smoke if prompt allows; else note fixture limit |
-| H5 | Numerics of turbo3 dequant/WHT vs multi-ub write path | Only after H1–H3; Metal/ops — needs RED corner first |
+| ID | Hypothesis | Verdict (2026-11-08 stamp) |
+|----|------------|----------------------------|
+| H1 | ISWA `size_swa ∝ n_ubatch` capacity asymmetry (same class as C3) | **KEEP** — see frozen root |
+| H2 | Turbo3-specific (not general windowed SWA) | **REFUTE** — `ctv=f16` also C3-n1536 RED; turbo3/turbo4 same class |
+| H3 | First differing tensor is SWA attn / kqv (not embed) | **KEEP** — turbo3/turbo4 `FIRST_DIFF=kqv_out-0` @ n1536; f16 shows `cache_v_l0 (view)` shape split |
+| H4 | Small-CTX only (vanishes if CTX << size_swa both sides) | **partial** — logits exact while `n ≤ size_swa(ub_small)` (n1280 @ ub8→1280); breaks when `n > size_swa(ub_small)` |
+| H5 | Numerics of turbo3 dequant/WHT vs multi-ub write path | **REFUTE as primary** — equal-`size_swa` ub8 vs ub256 KLD cross-ub **0** @ CTX=4096 |
+
+## Frozen root (KEEP)
+
+```text
+size_swa = PAD(min(size_base, n_swa_eff*(unified?n_seq_max:1) + n_ubatch), 256)
+```
+
+Changing **only** `-ub` changes SWA cell count:
+
+| ub | size_swa (Gemma4 n_swa=1024) |
+|----|------------------------------|
+| 8 | 1280 |
+| 256 | 1280 |
+| 512 | 1536 |
+| 1024 | 2048 |
+| 1536 | 2560 |
+
+**Decisive control (D):** `UBATCH_LIST="8 256"` (both → 1280), `ALLOW_NON128_UB=1`, CTX=4096, turbo4 → cross-ub **KLD=0 PASS**.  
+**Broken matrix (E):** ub 256/512/1024 (1280/1536/2048) turbo3 → cross-ub KLD ≈ 1.03 / 0.98 FAIL (same class as turbo4 ~0.55).
+
+So divergence is **not** “multi-step ubatch stepping” per se; it is **different SWA ring capacity** once the sequence outgrows the smaller cache. Attn path surfaces as `kqv_out-0` (turbo) / asymmetric `cache_v_*` views (f16).
+
+### Proposed next fix TASK (do not ship inside 066.11)
+
+Make `size_swa` **invariant to operator `-ub`** while keeping enough headroom for the largest ubatch that will run, e.g.:
+
+- `size_swa = PAD(n_swa_eff*(…) + n_ubatch_cap, 256)` with `n_ubatch_cap` = product max / `-b` / explicit fail-closed knob — **not** the live `-ub`, **or**
+- fixed headroom constant ≥ product max ub (512/1024/2048).
+
+Out of scope here: size_base KEEP (RAM), FP16-SWA fallback. Next R&D → [`TASK-066.13-size-swa-ub-invariant-rd.md`](TASK-066.13-size-swa-ub-invariant-rd.md) (incl. **N_CTX=100000**); implementation KEEP only after 066.13.
 
 ## Operator entry (fork root)
 
@@ -59,14 +90,14 @@ TASK066_DIAG=c3-bisect …   # FIRST_DIFF under turbo3
 
 Stamp dir required: `logs/task066-11-*` with argv, CTK/CTV, CTX, UBATCH_LIST, tables, verdict.
 
-## Definition of Done — not met
+## Definition of Done
 
-- [ ] Baseline stamp: KLD-UB `CAND_LIST=turbo3` @ CTX=4096, ub 256/512/1024 (vs-f16 + cross-ub).
-- [ ] Control stamps: at least one of f16 / q8_0 / turbo4 cross-ub at same CTX (prove turbo3-specific or shared class).
-- [ ] C3-n1280 / C3-n1536 (or FIRST_DIFF) under **q8_0+turbo3** documented.
-- [ ] Frozen root note: which of H1–H5 KEEP; named tensor / formula line if H1/H3.
-- [ ] Explicit **next fix TASK** proposed (or “no code; accept as known”) — 066.11 itself stays R&D; **not** marked Done as a product fix.
-- [ ] Pointer + CHANGELOG note under Unreleased; 066.11 status remains TODO until DoD above checked.
+- [x] Baseline stamp: KLD-UB `CAND_LIST=turbo3` @ CTX=4096, ub 256/512/1024 — FAIL (cross-ub ≈1.03/0.98).
+- [x] Controls: f16 C3-bisect RED @ n1536 (shared class); equal-`size_swa` ub8↔ub256 turbo4 KLD **PASS**; prior turbo4 KLD-UB FAIL.
+- [x] C3-n1280 GREEN / C3-n1536 RED under **q8_0+turbo3**; `FIRST_DIFF=kqv_out-0`.
+- [x] Frozen root: **H1+H3 KEEP**; H2/H5 refuted as primary; formula line + table above.
+- [x] Next fix proposed: decouple `size_swa` from live `-ub` → **066.13** R&D (+ 100k verify) — **no code in 066.11**.
+- [ ] Pointer + CHANGELOG note; mark 066.11 R&D **closed (root named)** — still not a product fix Done for 066.5 gates.
 
 ## Non-goals
 

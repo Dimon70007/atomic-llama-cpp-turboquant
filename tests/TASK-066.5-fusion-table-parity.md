@@ -1,6 +1,6 @@
 # TASK-066.5 — ISWA size_swa / long-ctx TurboQuant drift
 
-**Status:** ⬜ **TODO** (not Done) — gates still RED/FAIL after 066.12 re-stamp `…210925Z-post06612` (C3-n1536 + CTX-KLD + KLD-UB 256/512/1024 + ladder DIFF unchanged)  
+**Status:** ⬜ **TODO** (not Done) — **066.13 C2** fixed ub-only class (C3-n1536 GREEN, KLD-UB PASS); suite C1/ladder still RED when `-b` varies with `-ub`  
 
 **Depends on:** [066.7 KEEP](TASK-066.7-mul-mat-residual.md); FA always-tile C2 GREEN; [066.9](TASK-066.9-fa-batch-invariance.md) Phase A localize  
 **Product pointer:** [`tasks/TASK-066-nomtp-ubatch-s8-s1024.md`](../../../tasks/TASK-066-nomtp-ubatch-s8-s1024.md) (Ideas recommendation)  

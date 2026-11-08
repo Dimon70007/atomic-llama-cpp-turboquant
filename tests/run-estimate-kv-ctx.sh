@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Thin wrapper: TASK-066.10 KV / n_ctx estimator (fail-closed; uniform CTV only).
-# Prefer: make estimate-kv-ctx MODEL=... N_CTX=... CTK=... CTV=... N_UBATCH=...
+# Prefer: make estimate-kv-ctx MODEL=... N_CTX=... CTK=... CTV=... N_BATCH=... N_UBATCH=...
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -13,11 +13,12 @@ usage() {
   cat <<'EOF'
 Usage (env or flags via Make):
   MODEL=path.gguf N_CTX=3072 CTK=q8_0 CTV=turbo4 \
-  N_SEQ_MAX=1 N_UBATCH=512 UNIFIED=true SWA_FULL=false \
+  N_SEQ_MAX=1 N_BATCH=2048 N_UBATCH=512 UNIFIED=true SWA_FULL=false \
   [KV_BUDGET_MIB=...] \
   ./tests/run-estimate-kv-ctx.sh
 
-Required: MODEL N_CTX CTK CTV N_SEQ_MAX N_UBATCH UNIFIED SWA_FULL
+Required: MODEL N_CTX CTK CTV N_SEQ_MAX N_BATCH N_UBATCH UNIFIED SWA_FULL
+N_BATCH = size_swa headroom (TASK-066.13 C2); N_UBATCH is telemetry only.
 CTV is uniform only (f16, q8_0, turbo3, turbo4, ... — no layer-bracket aliases).
 EOF
 }
@@ -28,7 +29,7 @@ if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
 fi
 
 missing=0
-for var in MODEL N_CTX CTK CTV N_SEQ_MAX N_UBATCH UNIFIED SWA_FULL; do
+for var in MODEL N_CTX CTK CTV N_SEQ_MAX N_BATCH N_UBATCH UNIFIED SWA_FULL; do
   if [[ -z "${!var:-}" ]]; then
     echo "run-estimate-kv-ctx: missing required ${var}" >&2
     missing=1
@@ -62,6 +63,7 @@ args=(
   --ctk "${CTK}"
   --ctv "${CTV}"
   --n-seq-max "${N_SEQ_MAX}"
+  --n-batch "${N_BATCH}"
   --n-ubatch "${N_UBATCH}"
   --unified "${UNIFIED}"
   --swa-full "${SWA_FULL}"

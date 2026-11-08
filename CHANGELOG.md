@@ -14,6 +14,16 @@ Releases before `b10269-1.5.0` predate this file; see the git history.
 
 ### Changed
 
+- **TASK-066.13 C2 KEEP:** `size_swa` uses `n_batch` headroom (not live `-ub`).
+  Call sites pass `cparams.n_batch`; estimator requires `--n-batch`. Stamp
+  `logs/task066-13-c2-nbatch-headroom-20261108T220220Z` — C3-n1536 GREEN; KLD-UB
+  PASS @4k/16k; 100k estimate size_swa=3072 invariant; C1 residual when `-b` differs.
+  CTX=64k smoke `logs/task066-13-ctx64k-smoke-20261108T225702Z` — corners C3 GREEN/C1 RED;
+  MTP↔nomtp ub512 product PASS.
+- **TASK-066.11 root named:** cross-ub divergence = `size_swa ∝ n_ubatch`. Stamp
+  `logs/task066-11-localize-20261108T212103Z` — ub8↔ub256 (same size_swa=1280)
+  KLD cross-ub 0; ub 256/512/1024 turbo3 FAIL; C3-bisect FIRST_DIFF `kqv_out-0`
+  (turbo3/4) / `cache_v_l0` (f16) @ n1536. Fix lever: size_swa independent of live `-ub`.
 - **TASK-066.12 ISWA KV logic fixes (Done; 066.5 gates still RED):** `seq_pos_min`/
   `seq_pos_max` read from `kv_base`; `seq_rm` fails closed before mutate when SWA
   window already rotated past `p0`; `calc_size_swa` uint64 + overflow clamp (unit);

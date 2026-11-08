@@ -19,7 +19,7 @@ uint32_t llama_kv_cache_iswa_calc_size_swa(
         uint32_t n_seq_max,
         bool     unified,
         bool     swa_full,
-        uint32_t n_ubatch) {
+        uint32_t n_swa_headroom) {
     if (swa_full) {
         return size_base;
     }
@@ -27,9 +27,8 @@ uint32_t llama_kv_cache_iswa_calc_size_swa(
     //       https://github.com/ggml-org/llama.cpp/issues/17037
     //
     // TASK-066.5 (ideas formula): windowed SWA + TurboQuant block align.
-    // Replaces size_base headroom KEEP (RAM side effect at long product n_ctx).
-    // n_ubatch is back in the formula (capacity depends on -ub again; C3
-    // cross-ub must be re-stamped).
+    // TASK-066.13 C2: headroom is n_batch (ub-invariant when only -ub changes).
+    // Do not pass live -ub here (066.11 root: size_swa ∝ -ub breaks cross-ub).
     // TASK-066.12 P1: compute window in uint64 to avoid uint32 wrap.
     uint32_t n_swa_eff = n_swa;
     if (n_swa % TURBO_KV_BLOCK_SIZE != 0) {
@@ -39,12 +38,12 @@ uint32_t llama_kv_cache_iswa_calc_size_swa(
                        __func__, n_swa, TURBO_KV_BLOCK_SIZE, n_swa_eff);
     }
     const uint64_t swa_window_64 = (uint64_t) n_swa_eff * (unified ? n_seq_max : 1);
-    if (swa_window_64 + (uint64_t) n_ubatch > (uint64_t) UINT32_MAX) {
+    if (swa_window_64 + (uint64_t) n_swa_headroom > (uint64_t) UINT32_MAX) {
         LLAMA_LOG_WARN("%s: SWA window calculation overflow, clamping to base size\n", __func__);
         return size_base;
     }
     const uint32_t swa_window = (uint32_t) swa_window_64;
-    return GGML_PAD(std::min(size_base, swa_window + n_ubatch), 256);
+    return GGML_PAD(std::min(size_base, swa_window + n_swa_headroom), 256);
 }
 
 //
@@ -61,7 +60,7 @@ llama_kv_cache_iswa::llama_kv_cache_iswa(
                      bool   unified,
                  uint32_t   kv_size,
                  uint32_t   n_seq_max,
-                 uint32_t   n_ubatch,
+                 uint32_t   n_swa_headroom,
                  uint32_t   n_pad,
            llama_memory_t   mem_other,
     const layer_filter_cb & filter,
@@ -71,7 +70,7 @@ llama_kv_cache_iswa::llama_kv_cache_iswa(
                      void * kv_stream_phase_arena,
                      size_t kv_stream_maximum_pool_bytes) :
     llama_kv_cache_iswa(model, model.hparams, type_k, type_v, v_trans, offload, swa_full, unified,
-            kv_size, n_seq_max, n_ubatch, n_pad, mem_other, filter, reuse, share,
+            kv_size, n_seq_max, n_swa_headroom, n_pad, mem_other, filter, reuse, share,
             kv_stream_stage_bytes, kv_stream_phase_arena, kv_stream_maximum_pool_bytes) {
 }
 
@@ -86,7 +85,7 @@ llama_kv_cache_iswa::llama_kv_cache_iswa(
                      bool   unified,
                  uint32_t   kv_size,
                  uint32_t   n_seq_max,
-                 uint32_t   n_ubatch,
+                 uint32_t   n_swa_headroom,
                  uint32_t   n_pad,
            llama_memory_t   mem_other,
     const layer_filter_cb & filter,
@@ -121,7 +120,7 @@ llama_kv_cache_iswa::llama_kv_cache_iswa(
     }
 
     const uint32_t size_swa = llama_kv_cache_iswa_calc_size_swa(
-            size_base, hparams.n_swa, n_seq_max, unified, swa_full, n_ubatch);
+            size_base, hparams.n_swa, n_seq_max, unified, swa_full, n_swa_headroom);
 
     LLAMA_LOG_INFO("%s: creating non-SWA KV cache, size = %u cells\n", __func__, size_base);
 

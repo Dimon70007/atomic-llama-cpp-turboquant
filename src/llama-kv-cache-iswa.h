@@ -23,7 +23,7 @@ public:
                          bool   unified,
                      uint32_t   kv_size,
                      uint32_t   n_seq_max,
-                     uint32_t   n_ubatch,
+                     uint32_t   n_swa_headroom,
                      uint32_t   n_pad,
                llama_memory_t   mem_other,
         const layer_filter_cb & filter,
@@ -44,7 +44,7 @@ public:
                          bool   unified,
                      uint32_t   kv_size,
                      uint32_t   n_seq_max,
-                     uint32_t   n_ubatch,
+                     uint32_t   n_swa_headroom,
                      uint32_t   n_pad,
                llama_memory_t   mem_other,
         const layer_filter_cb & filter,
@@ -169,9 +169,11 @@ private:
     const llama_memory_status status;
 };
 
-// Pure size_swa helper (TASK-066.5 ideas formula).
+// Pure size_swa helper (TASK-066.5 ideas + TASK-066.13 C2).
 // Pads n_swa up to TurboQuant KV block (128), then:
-//   size_swa = PAD(min(size_base, n_swa_eff * (unified ? n_seq_max : 1) + n_ubatch), 256)
+//   size_swa = PAD(min(size_base, n_swa_eff * (unified ? n_seq_max : 1) + n_swa_headroom), 256)
+// n_swa_headroom MUST be n_batch (or a ub-invariant cap), NOT live -ub
+// (066.11: size_swa ∝ live -ub breaks cross-ubatch logits/KLD).
 // Used by ctor + CPU unit test-iswa-size-swa.
 uint32_t llama_kv_cache_iswa_calc_size_swa(
         uint32_t size_base,
@@ -179,4 +181,4 @@ uint32_t llama_kv_cache_iswa_calc_size_swa(
         uint32_t n_seq_max,
         bool     unified,
         bool     swa_full,
-        uint32_t n_ubatch);
+        uint32_t n_swa_headroom);

@@ -1,8 +1,9 @@
 // ISWA size_swa unit (CPU; no model).
 //
-// Locks TASK-066.5 ideas formula:
+// Locks TASK-066.5 ideas + TASK-066.13 C2:
 //   n_swa_eff = ceil(n_swa / 128) * 128
-//   size_swa  = PAD(min(size_base, n_swa_eff * (unified ? n_seq_max : 1) + n_ubatch), 256)
+//   size_swa  = PAD(min(size_base, n_swa_eff * (unified ? n_seq_max : 1) + n_swa_headroom), 256)
+//   n_swa_headroom = n_batch (NOT live -ub)
 //   swa_full still forces size_base
 
 #include <cstdio>
@@ -15,7 +16,7 @@ uint32_t llama_kv_cache_iswa_calc_size_swa(
         uint32_t n_seq_max,
         bool     unified,
         bool     swa_full,
-        uint32_t n_ubatch);
+        uint32_t n_swa_headroom);
 
 namespace {
 
@@ -39,21 +40,26 @@ int main() {
     const uint32_t n_swa = 1024;
     const uint32_t ctx   = 3072;
 
-    // ub=8  -> PAD(1024+8, 256) = 1280
+    // headroom=8  -> PAD(1024+8, 256) = 1280
     expect_u32(
-            "gemma4_ub8",
-            llama_kv_cache_iswa_calc_size_swa(ctx, n_swa, /*n_seq_max*/ 1, true, false, /*n_ubatch*/ 8),
+            "gemma4_headroom8",
+            llama_kv_cache_iswa_calc_size_swa(ctx, n_swa, /*n_seq_max*/ 1, true, false, /*headroom*/ 8),
             1280);
-    // ub=512 -> PAD(1536, 256) = 1536
+    // headroom=512 -> PAD(1536, 256) = 1536
     expect_u32(
-            "gemma4_ub512",
+            "gemma4_headroom512",
             llama_kv_cache_iswa_calc_size_swa(ctx, n_swa, 1, true, false, 512),
             1536);
-    // ub=1344 -> PAD(2368, 256) = 2560 (ub-dependent; C3 cross-ub risk)
+    // headroom=1344 -> PAD(2368, 256) = 2560
     expect_u32(
-            "gemma4_ub1344",
+            "gemma4_headroom1344",
             llama_kv_cache_iswa_calc_size_swa(ctx, n_swa, 1, true, false, 1344),
             2560);
+    // product-ish -b=2048 headroom (066.13 C2)
+    expect_u32(
+            "gemma4_headroom2048",
+            llama_kv_cache_iswa_calc_size_swa(ctx, n_swa, 1, true, false, 2048),
+            3072);
 
     // Long product ctx: windowed, not full size_base.
     {
