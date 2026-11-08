@@ -168,3 +168,15 @@ private:
 
     const llama_memory_status status;
 };
+
+// Pure size_swa helper (TASK-066.5 ideas formula).
+// Pads n_swa up to TurboQuant KV block (128), then:
+//   size_swa = PAD(min(size_base, n_swa_eff * (unified ? n_seq_max : 1) + n_ubatch), 256)
+// Used by ctor + CPU unit test-iswa-size-swa.
+uint32_t llama_kv_cache_iswa_calc_size_swa(
+        uint32_t size_base,
+        uint32_t n_swa,
+        uint32_t n_seq_max,
+        bool     unified,
+        bool     swa_full,
+        uint32_t n_ubatch);

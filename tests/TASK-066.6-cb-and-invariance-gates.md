@@ -2,7 +2,7 @@
 
 **Status:** 🟢 C2/C7/always-tile **landed**; long residual owned by **[066.9](TASK-066.9-fa-batch-invariance.md)** / **[066.5](TASK-066.5-fusion-table-parity.md)** (C3)  
 **Depends on:** 066.7 KEEP; FA always-tile  
-**Next:** C3 via 066.5 DONE; then **066.9 Phase A2** jinja-ladder; MTP → Phase B (gated on A2)  
+**Next:** C3 historically GREEN under prior 066.5 KEEP; **066.5 ideas reopen is TODO** (C3 + KLD). **066.9** A2/B/C already DONE.  
 **Source:** [task066-hist/draft_mtp_research_task-066.md](task066-hist/draft_mtp_research_task-066.md) Steps 2–3  
 **Autotest:** `SUITE=mul-mat-residual` GREEN; **C2** in `SUITE=ubatch-s8-s1024` **GREEN**; **C1** still RED (`first_token_diff=8`). FA C7 multi-step in `SUITE=fa`.  
 **Confirm ref:** `212703Z` ladder; post-tile C2/C1 in `logs/task066-c2-after-tile-*`  

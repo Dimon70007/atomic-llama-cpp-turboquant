@@ -12,8 +12,24 @@ Releases before `b10269-1.5.0` predate this file; see the git history.
 
 ## Unreleased
 
+### Changed
+
+- **TASK-066.5 ISWA `size_swa` ideas formula:** replace size_base headroom KEEP with
+  windowed `PAD(min(size_base, n_swa_eff*(unified?n_seq_max:1)+n_ubatch),256)` where
+  `n_swa_eff` is ceil-aligned to TurboQuant KV block 128. Helper
+  `llama_kv_cache_iswa_calc_size_swa` + CPU unit `test-iswa-size-swa`. Long-ctx SWA RAM
+  drops; C3 cross-ub must be re-stamped (capacity depends on `-ub` again).
+- **TASK-066.10 estimator:** mirrors ideas formula; fail-closed `N_UBATCH` /
+  `--n-ubatch`; unit stamps @ N_CTX=100000 / N_UBATCH=512 (`size_swa=1536`).
+
 ### Added
 
+- **TASK-066.5 host stamps (2026-11-08):** CPU `test-iswa-size-swa` PASS; **T-066.5-C3 RED**
+  (`logs/task066-metal-corners-ubatch-s8-s1024-20261108T185227Z`, bisect `kqv_out-0` @ n1344);
+  **T-066.5-KLD** runner `tests/run-task066-iswa-kld.sh` (fail-closed `FA_MODE=on`, explicit
+  `N_BATCH`/`N_UBATCH`; `BATCH_EQ_CTX=1` only for CTX<=2000). Full curve stamp
+  `logs/task066-iswa-kld-20261108T194452Z-merged` (4K/16K + 64K stream): turbo3 monotone
+  down; turbo4 4K->16K walks up then flat @64K — **FAIL honest**. C3 RED remains.
 - **TASK-066.9 Phase C MTP knobs matrix:** `tests/task066_mtp_knob_matrix.json` +
   `tests/task066_mtp_knob_matrix.py` + `tests/run-task066-mtp-knob-matrix.sh` compose the
   MTP-vs-nomtp ladder across `n_max∈{1,2,3,4}` × `p_min∈{0.85,0.9,0.95}` (ub=512 locks).
@@ -47,6 +63,10 @@ Releases before `b10269-1.5.0` predate this file; see the git history.
 
 ### Fixed
 
+- **TASK-066.5 KLD@64K host OOM:** `tools/perplexity/perplexity.cpp` streams logit rows per
+  ubatch (and chunks single-batch windows) instead of `reserve(n_ctx*n_vocab)` f32 /
+  full-window u16 `log_probs`. Unlocks `llama-perplexity --save-all-logits` /
+  `--kl-divergence` at CTX=65536 with `-b 2048` on ~25GiB Mac (base file ~16GiB on disk).
 - **TASK-066.9 Phase B (MTP verify widths):** after A2 (`MUL_MM_MIN=1`), N=1 decode stayed on
   `mul_mv` while verify `{2,3,4}` used float-tile `mul_mm` → row0 ULP drift (autotest
   `--mtp-verify` RED@min1). Product default **1 → 0** (`ne11≥1` → mm). FA op-level C1/C2 already

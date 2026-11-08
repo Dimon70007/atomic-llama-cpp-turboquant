@@ -256,7 +256,7 @@ BUILD_DIR=build-task066-cb-ws ./tests/run-task066-mtp-knob-matrix.sh
 
 | Task | Relation |
 |------|----------|
-| **066.5** | **KEEP** — ISWA `size_swa`; C3+C1 GREEN |
+| **066.5** | **TODO** — ideas pad128+`n_ubatch` (prior KEEP superseded; C3 + KLD open) |
 | 066.6 | C2/C7 + C3 via 066.5 |
 | 066.7 / 066.8 | KEEP / R&D behind |
 | Hist Stage 1 WAIVE | ≠ Done |

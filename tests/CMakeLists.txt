@@ -519,6 +519,9 @@ target_link_libraries(${TEST_TARGET} PRIVATE llama)
 # TurboQuant WHT round-trip test (links ggml turbo codec symbols via llama)
 llama_build_and_test(test-turbo-quant.c LABEL "turbo")
 
+# ISWA size_swa: ideas formula (pad128 + n_ubatch windowed)
+llama_build_and_test(test-iswa-size-swa.cpp)
+
 if (NOT LLAMA_USE_SYSTEM_GGML)
     # Needs non-public ggml-impl.h
     llama_build_and_test(test-gguf.cpp)

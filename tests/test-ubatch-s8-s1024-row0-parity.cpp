@@ -14,7 +14,7 @@
 //   TASK066_DIAG=fa-ablation  — C2 (n=32 ub8 vs ub32) under FA/KV variants:
 //       product turbo4+FA-on; f16+FA-on; f16+FA-off (true FA-off — turbo forces FA)
 //   TASK066_DIAG=c3-bisect    — FIRST_DIFF_TENSOR on last ubatch graph:
-//       n=1280 control (expect none) + n=1344 (expect first named drift);
+//       n=1280 control (expect none) + n=1536 (expect first named drift; %128==0);
 //       cb_eval only on final decode; store last-token F32/F16 slices only.
 //       Optional TASK066_BISECT_FILTER=regex; TASK066_BISECT_HASH_ONLY=1.
 //   TASK066_DIAG=c3-thresh    — logits-only exact matrix around n_kv 256-pad
@@ -476,7 +476,7 @@ void extract_last_token(const ggml_tensor * t, capture_state & st, tensor_snap &
     }
 
     // Host path: read in-place. Device path: pull only last-token elements
-    // (never full n=1344 tensors — those can be multi-GB on MoE FA).
+    // (never full n=1536 tensors — those can be multi-GB on MoE FA).
     const bool host = t->buffer && ggml_backend_buffer_is_host(t->buffer);
     const uint8_t * host_base = host ? static_cast<const uint8_t *>(t->data) : nullptr;
 
@@ -835,7 +835,7 @@ bool run_c3_bisect(
         const std::vector<llama_token> & tokens) {
     const int32_t n_vocab = llama_vocab_n_tokens(llama_model_get_vocab(model));
     constexpr int32_t n_ok = 1280;
-    constexpr int32_t n_bad = 1344;
+    constexpr int32_t n_bad = 1536; // turbo KV block 128; was 1344 (not %128)
     if ((int32_t) tokens.size() < n_bad) {
         fprintf(stderr, "FAIL: c3-bisect needs >= %d prompt tokens (got %zu)\n",
                 n_bad, tokens.size());
@@ -885,10 +885,10 @@ bool run_c3_bisect(
     if (!one_pair("C3_BISECT_n1280_control", n_ok)) {
         return false;
     }
-    if (!one_pair("C3_BISECT_n1344", n_bad)) {
+    if (!one_pair("C3_BISECT_n1536", n_bad)) {
         return false;
     }
-    printf("C3_BISECT_DONE: use FIRST_DIFF_TENSOR_SUMMARY on n1344; n1280 should be <none>\n");
+    printf("C3_BISECT_DONE: use FIRST_DIFF_TENSOR_SUMMARY on n1536; n1280 should be <none>\n");
     return true;
 }
 
@@ -1002,11 +1002,11 @@ bool run_localize(
                  GGML_TYPE_F16)) {
             return false;
         }
-        // Boundary pair: last GREEN vs first RED (1280 vs 1344) for 066.9 Phase A TDD.
+        // Boundary pair: last GREEN vs RED on turbo block grid (1280 vs 1536).
         if (!one("H10_n1280_b1280_ub8_vs_ub1280_faON", 1280, 1280, 8, 1280, 1280, true, ctv_prod)) {
             return false;
         }
-        if (!one("H10_n1344_b1344_ub8_vs_ub1344_faON", 1344, 1344, 8, 1344, 1344, true, ctv_prod)) {
+        if (!one("H10_n1536_b1536_ub8_vs_ub1536_faON", 1536, 1536, 8, 1536, 1536, true, ctv_prod)) {
             return false;
         }
     }
@@ -1323,13 +1323,11 @@ int main(int argc, char ** argv) {
         printf("C2 PASS — n=32 ub=8 vs ub=32 bit-exact; continuing to C3 long-prefill gate\n");
     }
 
-    // C3 — 066.9 Phase A: post-tile threshold (localize 234258Z / 235017Z).
-    // n=1280 pure ubatch bit-exact; n=1344 first RED. FA-off still RED at n=1536
-    // → residual class is not FA-only (fuse / other ops). C3-1280 = REGRESS lock;
-    // C3-1344 = primary TDD RED until fixed.
+    // C3 — long-prefill ubatch threshold on turbo KV block grid (%128==0).
+    // n=1280 GREEN lock; n=1536 primary gate (was 1344 — not a valid turbo ubatch).
     {
         constexpr int32_t n_ok = 1280;
-        constexpr int32_t n_bad = 1344;
+        constexpr int32_t n_bad = 1536;
         if ((int32_t) tokens.size() < n_bad) {
             fprintf(stderr, "FAIL: prompt needs >= %d tokens for C3 (got %zu)\n", n_bad,
                     tokens.size());
@@ -1355,12 +1353,12 @@ int main(int argc, char ** argv) {
             return 1;
         }
         const logits_cmp c_bad = compare_logits(bad_a.logits.data(), bad_b.logits.data(), n_vocab);
-        print_cmp("C3_n1344", c_bad);
+        print_cmp("C3_n1536", c_bad);
         if (c_bad.exact) {
-            printf("C3 n=1344 unexpectedly GREEN — continuing to C1\n");
+            printf("C3 n=1536 unexpectedly GREEN — continuing to C1\n");
         } else {
-            printf("RESULT FAIL (RED) — C3 n=1344 multi-step ubatch (066.9 Phase A; "
-                   "FA-off also RED at n=1536 → not FA-only). Skip C1 until C3 GREEN\n");
+            printf("RESULT FAIL (RED) — C3 n=1536 multi-step ubatch (ub=8 vs ub=1536; "
+                   "both sides on %%128 grid for one-shot). Skip C1 until C3 GREEN\n");
             return 1;
         }
     }
