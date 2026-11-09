@@ -5,8 +5,8 @@
 # Usage:
 #   ./tests/run-task066-mul-mat-residual-corners.sh [OUT_DIR]
 # Env: BUILD_DIR, REBUILD=1
-# Gate: product default GGML_METAL_MUL_MM_MIN=1 (066.15 probe; unset or 1). Other values SKIP (77).
-# Note: --mtp-verify is expected RED under min=1 (cross-kernel); residual vs N=8 still gated.
+# Gate: product default GGML_METAL_MUL_MM_MIN=8 (upstream; unset or 8). Other values SKIP (77).
+# Note: --mtp-verify expected GREEN under min=8 (N<=8 all mul_mv); residual vs N=8 gated.
 
 set -euo pipefail
 
@@ -18,15 +18,15 @@ mkdir -p "${OUT_DIR}"
 TEST_BIN="${BUILD_DIR}/bin/test-mul-mat-batch-invariance"
 POLICY_BIN="${BUILD_DIR}/bin/test-metal-mul-mm-policy"
 
-# 066.7 residual vs N=8; 066.15 product default min=1 (N=1 on mul_mv; A2 rem OK).
-if [[ -n "${GGML_METAL_MUL_MM_MIN:-}" && "${GGML_METAL_MUL_MM_MIN}" != "1" ]]; then
+# 066.7 residual vs N=8; product default min=8 (upstream; A2 rem OK; MTP verify N<=4 OK).
+if [[ -n "${GGML_METAL_MUL_MM_MIN:-}" && "${GGML_METAL_MUL_MM_MIN}" != "8" ]]; then
   {
-    echo "track=B5+066.7+066.15-min1"
+    echo "track=B5+066.7+upstream-min8"
     echo "inventory=tests/TASK-066-mul-mat-batch-inventory.md"
     echo "GGML_METAL_MUL_MM_MIN=${GGML_METAL_MUL_MM_MIN}"
-    echo "VERDICT=SKIP (residual suite gates on default MUL_MM_MIN=1; unset env or set 1)"
+    echo "VERDICT=SKIP (residual suite gates on default MUL_MM_MIN=8; unset env or set 8)"
   } | tee "${OUT_DIR}/summary.txt"
-  echo "SKIP: SUITE=mul-mat-residual requires GGML_METAL_MUL_MM_MIN unset or 1 (got ${GGML_METAL_MUL_MM_MIN})" >&2
+  echo "SKIP: SUITE=mul-mat-residual requires GGML_METAL_MUL_MM_MIN unset or 8 (got ${GGML_METAL_MUL_MM_MIN})" >&2
   exit 77
 fi
 
@@ -89,7 +89,7 @@ set -e
 echo "mtp_verify_exit=${MTP_RC}" | tee "${OUT_DIR}/mtp-verify.exit"
 
 {
-  echo "track=B5+ladder-band+066.9A2-policy+066.15-min1"
+  echo "track=B5+ladder-band+066.9A2-policy+upstream-min8"
   echo "inventory=tests/TASK-066-mul-mat-batch-inventory.md"
   echo "golden_n=8"
   echo "widths=9,16,32,256,512,1024"
@@ -97,14 +97,13 @@ echo "mtp_verify_exit=${MTP_RC}" | tee "${OUT_DIR}/mtp-verify.exit"
   echo "policy_exit=${POLICY_RC}"
   echo "residual_exit=${RC}"
   echo "mtp_verify_exit=${MTP_RC}"
-  # 066.15: min=1 → MTP verify cross-kernel is expected RED (telemetry, not suite FAIL).
-  # Hard gates: policy unit + residual vs N=8.
+  # DEFAULT=8: policy + residual + mtp-verify are hard gates (no expected RED).
   if [[ "${RC}" -eq 77 ]]; then
     echo "VERDICT=SKIP (no Metal)"
   elif [[ "${RC}" -ne 0 ]]; then
     echo "VERDICT=FAIL (residual vs N=8 RED)"
   elif [[ "${MTP_RC}" -ne 0 && "${MTP_RC}" -ne 77 ]]; then
-    echo "VERDICT=PASS (residual GREEN; mtp-verify RED expected under MUL_MM_MIN=1 — quality probe)"
+    echo "VERDICT=FAIL (mtp-verify RED under MUL_MM_MIN=8 — unexpected)"
   else
     echo "VERDICT=PASS"
   fi
@@ -116,5 +115,8 @@ fi
 if [[ "${RC}" -ne 0 ]]; then
   exit "${RC}"
 fi
-echo "OK: TASK-066 mul-mat residual vs N=8 + mul_mm policy unit (mtp-verify exit=${MTP_RC})"
+if [[ "${MTP_RC}" -ne 0 && "${MTP_RC}" -ne 77 ]]; then
+  exit "${MTP_RC}"
+fi
+echo "OK: TASK-066 mul-mat residual vs N=8 + mul_mm policy unit + mtp-verify (exit=${MTP_RC})"
 exit 0

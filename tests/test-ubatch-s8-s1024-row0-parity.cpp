@@ -27,12 +27,14 @@
 //
 // Phase A2 (066.9): after raw C1 GREEN, C1j applies model jinja chat template
 // (user turn + generation prompt, enable_thinking=false == ladder --reasoning off)
-// then greedy S8 vs S1024. Ladder `012625Z` DIFF@22 is this class — raw C1 alone
-// does not cover it. TASK066_DIAG=c1j runs only C1j (evidence / fast loop).
+// then greedy S16 vs S1024. C1j ubatch must be >= 9 and a multiple of 8
+// (A-side ub=8 excluded). TASK066_DIAG=c1j runs only C1j (evidence / fast loop).
 //
 // 066.14 H1 control (localization only; product default pair unchanged):
-//   TASK066_C1_BATCH=<n>  — both C1/C1j sides use n_batch=n; ub stays 8 vs 1024.
-//       Unset = product pair A b=512 ub=8 / B b=1024 ub=1024.
+//   TASK066_C1_BATCH=<n>  — both C1/C1j sides use n_batch=n;
+//       C1 ub stays 8 vs 1024; C1j ub stays 16 vs 1024.
+//       Unset = C1 A b=512 ub=8 / B b=1024 ub=1024;
+//               C1j A b=512 ub=16 / B b=1024 ub=1024.
 //       Set  = equal -b (expect equal size_swa under 066.13 C2). Refuse n < max(ub).
 //   TASK066_DIAG=c1       — skip C2/C3; run raw C1 only (fast H1/H2 loop).
 
@@ -320,6 +322,7 @@ void print_gen_prefix(const char * label, const llama_vocab * vocab, const std::
 }
 
 // C1j — A2 gate: greedy on jinja-wrapped prompt (ladder class).
+// Contract: every ubatch is >= 9 and a multiple of 8 (no ub<9; no odd rem class).
 int run_c1j_gate(
         llama_model * model,
         const llama_vocab * vocab,
@@ -330,6 +333,13 @@ int run_c1j_gate(
         int32_t ub_a,
         int32_t b_b,
         int32_t ub_b) {
+    if (ub_a < 9 || ub_b < 9 || (ub_a % 8) != 0 || (ub_b % 8) != 0) {
+        fprintf(stderr,
+                "FAIL: C1j ubatch contract violated (need ub>=9 and ub%%8==0); "
+                "got A ub=%d B ub=%d\n",
+                ub_a, ub_b);
+        return 2;
+    }
     std::vector<llama_token> jtokens;
     std::string jprompt;
     if (!tokenize_jinja_user_prompt(model, vocab, user_text, jtokens, jprompt)) {
@@ -340,7 +350,8 @@ int run_c1j_gate(
     printf("  n_prompt_tokens_jinja=%zu n_predict=%d (raw fixture was separate C1)\n",
            jtokens.size(), n_predict);
     printf("  jinja_prompt_chars=%zu head=%.80s\n", jprompt.size(), jprompt.c_str());
-    printf("HYPOTHESIS: after chat template, greedy ids diverge S8 vs S1024 (ladder DIFF@22)\n");
+    printf("  c1j_pair: A b=%d ub=%d  B b=%d ub=%d (ub>=9, ub%%8==0)\n", b_a, ub_a, b_b, ub_b);
+    printf("HYPOTHESIS: after chat template, greedy ids diverge S16 vs S1024\n");
 
     const int64_t need_ctx = (int64_t) jtokens.size() + (int64_t) n_predict + 8;
     if ((int64_t) params.n_ctx < need_ctx) {
@@ -362,19 +373,19 @@ int run_c1j_gate(
     const int32_t diff_i = first_token_diff(a.tokens, b.tokens);
     printf("  gen_len_a=%zu gen_len_b=%zu first_token_diff=%d\n",
            a.tokens.size(), b.tokens.size(), diff_i);
-    print_gen_prefix("C1j_S8", vocab, a.tokens, 16);
+    print_gen_prefix("C1j_S16", vocab, a.tokens, 16);
     print_gen_prefix("C1j_S1024", vocab, b.tokens, 16);
     if (diff_i >= 0 && diff_i < (int32_t) a.tokens.size() && diff_i < (int32_t) b.tokens.size()) {
         printf("  tok_a=%d tok_b=%d\n", a.tokens[size_t(diff_i)], b.tokens[size_t(diff_i)]);
     }
 
     if (diff_i >= 0) {
-        printf("RESULT FAIL (RED) — C1j jinja-chat greedy not bit-exact S8 vs S1024; "
+        printf("RESULT FAIL (RED) — C1j jinja-chat greedy not bit-exact S16 vs S1024; "
                "066.9 Phase A2 TDD gate open\n");
         return 1;
     }
 
-    printf("RESULT PASS (GREEN) — C1j jinja-chat greedy S8 vs S1024 identical for n_predict=%d\n",
+    printf("RESULT PASS (GREEN) — C1j jinja-chat greedy S16 vs S1024 identical for n_predict=%d\n",
            n_predict);
     return 0;
 }
@@ -1178,11 +1189,17 @@ int main(int argc, char ** argv) {
     const bool do_c1j = diag && std::strcmp(diag, "c1j") == 0;
     const bool do_c1_only = diag && std::strcmp(diag, "c1") == 0;
 
+    // C1 / C2 / C3 product pair (historical rem@8 class retained for those gates).
     const int32_t ub_a = 8;
     const int32_t ub_b = 1024;
     int32_t b_a = 512;
     int32_t b_b = 1024;
-    // 066.14 H1: lock equal -b both sides (ub still 8 vs 1024). Unset keeps product pair.
+    // C1j pair: no ubatch < 9; all ubatch multiples of 8 → A-side 16 (not 8).
+    const int32_t c1j_ub_a = 16;
+    const int32_t c1j_ub_b = 1024;
+    int32_t c1j_b_a = 512;
+    int32_t c1j_b_b = 1024;
+    // 066.14 H1: lock equal -b both sides. Unset keeps product pairs.
     if (const char * c1b = std::getenv("TASK066_C1_BATCH"); c1b && c1b[0]) {
         char * end = nullptr;
         const long v = std::strtol(c1b, &end, 10);
@@ -1194,7 +1211,7 @@ int main(int argc, char ** argv) {
             return 2;
         }
         const int32_t n_batch_lock = (int32_t) v;
-        const int32_t ub_max = std::max(ub_a, ub_b);
+        const int32_t ub_max = std::max({ub_a, ub_b, c1j_ub_a, c1j_ub_b});
         if (n_batch_lock < ub_max) {
             fprintf(stderr,
                     "FAIL: TASK066_C1_BATCH=%d < max(ub)=%d (n_batch must cover ubatch)\n",
@@ -1203,6 +1220,8 @@ int main(int argc, char ** argv) {
         }
         b_a = n_batch_lock;
         b_b = n_batch_lock;
+        c1j_b_a = n_batch_lock;
+        c1j_b_b = n_batch_lock;
         fprintf(stderr,
                 "DIAG_ONLY: TASK066_C1_BATCH=%d — equal -b both sides "
                 "(H1 size_swa control; product default pair unchanged when unset)\n",
@@ -1217,8 +1236,10 @@ int main(int argc, char ** argv) {
             params.cache_ram_mib,
             params.cpuparams.n_threads, params.cpuparams_batch.n_threads,
             params.n_parallel, (int) params.n_ctx);
-    fprintf(stderr, "ubatch_pair: A b=%d ub=%d  B b=%d ub=%d  n_predict=%d diag=%s\n",
+    fprintf(stderr, "ubatch_pair_c1: A b=%d ub=%d  B b=%d ub=%d  n_predict=%d diag=%s\n",
             b_a, ub_a, b_b, ub_b, n_predict, diag && diag[0] ? diag : "<none>");
+    fprintf(stderr, "ubatch_pair_c1j: A b=%d ub=%d  B b=%d ub=%d\n",
+            c1j_b_a, c1j_ub_a, c1j_b_b, c1j_ub_b);
     if (const char * mm = std::getenv("GGML_METAL_MUL_MM_MIN"); mm && mm[0]) {
         fprintf(stderr, "GGML_METAL_MUL_MM_MIN=%s\n", mm);
     } else {
@@ -1294,7 +1315,9 @@ int main(int argc, char ** argv) {
     if (do_c1j) {
         // Fast A2 loop: skip C2/C3/C1 raw; exit code is the C1j gate (RED/GREEN).
         printf("UBATCH-S8-S1024-DIAG C1j only (066.9 Phase A2)\n");
-        return run_c1j_gate(model, vocab, params, params.prompt, n_predict, b_a, ub_a, b_b, ub_b);
+        return run_c1j_gate(
+                model, vocab, params, params.prompt, n_predict,
+                c1j_b_a, c1j_ub_a, c1j_b_b, c1j_ub_b);
     }
 
     if (do_c1_only) {
@@ -1457,6 +1480,8 @@ int main(int argc, char ** argv) {
            n_predict);
     printf("note: raw C1 GREEN ≠ A2 Done; continuing to C1j (jinja chat)\n");
 
-    // Phase A2 — product ladder class (jinja-wrapped prompt).
-    return run_c1j_gate(model, vocab, params, params.prompt, n_predict, b_a, ub_a, b_b, ub_b);
+    // Phase A2 — jinja-wrapped prompt; C1j ubatch pair (16 vs 1024), not C1's ub=8.
+    return run_c1j_gate(
+            model, vocab, params, params.prompt, n_predict,
+            c1j_b_a, c1j_ub_a, c1j_b_b, c1j_ub_b);
 }

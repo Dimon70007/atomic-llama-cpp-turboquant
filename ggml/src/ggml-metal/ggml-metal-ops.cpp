@@ -16,8 +16,8 @@
 #include <cstdio>
 #include <cstdlib>
 
-// TASK-066.7 / 066.9 A2 / 066.15: env-gated break-even around GGML_METAL_MUL_MM_MIN_DEFAULT
-// (DEFAULT=1: N=1 on mul_mv for decode speed; MTP verify cross-kernel = quality probe).
+// TASK-066.7 / 066.9 A2 / 066.15→revert: env-gated break-even around
+// GGML_METAL_MUL_MM_MIN_DEFAULT (DEFAULT=8 upstream-like: N<=8 on mul_mv).
 // Policy helpers: ggml-metal-mul-mm-policy.h (unit-tested). TQ / special cases stay below.
 static int ggml_metal_mul_mm_batch_min(void) {
     static int cached = -1;
@@ -2462,10 +2462,10 @@ int ggml_metal_op_mul_mat(ggml_metal_op_t ctx, int idx) {
 
     // find the break-even point where the matrix-matrix kernel becomes more efficient compared
     // to the matrix-vector kernel
-    // TASK-066.7 float-tile + 066.9 A2 min=1 (066.15 product DEFAULT=1 again).
-    // min=1: rem cross-kernel closed; N=1 decode on mul_mv (speed). MTP N=1 vs {2,3,4}
-    // lands on different kernels — quality measured outside this dispatch (066.15 probe).
-    // Override: GGML_METAL_MUL_MM_MIN=0 restores Phase B all-mm invariance (decode tax).
+    // TASK-066.7 float-tile; product DEFAULT=8 (upstream). N<=8 → mul_mv so jinja
+    // ub=8 rem+full share a kernel (A2 hole was min=7, not 8). MTP verify N<=4
+    // also stays on mul_mv (no N=1 vs {2,3,4} cross-kernel). Override via env:
+    // GGML_METAL_MUL_MM_MIN=0 → all-mm (Phase B); =1 → A2-style rem close + MTP hazard.
     const int ne11_mm_min = ggml_metal_mul_mm_batch_min();
 
     // first try to use small-batch mat-mv kernels

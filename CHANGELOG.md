@@ -14,7 +14,15 @@ Releases before `b10269-1.5.0` predate this file; see the git history.
 
 ### Changed
 
+- **C1j ubatch pair:** A-side `ub=8` removed (`ub < 9` banned); C1j now `b=512 ub=16` vs
+  `b=1024 ub=1024` (both multiples of 8). Fail-closed in `run_c1j_gate`. C1/C2/C3 keep
+  historical `ub=8` vs `1024`. Binary: `test-ubatch-s8-s1024-row0-parity`.
+- **`GGML_METAL_MUL_MM_MIN_DEFAULT` → 8 (upstream):** revert 066.15/16 probe `=1`.
+  jinja `ub=8` rem+full both on `mul_mv` (A2 hole was `min=7`, not 8); MTP verify
+  `N≤4` also all on `mul_mv`. Policy unit + residual suite gate updated; last-chunk
+  / C1j must be re-stamped GREEN (not waived).
 - **TASK-066.16 DONE — KEEP `MUL_MM_MIN_DEFAULT=1`:** R1–R9 all final **P**; no **Q**.
+  *(superseded for product DEFAULT by upstream-8 revert above; stamp history kept.)*
   Control stamp `logs/task066-16-r1r5-control-20261109T062918Z` — min=0 GREEN /
   min=1 RED for mul-mat/moe*/mtp-verify/fullgraph/mtp-e2e; residual vs N=8 GREEN
   both; moe-router **ids match**. R8/R9 size_swa∝ub orthogonal. A+rem optional.

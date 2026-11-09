@@ -7,13 +7,15 @@
 // (TQ / other special cases stay in ops.cpp).
 //
 // History:
-//   upstream-like: mm_min=8  → N=8 on mul_mv
+//   upstream-like: mm_min=8  → N<=8 on mul_mv (product DEFAULT again)
 //   066.7 KEEP:    mm_min=7  → N>=8 on mul_mm; rem∈{2..7} still on mul_mv (A2 hole)
 //   066.9 A2:      mm_min=1  → N>=2 on mul_mm; closes last-ubatch rem cross-kernel
 //   066.9 B:       mm_min=0  → N>=1 on mul_mm; closes MTP verify N=1 vs {2,3,4}
 //                  (decode tax ~2.45x tg; MTP speed sense eroded — see 066.15)
-//   066.15 probe:  mm_min=1  → restore decode speed; accept MTP verify cross-kernel
-//                  hazard pending quality A/B (MTP vs nomtp). Rem A2 lock retained.
+//   066.15/16:     mm_min=1  → decode≈min=8 on flat bench; re-opened MTP N=1 vs {2,3,4}
+//                  cross-kernel (quality/speed tax on product MTP ladder)
+//   Revert:        mm_min=8  → upstream; jinja ub=8 rem+full both on mv (no A2 hole);
+//                  MTP verify widths ≤8 all on mv (no matmul hazard for n_max≤4)
 
 #pragma once
 
@@ -25,7 +27,7 @@ extern "C" {
 #endif
 
 #ifndef GGML_METAL_MUL_MM_MIN_DEFAULT
-#define GGML_METAL_MUL_MM_MIN_DEFAULT 1
+#define GGML_METAL_MUL_MM_MIN_DEFAULT 8
 #endif
 
 /** True when the Metal mul_mat path selects mul_mm for this ne11 under mm_min. */
