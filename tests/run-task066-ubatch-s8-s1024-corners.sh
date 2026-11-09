@@ -11,7 +11,7 @@
 #   TASK066_PROMPT    — optional; default tests/fixtures/task066/...prompt.txt
 #   TASK066_N_PREDICT — optional; default 64 (binary); raise if GREEN but ladder DIFF
 #   TASK066_DIAG=localize|fa-ablation|c3-bisect|c3-thresh|c1|c1j — evidence / fast gates
-#   TASK066_C1_BATCH=<n> — 066.14 H1: equal -b both sides; C1 ub 8 vs 1024, C1j ub 16 vs 1024
+#   TASK066_C1_BATCH=<n> — 066.14 H1: equal -b both sides; product ub 16 vs 1024
 #   TASK066_BISECT_FILTER / TASK066_BISECT_HASH_ONLY — c3-bisect knobs
 #   TASK066_FA=off + TASK066_CTV=f16 — true FA-off diag (refuse turbo KV); NOT product waiver
 #   BUILD_DIR, REBUILD=1, TASK066_REQUIRE_GPU (default 1 on Darwin)

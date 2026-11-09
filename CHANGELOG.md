@@ -12,11 +12,19 @@ Releases before `b10269-1.5.0` predate this file; see the git history.
 
 ## Unreleased
 
+### Added
+
+- **TASK-066.17 (spec):** product ubatch gates design — pairs `256↔512` and
+  `256↔1024` (C2p/C1p/C1jp); no `512↔1024`. SSOT
+  `tests/TASK-066.17-product-ubatch-256-512-1024.md` (implementation pending).
+
 ### Changed
 
-- **C1j ubatch pair:** A-side `ub=8` removed (`ub < 9` banned); C1j now `b=512 ub=16` vs
-  `b=1024 ub=1024` (both multiples of 8). Fail-closed in `run_c1j_gate`. C1/C2/C3 keep
-  historical `ub=8` vs `1024`. Binary: `test-ubatch-s8-s1024-row0-parity`.
+- **Product ubatch gates (C1/C1j/C2/C3):** A-side `ub=8` removed (`ub < 9` banned);
+  all product ubatch multiples of 8. C1/C1j: `b=512 ub=16` vs `b=1024 ub=1024`;
+  C2: `ub=16` vs `ub=32`; C3 multi-step: `ub=16`. Fail-closed in gate. Localize/
+  bisect diag paths may still probe historical ub=8. Binary:
+  `test-ubatch-s8-s1024-row0-parity`.
 - **`GGML_METAL_MUL_MM_MIN_DEFAULT` → 8 (upstream):** revert 066.15/16 probe `=1`.
   jinja `ub=8` rem+full both on `mul_mv` (A2 hole was `min=7`, not 8); MTP verify
   `N≤4` also all on `mul_mv`. Policy unit + residual suite gate updated; last-chunk
