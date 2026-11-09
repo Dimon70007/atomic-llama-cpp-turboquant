@@ -26,7 +26,7 @@ public:
                      bool   v_trans,
                      bool   swa_full,
                  uint32_t   kv_size,
-                 uint32_t   n_ubatch,
+                 uint32_t   n_swa_headroom,
                  uint32_t   n_pad,
                             /* recurrent */
                 ggml_type   type_r,

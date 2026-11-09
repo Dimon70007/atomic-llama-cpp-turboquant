@@ -6,6 +6,8 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SERVER="${LLAMA_SERVER:-${ROOT}/build/bin/llama-server}"
+# Local GGUFs live under .scratch/gemma-4-26b-a4b/ (see scripts/setup-gemma4-26b-a4b-models.sh).
+# Default: UD-Q4_K_XL. TASK-066 ladder uses sibling UD-IQ4_XS via MAIN_GGUF.
 MAIN="${MAIN_GGUF:-${ROOT}/.scratch/gemma-4-26b-a4b/gemma-4-26B-A4B-it-UD-Q4_K_XL.gguf}"
 # Default assistant GGUF name after fixed conversion (embedding dim 1024, not backbone 2816).
 DRAFT="${DRAFT_GGUF:-${ROOT}/.scratch/gemma-assistant-mtp.gguf}"

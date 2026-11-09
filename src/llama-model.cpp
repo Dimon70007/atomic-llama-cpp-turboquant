@@ -2230,6 +2230,15 @@ ggml_tensor * llama_model::get_rope_factors(const llama_cparams & cparams, int i
     return layers[il].rope_short;
 }
 
+// Product SWA headroom = max(n_ubatch, n_batch/4); see llama_kv_cache_iswa_calc_swa_headroom.
+static uint32_t llama_swa_headroom_product(const llama_cparams & cparams) {
+    const uint32_t headroom = llama_kv_cache_iswa_calc_swa_headroom(cparams.n_batch, cparams.n_ubatch);
+    LLAMA_LOG_INFO(
+            "%s: SWA n_swa_headroom = %u (PAD128(max(n_ubatch=%u, n_batch/4=%u)); n_batch=%u)\n",
+            __func__, headroom, cparams.n_ubatch, cparams.n_batch / 4, cparams.n_batch);
+    return headroom;
+}
+
 llama_memory_i * llama_model::create_memory(const llama_memory_params & params, const llama_cparams & cparams) const {
     llama_memory_i * res;
 
@@ -2352,7 +2361,7 @@ llama_memory_i * llama_model::create_memory(const llama_memory_params & params, 
                             cparams.kv_unified,
                             cparams.n_ctx_seq,
                             cparams.n_seq_max,
-                            cparams.n_ubatch,
+                            /* n_swa_headroom */ llama_swa_headroom_product(cparams), // max(ub, b/4)
                             1,
                             nullptr,
                             filter_mtp,
@@ -2395,7 +2404,7 @@ llama_memory_i * llama_model::create_memory(const llama_memory_params & params, 
                             cparams.kv_unified,
                             cparams.n_ctx_seq,
                             cparams.n_seq_max,
-                            cparams.n_ubatch,
+                            /* n_swa_headroom */ llama_swa_headroom_product(cparams), // max(ub, b/4)
                             1,
                             nullptr,
                             nullptr,
@@ -2473,7 +2482,7 @@ llama_memory_i * llama_model::create_memory(const llama_memory_params & params, 
                             /* attn_v_trans      */ !cparams.flash_attn,
                             /* attn_swa_full     */ params.swa_full,
                             /* attn_kv_size      */ cparams.n_ctx_seq,
-                            /* attn_n_ubatch     */ cparams.n_ubatch,
+                            /* attn_n_swa_headroom */ llama_swa_headroom_product(cparams), // max(ub, b/4)
                             /* attn_n_pad        */ 1,
                             /* recurrent_type_r  */ GGML_TYPE_F32,
                             /* recurrent_type_s  */ GGML_TYPE_F32,
@@ -2591,7 +2600,7 @@ llama_memory_i * llama_model::create_memory(const llama_memory_params & params, 
                                     cparams.kv_unified,
                                     cparams.n_ctx_seq,
                                     cparams.n_seq_max,
-                                    cparams.n_ubatch,
+                                    /* n_swa_headroom */ llama_swa_headroom_product(cparams), // max(ub, b/4)
                                     1,
                                     mem_other,
                                     filter,
@@ -2611,7 +2620,7 @@ llama_memory_i * llama_model::create_memory(const llama_memory_params & params, 
                                     cparams.kv_unified,
                                     cparams.n_ctx_seq,
                                     cparams.n_seq_max,
-                                    cparams.n_ubatch,
+                                    /* n_swa_headroom */ llama_swa_headroom_product(cparams), // max(ub, b/4)
                                     1,
                                     nullptr,
                                     filter,

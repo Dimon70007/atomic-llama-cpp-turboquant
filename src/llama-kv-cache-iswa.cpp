@@ -5,7 +5,92 @@
 #include "llama-model.h"
 
 #include <algorithm>
-#include <cassert>
+#include <cstdint>
+#include <cstdlib>
+#include <stdexcept>
+
+// TurboQuant KV block size (turbo2/3/4). SWA window must be a multiple so
+// quantized blocks align with cache rotation (ideas/llamacpp_swa_size_calculate.md).
+#ifndef TURBO_KV_BLOCK_SIZE
+#define TURBO_KV_BLOCK_SIZE 128
+#endif
+
+// TASK-066.14 R&D override: requires BOTH env vars (avoids poisoning unit tests /
+// leftover shell exports). Unset = product headroom from caller (MAX_UBATCH KEEP).
+static uint32_t task066_resolve_swa_headroom(uint32_t n_swa_headroom) {
+    const char * allow = std::getenv("TASK066_ALLOW_SIZE_SWA_HEADROOM");
+    const char * e = std::getenv("TASK066_SIZE_SWA_HEADROOM");
+    if (!allow || allow[0] != '1') {
+        return n_swa_headroom;
+    }
+    if (!e || !e[0]) {
+        LLAMA_LOG_ERROR("%s: FAIL TASK066_ALLOW_SIZE_SWA_HEADROOM=1 but "
+                        "TASK066_SIZE_SWA_HEADROOM unset\n",
+                        __func__);
+        GGML_ABORT("TASK066_SIZE_SWA_HEADROOM required when ALLOW=1");
+    }
+    char * end = nullptr;
+    const long v = std::strtol(e, &end, 10);
+    if (end == e || *end != '\0' || v < 1 || v > (long) UINT32_MAX) {
+        LLAMA_LOG_ERROR("%s: FAIL TASK066_SIZE_SWA_HEADROOM=%s (need positive int); "
+                        "refusing silent headroom fallback (caller had %u)\n",
+                        __func__, e, n_swa_headroom);
+        GGML_ABORT("invalid TASK066_SIZE_SWA_HEADROOM");
+    }
+    const uint32_t locked = (uint32_t) v;
+    LLAMA_LOG_WARN("%s: DIAG_ONLY TASK066_SIZE_SWA_HEADROOM=%u (caller had %u) — "
+                   "R&D override; unset ALLOW for product KEEP\n",
+                   __func__, locked, n_swa_headroom);
+    return locked;
+}
+
+uint32_t llama_kv_cache_iswa_calc_swa_headroom(uint32_t n_batch, uint32_t n_ubatch) {
+    // Fail closed: ubatch drives one-write room; batch/4 is only a floor for
+    // pathological autotests (ub << batch), not a second independent tax.
+    // Round headroom up to TurboQuant KV block (128) after the max().
+    if (n_ubatch == 0) {
+        throw std::runtime_error("n_ubatch == 0; SWA size_swa headroom requires n_ubatch > 0");
+    }
+    const uint32_t batch_floor = n_batch / 4;
+    const uint32_t raw = std::max(n_ubatch, batch_floor);
+    return GGML_PAD(raw, (uint32_t) TURBO_KV_BLOCK_SIZE);
+}
+
+uint32_t llama_kv_cache_iswa_calc_size_swa(
+        uint32_t size_base,
+        uint32_t n_swa,
+        uint32_t n_seq_max,
+        bool     unified,
+        bool     swa_full,
+        uint32_t n_swa_headroom) {
+    if (swa_full) {
+        return size_base;
+    }
+    // TASK-066.5 (ideas): windowed SWA; n_swa_eff aligned to TurboQuant block (128).
+    // Product headroom = max(n_ubatch, n_batch/4) from calc_swa_headroom.
+    // Optional TASK066_SIZE_SWA_HEADROOM overrides for R&D only.
+    // Outer pad = 256 (FA get_n_kv / ggml#17037 graph pad).
+    // Metal product envelope: n_ubatch <= 1024; larger ub blows size_swa (and RAM).
+    // TASK-066.12 P1: compute window in uint64 to avoid uint32 wrap.
+    n_swa_headroom = task066_resolve_swa_headroom(n_swa_headroom);
+    uint32_t n_swa_eff = n_swa;
+    if (n_swa % TURBO_KV_BLOCK_SIZE != 0) {
+        n_swa_eff = ((n_swa + TURBO_KV_BLOCK_SIZE - 1) / TURBO_KV_BLOCK_SIZE) * TURBO_KV_BLOCK_SIZE;
+        LLAMA_LOG_WARN("%s: n_swa (%u) is not a multiple of TurboQuant block size (%d), "
+                       "padding effective SWA size to %u to prevent context drift\n",
+                       __func__, n_swa, TURBO_KV_BLOCK_SIZE, n_swa_eff);
+    }
+    const uint64_t swa_window_64 = (uint64_t) n_swa_eff * (unified ? n_seq_max : 1);
+    if (swa_window_64 + (uint64_t) n_swa_headroom > (uint64_t) UINT32_MAX) {
+        LLAMA_LOG_WARN("%s: SWA window calculation overflow, clamping to base size\n", __func__);
+        return size_base;
+    }
+    const uint32_t swa_window = (uint32_t) swa_window_64;
+    const uint32_t raw = std::min(size_base, swa_window + n_swa_headroom);
+    // Outer pad 256: align ring to FA n_kv pad (not TurboQuant 128 alone).
+    constexpr uint32_t k_size_swa_outer_pad = 256;
+    return GGML_PAD(raw, k_size_swa_outer_pad);
+}
 
 //
 // llama_kv_cache_iswa
@@ -21,7 +106,7 @@ llama_kv_cache_iswa::llama_kv_cache_iswa(
                      bool   unified,
                  uint32_t   kv_size,
                  uint32_t   n_seq_max,
-                 uint32_t   n_ubatch,
+                 uint32_t   n_swa_headroom,
                  uint32_t   n_pad,
            llama_memory_t   mem_other,
     const layer_filter_cb & filter,
@@ -31,7 +116,7 @@ llama_kv_cache_iswa::llama_kv_cache_iswa(
                      void * kv_stream_phase_arena,
                      size_t kv_stream_maximum_pool_bytes) :
     llama_kv_cache_iswa(model, model.hparams, type_k, type_v, v_trans, offload, swa_full, unified,
-            kv_size, n_seq_max, n_ubatch, n_pad, mem_other, filter, reuse, share,
+            kv_size, n_seq_max, n_swa_headroom, n_pad, mem_other, filter, reuse, share,
             kv_stream_stage_bytes, kv_stream_phase_arena, kv_stream_maximum_pool_bytes) {
 }
 
@@ -46,7 +131,7 @@ llama_kv_cache_iswa::llama_kv_cache_iswa(
                      bool   unified,
                  uint32_t   kv_size,
                  uint32_t   n_seq_max,
-                 uint32_t   n_ubatch,
+                 uint32_t   n_swa_headroom,
                  uint32_t   n_pad,
            llama_memory_t   mem_other,
     const layer_filter_cb & filter,
@@ -75,19 +160,19 @@ llama_kv_cache_iswa::llama_kv_cache_iswa(
 
     const uint32_t size_base = kv_size;
 
-    // note: the SWA cache is always padded to 256 for performance
-    //       https://github.com/ggml-org/llama.cpp/issues/17037
-    uint32_t size_swa = GGML_PAD(std::min(size_base, hparams.n_swa*(unified ? n_seq_max : 1) + n_ubatch), 256);
-
-    // when using full-size SWA cache, we set the SWA cache size to be equal to the base cache size
     if (swa_full) {
         LLAMA_LOG_WARN("%s: using full-size SWA cache (ref: %s)\n",
                 __func__, "https://github.com/ggml-org/llama.cpp/pull/13194#issuecomment-2868343055");
-
-        size_swa = size_base;
     }
 
+    const uint32_t size_swa = llama_kv_cache_iswa_calc_size_swa(
+            size_base, hparams.n_swa, n_seq_max, unified, swa_full, n_swa_headroom);
+
     LLAMA_LOG_INFO("%s: creating non-SWA KV cache, size = %u cells\n", __func__, size_base);
+    LLAMA_LOG_INFO("%s: size_swa calc: n_swa=%u headroom=%u (product=max(ub,b/4)) "
+                   "unified=%d swa_full=%d → size_swa=%u (n_swa_eff pad %d; outer pad 256)\n",
+            __func__, hparams.n_swa, n_swa_headroom, (int) unified, (int) swa_full,
+            size_swa, TURBO_KV_BLOCK_SIZE);
 
     llama_memory_t mem_other_base = nullptr;
     if (mem_other) {
@@ -133,6 +218,19 @@ void llama_kv_cache_iswa::clear(bool data) {
 }
 
 bool llama_kv_cache_iswa::seq_rm(llama_seq_id seq_id, llama_pos p0, llama_pos p1) {
+    // TASK-066.12 P0: if the trim starts before the SWA window, SWA already
+    // rotated those rows away and cannot mirror the base trim. Fail closed
+    // before mutating either cache (upstream iSWA semantics).
+    if (seq_id >= 0 && p0 >= 0) {
+        const llama_pos swa_min = kv_swa->seq_pos_min(seq_id);
+        if (swa_min >= 0 && swa_min > p0) {
+            LLAMA_LOG_WARN("%s: cannot remove from pos %d for seq %d: "
+                           "SWA cache starts at %d (window already rotated)\n",
+                           __func__, (int) p0, (int) seq_id, (int) swa_min);
+            return false;
+        }
+    }
+
     bool res = true;
 
     res = res & kv_base->seq_rm(seq_id, p0, p1);
@@ -162,12 +260,12 @@ void llama_kv_cache_iswa::seq_div(llama_seq_id seq_id, llama_pos p0, llama_pos p
 }
 
 llama_pos llama_kv_cache_iswa::seq_pos_min(llama_seq_id seq_id) const {
-    // the base cache is a superset of the SWA cache, so we can just check the SWA cache
-    return kv_swa->seq_pos_min(seq_id);
+    // TASK-066.12 P0: base keeps the full sequence; SWA is only a window.
+    return kv_base->seq_pos_min(seq_id);
 }
 
 llama_pos llama_kv_cache_iswa::seq_pos_max(llama_seq_id seq_id) const {
-    return kv_swa->seq_pos_max(seq_id);
+    return kv_base->seq_pos_max(seq_id);
 }
 
 std::map<ggml_backend_buffer_type_t, size_t> llama_kv_cache_iswa::memory_breakdown() const {
@@ -228,7 +326,14 @@ llama_memory_context_ptr llama_kv_cache_iswa::init_batch(llama_batch_allocr & ba
             break;
         }
 
-        assert(sinfos_base.size() == sinfos_swa.size());
+        // TASK-066.12 P2: assert is stripped under NDEBUG; mismatch must not
+        // build a context with unequal slot infos.
+        if (sinfos_base.size() != sinfos_swa.size()) {
+            LLAMA_LOG_WARN("%s: base/swa sinfos size mismatch (%zu vs %zu), "
+                           "retrying with equal split\n",
+                           __func__, sinfos_base.size(), sinfos_swa.size());
+            break;
+        }
 
         return std::make_unique<llama_kv_cache_iswa_context>(
                 this, std::move(sinfos_base), std::move(sinfos_swa), std::move(ubatches));
@@ -264,7 +369,11 @@ llama_memory_context_ptr llama_kv_cache_iswa::init_batch(llama_batch_allocr & ba
             break;
         }
 
-        assert(sinfos_base.size() == sinfos_swa.size());
+        if (sinfos_base.size() != sinfos_swa.size()) {
+            LLAMA_LOG_WARN("%s: base/swa sinfos size mismatch (%zu vs %zu) on equal split\n",
+                           __func__, sinfos_base.size(), sinfos_swa.size());
+            break;
+        }
 
         return std::make_unique<llama_kv_cache_iswa_context>(
                 this, std::move(sinfos_base), std::move(sinfos_swa), std::move(ubatches));
@@ -285,9 +394,15 @@ llama_memory_context_ptr llama_kv_cache_iswa::init_update(llama_context * lctx, 
 }
 
 bool llama_kv_cache_iswa::get_can_shift() const {
+    // TASK-066.12 P2 KEEP: partial SWA (swa_full=false) sizes base != swa, so
+    // context shift stays disabled. Equal-size check is intentional, not a bug.
     return kv_base->get_can_shift() &&
            kv_swa->get_can_shift() &&
            kv_base->get_size() == kv_swa->get_size();
+}
+
+bool llama_kv_cache_iswa::get_has_shared_cells() const {
+    return (kv_base && kv_base->get_has_shared_cells()) || (kv_swa && kv_swa->get_has_shared_cells());
 }
 
 void llama_kv_cache_iswa::state_write(llama_io_write_i & io, llama_seq_id seq_id, llama_state_seq_flags flags) const {

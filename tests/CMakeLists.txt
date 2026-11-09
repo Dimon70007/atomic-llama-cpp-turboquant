@@ -397,6 +397,67 @@ add_executable(test-flash-attn-generic-hash test-flash-attn-generic-hash.cpp)
 target_link_libraries(test-flash-attn-generic-hash PRIVATE ggml)
 add_test(NAME test-flash-attn-generic-hash COMMAND test-flash-attn-generic-hash)
 
+# TASK-066 / #25618 — Metal FA nsg batch-invariance (C1 row0 + C2 2048/4096)
+add_executable(test-flash-attn-batch-invariance test-flash-attn-batch-invariance.cpp)
+target_link_libraries(test-flash-attn-batch-invariance PRIVATE ggml)
+add_test(NAME test-flash-attn-batch-invariance COMMAND test-flash-attn-batch-invariance)
+set_tests_properties(test-flash-attn-batch-invariance PROPERTIES SKIP_RETURN_CODE 77)
+
+# TASK-066 / #25618 — Metal mul_mat / mul_mat_id batch-invariance (C1/C4/C5)
+add_executable(test-mul-mat-batch-invariance test-mul-mat-batch-invariance.cpp)
+target_link_libraries(test-mul-mat-batch-invariance PRIVATE ggml)
+add_test(NAME test-mul-mat-batch-invariance COMMAND test-mul-mat-batch-invariance)
+set_tests_properties(test-mul-mat-batch-invariance PROPERTIES SKIP_RETURN_CODE 77)
+
+# TASK-066 P5 residual — long-KV FA row0 localizer (patch-C TDD gate for FA)
+add_executable(test-longctx-row0-parity test-longctx-row0-parity.cpp)
+target_link_libraries(test-longctx-row0-parity PRIVATE ggml)
+add_test(NAME test-longctx-row0-parity COMMAND test-longctx-row0-parity)
+set_tests_properties(test-longctx-row0-parity PROPERTIES SKIP_RETURN_CODE 77)
+
+# TASK-066 ST-3.2d — MoE mul_mv_id row0 localizer (IQ4_XS / Gemma-like top-8 + hetero ids)
+add_executable(test-moe-row0-parity test-moe-row0-parity.cpp)
+target_link_libraries(test-moe-row0-parity PRIVATE ggml)
+add_test(NAME test-moe-row0-parity COMMAND test-moe-row0-parity)
+set_tests_properties(test-moe-row0-parity PROPERTIES SKIP_RETURN_CODE 77)
+
+# TASK-066 ST-3.2d — MoE router→soft_max→argsort_top_k→mul_mat_id (computed ids / logits)
+add_executable(test-moe-router-row0-parity test-moe-router-row0-parity.cpp)
+target_link_libraries(test-moe-router-row0-parity PRIVATE ggml)
+add_test(NAME test-moe-router-row0-parity COMMAND test-moe-router-row0-parity)
+set_tests_properties(test-moe-router-row0-parity PROPERTIES SKIP_RETURN_CODE 77)
+
+# TASK-066 ST-3.2f-ter-loc — MoE ffn_moe_out dual-topology (permute+sum_rows vs view+add)
+add_executable(test-moe-out-row0-parity test-moe-out-row0-parity.cpp)
+target_link_libraries(test-moe-out-row0-parity PRIVATE ggml)
+add_test(NAME test-moe-out-row0-parity COMMAND test-moe-out-row0-parity)
+set_tests_properties(test-moe-out-row0-parity PROPERTIES SKIP_RETURN_CODE 77)
+
+# TASK-066 ST-3.2f — full-graph decode row0 (N=1 vs N=2) bit-exact logits; patch-C TDD RED
+# Runner: tests/run-task066-fullgraph-corners.sh (requires TASK066_MODEL; not in SUITE=all)
+llama_build(test-fullgraph-decode-row0-parity.cpp)
+
+# TASK-066.5/066.6 — product ubatch S8 vs S1024 greedy token-stream bit-exact (ladder DIFF class)
+# Runner: tests/run-task066-ubatch-s8-s1024-corners.sh (requires TASK066_MODEL+CTX; not in SUITE=all)
+llama_build(test-ubatch-s8-s1024-row0-parity.cpp)
+
+# TASK-066.9 A2 — CPU unit for mul_mm vs mul_mv policy / rem cross-kernel hazard (no GPU).
+# Header-only: ggml/src/ggml-metal/ggml-metal-mul-mm-policy.h
+# Runner: SUITE=mul-mat-residual (runs first) or bin alone.
+add_executable(test-metal-mul-mm-policy test-metal-mul-mm-policy.cpp)
+add_test(NAME test-metal-mul-mm-policy COMMAND test-metal-mul-mm-policy)
+
+# TASK-066 follow-up / #31688 — Metal CB split vs ADD fusion (CPU unit; no GPU).
+# Needs ggml_metal_fusion_max from static ggml-metal. Expected RED until
+# tests/TASK-066-cb-fusion-followup.md High/Medium. Runner: SUITE=cb-fusion.
+if (GGML_METAL AND NOT GGML_BACKEND_DL)
+    add_executable(test-metal-cb-fusion test-metal-cb-fusion.cpp)
+    target_link_libraries(test-metal-cb-fusion PRIVATE ggml)
+    # ggml-metal-fusion.h includes ggml-impl.h
+    target_include_directories(test-metal-cb-fusion PRIVATE ${CMAKE_SOURCE_DIR}/ggml/src)
+    add_test(NAME test-metal-cb-fusion COMMAND test-metal-cb-fusion)
+endif()
+
 llama_build_and_test(test-model-load-cancel.cpp LABEL "model")
 llama_build_and_test(test-autorelease.cpp       LABEL "model")
 llama_build_and_test(test-backend-sampler.cpp   LABEL "model")
@@ -457,6 +518,9 @@ target_link_libraries(${TEST_TARGET} PRIVATE llama)
 
 # TurboQuant WHT round-trip test (links ggml turbo codec symbols via llama)
 llama_build_and_test(test-turbo-quant.c LABEL "turbo")
+
+# ISWA size_swa: ideas formula (pad128 + n_ubatch windowed)
+llama_build_and_test(test-iswa-size-swa.cpp)
 
 if (NOT LLAMA_USE_SYSTEM_GGML)
     # Needs non-public ggml-impl.h

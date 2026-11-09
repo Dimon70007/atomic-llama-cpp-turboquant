@@ -23,7 +23,7 @@ public:
                          bool   unified,
                      uint32_t   kv_size,
                      uint32_t   n_seq_max,
-                     uint32_t   n_ubatch,
+                     uint32_t   n_swa_headroom,
                      uint32_t   n_pad,
                llama_memory_t   mem_other,
         const layer_filter_cb & filter,
@@ -44,7 +44,7 @@ public:
                          bool   unified,
                      uint32_t   kv_size,
                      uint32_t   n_seq_max,
-                     uint32_t   n_ubatch,
+                     uint32_t   n_swa_headroom,
                      uint32_t   n_pad,
                llama_memory_t   mem_other,
         const layer_filter_cb & filter,
@@ -70,6 +70,8 @@ public:
     llama_memory_context_ptr init_update(llama_context * lctx, bool optimize) override;
 
     bool get_can_shift() const override;
+
+    bool get_has_shared_cells() const override;
 
     void clear(bool data) override;
 
@@ -166,3 +168,25 @@ private:
 
     const llama_memory_status status;
 };
+
+// Product SWA headroom (TASK-066.14 + anti-footgun):
+//   headroom = PAD128(max(n_ubatch, n_batch / 4))
+// Normal product (batch=2048, ub=512) -> PAD128(512) = 512 (unchanged).
+// Tiny-ub / large-b autotests (ub=8, b=1536) -> PAD128(max(8, 384)) = 384.
+// b=1280 ub=8 -> PAD128(max(8, 320)) = 384 (320 not on 128 grid).
+uint32_t llama_kv_cache_iswa_calc_swa_headroom(uint32_t n_batch, uint32_t n_ubatch);
+
+// Pure size_swa helper (TASK-066.5 ideas).
+// Pads n_swa up to TurboQuant KV block (128), then:
+//   size_swa = PAD256(min(size_base, n_swa_eff * (unified ? n_seq_max : 1) + n_swa_headroom))
+// Product callers pass llama_kv_cache_iswa_calc_swa_headroom(n_batch, n_ubatch).
+// Outer pad 256 aligns with FA get_n_kv pad; n_swa_eff still uses TurboQuant 128.
+// 066.11: size_swa still tracks headroom -> cross-ubatch text may differ when ub differs a lot.
+// Used by ctor + CPU unit test-iswa-size-swa.
+uint32_t llama_kv_cache_iswa_calc_size_swa(
+        uint32_t size_base,
+        uint32_t n_swa,
+        uint32_t n_seq_max,
+        bool     unified,
+        bool     swa_full,
+        uint32_t n_swa_headroom);

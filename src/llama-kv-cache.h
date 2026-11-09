@@ -162,6 +162,8 @@ public:
 
     bool get_can_shift() const override;
 
+    bool get_has_shared_cells() const override { return other != nullptr; }
+
     // bytes of llama_kv_cell_ext saved per cell in the sequence state (0 = none)
     size_t cell_ext_io_size() const;
 
@@ -318,6 +320,9 @@ private:
 
     // SWA
     const uint32_t n_swa = 0;
+
+    // High-water used_max_p1 for SWA rings (telemetry: allocated size vs real occupancy).
+    uint32_t swa_used_hwm = 0;
 
     // env: LLAMA_ATTN_ROT_DISABLE
     bool attn_rot_k = false;

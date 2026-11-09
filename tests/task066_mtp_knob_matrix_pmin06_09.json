@@ -1,0 +1,50 @@
+{
+  "task": "TASK-066.9-phase-c-pmin-sparse",
+  "description": "MTP knobs quality/speed re-sweep on tip DEFAULT=1. Axes: n_max × sparse p_min {0.6,0.7,0.8,0.9}; product KEEP (2,0.95) kept as reference cell.",
+  "locks": {
+    "ubatch": 512,
+    "sample_mode": "product",
+    "fa": "on",
+    "ctv": "turbo4",
+    "mul_mm_min": "unset (product DEFAULT=1 after 066.15/066.16)",
+    "product_keep": {"n_max": 2, "p_min": 0.95, "run_id": "n2-p095"}
+  },
+  "gates": {
+    "hard": ["engagement", "non_empty_gen", "no_oom"],
+    "telemetry": ["first_disagree_vs_nomtp"],
+    "quality": "duel_hits",
+    "speed": "tg_tok_per_s",
+    "acceptance": "draft_acceptance"
+  },
+  "ranking": [
+    "prefer duel_hits == 2",
+    "else highest duel_hits",
+    "tie-break higher tg",
+    "second tie-break higher acceptance",
+    "compare winner vs product_keep; PROMOTE candidate only after operator ack"
+  ],
+  "baseline": {
+    "id": "nomtp-baseline",
+    "mode": "nomtp",
+    "note": "Shared nomtp generation for DIFF telemetry (run once)"
+  },
+  "runs": [
+    {"id": "n1-p060", "n_max": 1, "p_min": 0.6, "note": "n_max=1 p_min=0.60"},
+    {"id": "n1-p070", "n_max": 1, "p_min": 0.7, "note": "n_max=1 p_min=0.70"},
+    {"id": "n1-p080", "n_max": 1, "p_min": 0.8, "note": "n_max=1 p_min=0.80"},
+    {"id": "n1-p090", "n_max": 1, "p_min": 0.9, "note": "n_max=1 p_min=0.90"},
+    {"id": "n2-p060", "n_max": 2, "p_min": 0.6, "note": "n_max=2 p_min=0.60"},
+    {"id": "n2-p070", "n_max": 2, "p_min": 0.7, "note": "n_max=2 p_min=0.70"},
+    {"id": "n2-p080", "n_max": 2, "p_min": 0.8, "note": "n_max=2 p_min=0.80"},
+    {"id": "n2-p090", "n_max": 2, "p_min": 0.9, "note": "n_max=2 p_min=0.90"},
+    {"id": "n2-p095", "n_max": 2, "p_min": 0.95, "note": "product KEEP reference (n_max=2 p_min=0.95)"},
+    {"id": "n3-p060", "n_max": 3, "p_min": 0.6, "note": "n_max=3 p_min=0.60"},
+    {"id": "n3-p070", "n_max": 3, "p_min": 0.7, "note": "n_max=3 p_min=0.70"},
+    {"id": "n3-p080", "n_max": 3, "p_min": 0.8, "note": "n_max=3 p_min=0.80"},
+    {"id": "n3-p090", "n_max": 3, "p_min": 0.9, "note": "n_max=3 p_min=0.90"},
+    {"id": "n4-p060", "n_max": 4, "p_min": 0.6, "note": "n_max=4 p_min=0.60"},
+    {"id": "n4-p070", "n_max": 4, "p_min": 0.7, "note": "n_max=4 p_min=0.70"},
+    {"id": "n4-p080", "n_max": 4, "p_min": 0.8, "note": "n_max=4 p_min=0.80"},
+    {"id": "n4-p090", "n_max": 4, "p_min": 0.9, "note": "n_max=4 p_min=0.90"}
+  ]
+}
