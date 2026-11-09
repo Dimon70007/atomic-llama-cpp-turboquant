@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Unit tests for TASK-066.10/066.14 estimate_kv_ctx (H6 fixed MAX_UBATCH headroom)."""
+"""Unit tests for TASK-066.10 estimate_kv_ctx (n_ubatch headroom + pad128)."""
 
 from __future__ import annotations
 
@@ -12,7 +12,6 @@ FORK_ROOT = TESTS_DIR.parent
 sys.path.insert(0, str(TESTS_DIR))
 
 from estimate_kv_ctx import (  # noqa: E402
-    LLAMA_SWA_HEADROOM_MAX_UBATCH,
     bytes_per_elem,
     calc_size_swa,
     compute_kv_from_meta,
@@ -21,23 +20,22 @@ from estimate_kv_ctx import (  # noqa: E402
     resolve_v_type,
 )
 
-# Product KEEP (066.14 H6): headroom = LLAMA_SWA_HEADROOM_MAX_UBATCH (2048).
-# N_CTX=100000 (PAD -> 100096); size_swa = PAD(1024+2048)=3072.
+# Product: headroom = n_ubatch=512 → size_swa = PAD128(1024+512)=1536.
+# N_CTX=100000 (PAD -> 100096).
 _STAMP_N_CTX = 100000
 _STAMP_SIZE_BASE = ggml_pad(_STAMP_N_CTX)  # 100096
 _STAMP_N_BATCH = 2048  # telemetry only
-_STAMP_N_UBATCH = 512  # telemetry; must be <= headroom
-_STAMP_HEADROOM = LLAMA_SWA_HEADROOM_MAX_UBATCH
-_STAMP_SIZE_SWA = 3072
+_STAMP_N_UBATCH = 512
+_STAMP_SIZE_SWA = 1536
 
-_STAMP_F16_KV_BYTES = 2679111680
-_STAMP_F16_KV_MIB = 2555.0
-_STAMP_Q8_KV_BYTES = 1423278080
-_STAMP_Q8_KV_MIB = 1357.34375
-_STAMP_T3_KV_BYTES = 973271040
-_STAMP_T3_KV_MIB = 928.18359375
-_STAMP_T4_KV_BYTES = 1056993280
-_STAMP_T4_KV_MIB = 1008.02734375
+_STAMP_F16_KV_BYTES = 2364538880
+_STAMP_F16_KV_MIB = 2255.0
+_STAMP_Q8_KV_BYTES = 1256161280
+_STAMP_Q8_KV_MIB = 1197.96875
+_STAMP_T3_KV_BYTES = 858992640
+_STAMP_T3_KV_MIB = 819.19921875
+_STAMP_T4_KV_BYTES = 932884480
+_STAMP_T4_KV_MIB = 889.66796875
 
 
 def test_bytes_per_elem_q8_and_f16() -> None:
@@ -50,9 +48,9 @@ def test_bytes_per_elem_q8_and_f16() -> None:
 def test_calc_size_swa_ideas_headroom_windowed() -> None:
     size_base = _STAMP_SIZE_BASE
     n_swa = 1024
-    assert calc_size_swa(size_base, n_swa, 1, True, False, n_swa_headroom=8) == 1280
+    assert calc_size_swa(size_base, n_swa, 1, True, False, n_swa_headroom=8) == 1152
     assert calc_size_swa(size_base, n_swa, 1, True, False, n_swa_headroom=512) == 1536
-    assert calc_size_swa(size_base, n_swa, 1, True, False, n_swa_headroom=1344) == 2560
+    assert calc_size_swa(size_base, n_swa, 1, True, False, n_swa_headroom=1344) == 2432
     assert calc_size_swa(size_base, n_swa, 1, True, False, n_swa_headroom=2048) == 3072
 
 
@@ -63,9 +61,9 @@ def test_calc_size_swa_long_ctx_stays_windowed() -> None:
         n_seq_max=1,
         unified=True,
         swa_full=False,
-        n_swa_headroom=_STAMP_HEADROOM,
+        n_swa_headroom=_STAMP_N_UBATCH,
     )
-    assert got == 3072
+    assert got == 1536
     assert got < _STAMP_SIZE_BASE
 
 
@@ -77,14 +75,14 @@ def test_calc_size_swa_pad128_and_swa_full() -> None:
         == _STAMP_SIZE_BASE
     )
     assert calc_size_swa(512, 1024, 1, unified=True, swa_full=False, n_swa_headroom=8) == 512
-    assert calc_size_swa(3072, 1000, 1, unified=True, swa_full=False, n_swa_headroom=8) == 1280
+    assert calc_size_swa(3072, 1000, 1, unified=True, swa_full=False, n_swa_headroom=8) == 1152
 
 
-def test_06614_h6_size_swa_invariant_to_n_batch_and_ubatch() -> None:
-    """Fixed headroom => same size_swa for any n_batch / n_ubatch (telemetry)."""
+def test_size_swa_scales_with_n_ubatch() -> None:
+    """Product headroom = n_ubatch → different -ub ⇒ different size_swa."""
     meta = gemma4_26b_a4b_meta()
     sizes = []
-    for b, ub in ((512, 8), (1024, 1024), (2048, 256), (2048, 512), (2048, 1024)):
+    for ub in (8, 256, 512, 1024):
         got = compute_kv_from_meta(
             meta,
             n_ctx=_STAMP_N_CTX,
@@ -93,15 +91,13 @@ def test_06614_h6_size_swa_invariant_to_n_batch_and_ubatch() -> None:
             n_seq_max=1,
             unified=True,
             swa_full=False,
-            n_batch=b,
+            n_batch=_STAMP_N_BATCH,
             n_ubatch=ub,
-            n_swa_headroom=_STAMP_HEADROOM,
         )
         sizes.append(got.size_swa)
-        assert got.n_swa_headroom == _STAMP_HEADROOM
-        assert got.n_batch == b
+        assert got.n_swa_headroom == ub
         assert got.n_ubatch == ub
-    assert sizes == [3072] * 5
+    assert sizes == [1152, 1280, 1536, 2048]
 
 
 def test_resolve_v_type_uniform_only() -> None:
@@ -141,7 +137,6 @@ def _stamp(
         swa_full=False,
         n_batch=_STAMP_N_BATCH,
         n_ubatch=_STAMP_N_UBATCH,
-        n_swa_headroom=_STAMP_HEADROOM,
     )
 
 

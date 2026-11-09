@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Fail-closed KV / n_ctx estimator for this TurboQuant fork (TASK-066.10/066.14).
+"""Fail-closed KV / n_ctx estimator for this TurboQuant fork (TASK-066.10).
 
-Mirrors llama.cpp ISWA size_swa under TASK-066.5 ideas + TASK-066.14 H6 KEEP:
+Mirrors llama.cpp ISWA size_swa under TASK-066.5 ideas (product = live n_ubatch):
   n_swa_eff = ceil(n_swa / 128) * 128
-  size_swa  = PAD(min(size_base, n_swa_eff * (unified ? n_seq_max : 1) + n_swa_headroom), 256)
-  n_swa_headroom = LLAMA_SWA_HEADROOM_MAX_UBATCH (2048), NOT live -b/-ub
+  size_swa  = PAD128(min(size_base, n_swa_eff * (unified ? n_seq_max : 1) + n_swa_headroom))
+  n_swa_headroom = n_ubatch by default (minimal sufficient; optional override)
 """
 
 from __future__ import annotations
@@ -32,8 +32,8 @@ _TYPE_LAYOUT: dict[str, tuple[int, int]] = {
 _CTK_TYPES = frozenset(_TYPE_LAYOUT.keys())
 _CTV_TYPES = _CTK_TYPES
 _TURBO_TYPES = frozenset({"turbo2", "turbo3", "turbo4"})
-# Mirrors LLAMA_SWA_HEADROOM_MAX_UBATCH in llama-kv-cache-iswa.h (066.14 H6 KEEP).
-LLAMA_SWA_HEADROOM_MAX_UBATCH = 2048
+# Outer size_swa pad = TurboQuant KV block (not FA get_n_kv pad-256).
+_SIZE_SWA_PAD = 128
 
 
 def die(msg: str, code: int = 2) -> None:
@@ -86,14 +86,14 @@ def calc_size_swa(
     swa_full: bool,
     n_swa_headroom: int,
 ) -> int:
-    """Python port of llama_kv_cache_iswa_calc_size_swa (ideas + 066.14 H6)."""
+    """Python port of llama_kv_cache_iswa_calc_size_swa (n_ubatch headroom + pad128)."""
     if n_swa_headroom < 0:
         die("n_swa_headroom must be >= 0")
     if swa_full:
         return size_base
     n_swa_eff = pad128(n_swa) if n_swa > 0 else 0
     swa_window = n_swa_eff * (n_seq_max if unified else 1)
-    return ggml_pad(min(size_base, swa_window + n_swa_headroom), 256)
+    return ggml_pad(min(size_base, swa_window + n_swa_headroom), _SIZE_SWA_PAD)
 
 
 def embd_gqa_eff(n_head_kv: int, head_dim: int, type_name: str) -> int:
@@ -322,7 +322,7 @@ def compute_kv_from_meta(
     swa_full: bool,
     n_batch: int,
     n_ubatch: int,
-    n_swa_headroom: int = LLAMA_SWA_HEADROOM_MAX_UBATCH,
+    n_swa_headroom: int | None = None,
     kv_budget_mib: float | None = None,
     model_label: str = "<meta>",
 ) -> EstimateResult:
@@ -332,16 +332,12 @@ def compute_kv_from_meta(
     if n_seq_max <= 0:
         die("--n-seq-max must be > 0")
     if n_batch <= 0:
-        die("--n-batch must be > 0 (telemetry; not size_swa headroom)")
-    if n_ubatch < 0:
-        die("--n-ubatch must be >= 0 (telemetry; not used in size_swa)")
-    if n_swa_headroom <= 0:
-        die("--n-swa-headroom must be > 0 (066.14 H6; product default 2048)")
-    if n_ubatch > n_swa_headroom:
-        die(
-            f"n_ubatch={n_ubatch} > n_swa_headroom={n_swa_headroom} "
-            f"(must be <= LLAMA_SWA_HEADROOM_MAX_UBATCH / override)"
-        )
+        die("--n-batch must be > 0 (telemetry only)")
+    if n_ubatch <= 0:
+        die("--n-ubatch must be > 0 (product size_swa headroom)")
+    headroom = n_ubatch if n_swa_headroom is None else int(n_swa_headroom)
+    if headroom <= 0:
+        die("--n-swa-headroom must be > 0 when set")
     ctk_l = ctk.strip().lower()
     ctv_l = ctv.strip().lower()
     if ctk_l not in _CTK_TYPES:
@@ -350,14 +346,14 @@ def compute_kv_from_meta(
         die(f"--ctv must be one of {sorted(_CTV_TYPES)}")
 
     size_base = ggml_pad(n_ctx, 256)
-    # TASK-066.14 H6: headroom = fixed MAX_UBATCH (not live n_batch / n_ubatch).
+    # Product: headroom = n_ubatch; optional override for R&D.
     size_swa = calc_size_swa(
         size_base,
         int(meta["n_swa"]),
         n_seq_max,
         unified,
         swa_full,
-        n_swa_headroom=n_swa_headroom,
+        n_swa_headroom=headroom,
     )
     n_stream = 1 if unified else n_seq_max
     n_layer = int(meta["n_layer"])
@@ -410,7 +406,7 @@ def compute_kv_from_meta(
         n_seq_max=n_seq_max,
         n_batch=n_batch,
         n_ubatch=n_ubatch,
-        n_swa_headroom=n_swa_headroom,
+        n_swa_headroom=headroom,
         unified=unified,
         swa_full=swa_full,
         n_stream=n_stream,
@@ -436,7 +432,7 @@ def estimate(
     swa_full: bool,
     n_batch: int,
     n_ubatch: int,
-    n_swa_headroom: int,
+    n_swa_headroom: int | None,
     kv_budget_mib: float | None,
 ) -> EstimateResult:
     meta = load_model_meta(model)
@@ -469,22 +465,19 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--n-batch",
         required=True,
         type=int,
-        help="-b / n_batch (required telemetry; NOT size_swa headroom after 066.14)",
+        help="-b / n_batch (required telemetry only)",
     )
     p.add_argument(
         "--n-ubatch",
         required=True,
         type=int,
-        help="-ub / n_ubatch (required telemetry; must be <= --n-swa-headroom)",
+        help="-ub / n_ubatch (product size_swa headroom)",
     )
     p.add_argument(
         "--n-swa-headroom",
         type=int,
-        default=LLAMA_SWA_HEADROOM_MAX_UBATCH,
-        help=(
-            f"size_swa headroom (default {LLAMA_SWA_HEADROOM_MAX_UBATCH} = "
-            "LLAMA_SWA_HEADROOM_MAX_UBATCH; 066.14 H6 KEEP)"
-        ),
+        default=None,
+        help="optional size_swa headroom override (default = --n-ubatch)",
     )
     p.add_argument("--unified", required=True, help="true|false (KV unified)")
     p.add_argument("--swa-full", required=True, help="true|false (--swa-full)")
@@ -509,7 +502,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         swa_full=parse_bool(str(args.swa_full), "--swa-full"),
         n_batch=int(args.n_batch),
         n_ubatch=int(args.n_ubatch),
-        n_swa_headroom=int(args.n_swa_headroom),
+        n_swa_headroom=(
+            None if args.n_swa_headroom is None else int(args.n_swa_headroom)
+        ),
         kv_budget_mib=args.kv_budget_mib,
     )
     payload = asdict(result)
@@ -522,7 +517,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         f"size_base={result.size_base} size_swa={result.size_swa} "
         f"n_batch={result.n_batch} n_ubatch={result.n_ubatch} "
         f"n_swa_headroom={result.n_swa_headroom} "
-        f"(size_swa headroom=fixed MAX_UBATCH path) n_stream={result.n_stream}"
+        f"(headroom=n_ubatch + pad128) n_stream={result.n_stream}"
     )
     print(
         f"layers={result.n_layer} swa_layers={result.n_swa_layers} "

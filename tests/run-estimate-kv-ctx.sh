@@ -18,8 +18,8 @@ Usage (env or flags via Make):
   ./tests/run-estimate-kv-ctx.sh
 
 Required: MODEL N_CTX CTK CTV N_SEQ_MAX N_BATCH N_UBATCH UNIFIED SWA_FULL
-Optional: N_SWA_HEADROOM (default 2048 = LLAMA_SWA_HEADROOM_MAX_UBATCH; 066.14 H6)
-N_BATCH / N_UBATCH = telemetry; size_swa headroom is N_SWA_HEADROOM (not live -b).
+Optional: N_SWA_HEADROOM (default = N_UBATCH; product headroom = live -ub, pad128)
+N_BATCH = telemetry; N_UBATCH = product size_swa headroom (unless N_SWA_HEADROOM set).
 CTV is uniform only (f16, q8_0, turbo3, turbo4, ... — no layer-bracket aliases).
 EOF
 }

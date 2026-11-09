@@ -1,9 +1,9 @@
 // ISWA size_swa unit (CPU; no model).
 //
-// Locks TASK-066.5 ideas + TASK-066.14 H6:
+// Locks TASK-066.5 ideas (product headroom = live n_ubatch):
 //   n_swa_eff = ceil(n_swa / 128) * 128
-//   size_swa  = PAD(min(size_base, n_swa_eff * (unified ? n_seq_max : 1) + n_swa_headroom), 256)
-//   product headroom = LLAMA_SWA_HEADROOM_MAX_UBATCH (2048); helper still takes explicit headroom
+//   size_swa  = PAD128(min(size_base, n_swa_eff * (unified ? n_seq_max : 1) + n_swa_headroom))
+//   helper still takes explicit headroom (product passes n_ubatch)
 //   swa_full still forces size_base
 
 
@@ -35,28 +35,28 @@ void expect_u32(const char * name, uint32_t got, uint32_t want) {
 } // namespace
 
 int main() {
-    printf("ISWA size_swa unit (CPU; no model) — ideas formula\n");
+    printf("ISWA size_swa unit (CPU; no model) — n_ubatch headroom + pad128\n");
 
     // Gemma4-shaped: n_swa=1024 (already multiple of 128).
     const uint32_t n_swa = 1024;
     const uint32_t ctx   = 3072;
 
-    // headroom=8  -> PAD(1024+8, 256) = 1280
+    // headroom=8  -> PAD128(1024+8) = 1152
     expect_u32(
             "gemma4_headroom8",
             llama_kv_cache_iswa_calc_size_swa(ctx, n_swa, /*n_seq_max*/ 1, true, false, /*headroom*/ 8),
-            1280);
-    // headroom=512 -> PAD(1536, 256) = 1536
+            1152);
+    // headroom=512 -> PAD128(1536) = 1536 (product -ub)
     expect_u32(
             "gemma4_headroom512",
             llama_kv_cache_iswa_calc_size_swa(ctx, n_swa, 1, true, false, 512),
             1536);
-    // headroom=1344 -> PAD(2368, 256) = 2560
+    // headroom=1344 -> PAD128(2368) = 2432
     expect_u32(
             "gemma4_headroom1344",
             llama_kv_cache_iswa_calc_size_swa(ctx, n_swa, 1, true, false, 1344),
-            2560);
-    // product-ish -b=2048 headroom (066.13 C2)
+            2432);
+    // headroom=2048 -> PAD128(3072) = 3072
     expect_u32(
             "gemma4_headroom2048",
             llama_kv_cache_iswa_calc_size_swa(ctx, n_swa, 1, true, false, 2048),
@@ -82,24 +82,24 @@ int main() {
             llama_kv_cache_iswa_calc_size_swa(/*size_base*/ 512, n_swa, 1, true, false, 8),
             512);
 
-    // pad n_swa=1000 -> 1024; ub=8 -> PAD(1032)=1280
+    // pad n_swa=1000 -> 1024; ub=8 -> PAD128(1032)=1152
     expect_u32(
             "pad128_n_swa_1000_ub8",
             llama_kv_cache_iswa_calc_size_swa(ctx, /*n_swa*/ 1000, 1, true, false, 8),
-            1280);
+            1152);
 
     // unified multi-seq: window = n_swa_eff * n_seq_max
-    // 1024*2+8=2056 -> PAD=2304
+    // 1024*2+8=2056 -> PAD128=2176
     expect_u32(
             "unified_n_seq_max_2_ub8",
             llama_kv_cache_iswa_calc_size_swa(ctx, n_swa, /*n_seq_max*/ 2, true, false, 8),
-            2304);
+            2176);
 
     // non-unified: ignore n_seq_max for window width
     expect_u32(
             "non_unified_ub8",
             llama_kv_cache_iswa_calc_size_swa(ctx, n_swa, /*n_seq_max*/ 4, false, false, 8),
-            1280);
+            1152);
 
     // TASK-066.12 P1: uint32 overflow in n_swa_eff * n_seq_max must not wrap.
     // 2^31 * 2 overflows uint32; fixed path clamps to size_base.

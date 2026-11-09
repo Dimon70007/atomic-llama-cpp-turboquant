@@ -14,11 +14,19 @@ Releases before `b10269-1.5.0` predate this file; see the git history.
 
 ### Changed
 
-- **TASK-066.14 H6 KEEP:** `size_swa` headroom = fixed `LLAMA_SWA_HEADROOM_MAX_UBATCH`
-  (2048), not live `n_batch` / `n_ubatch`. Fail-closed if `n_ubatch >` cap. Full corners
-  GREEN `logs/task066-14-c1-keep-full-20261109T004421Z` (C2/C3/C1/C1j). Estimator
-  `--n-swa-headroom` default 2048; `N_BATCH` telemetry. R&D override needs
-  `TASK066_ALLOW_SIZE_SWA_HEADROOM=1` + `TASK066_SIZE_SWA_HEADROOM`.
+- **TASK-066.14 docs:** `tests/TASK-066.14-…md` § «What `calc_size_swa` is» —
+  allocates `kv_swa` only; window vs `--swa-full`; FA does not set ring length;
+  pad128 = `QK_TURBO3/4`, 256 = FA `get_n_kv` pad.
+- **TASK-066.14 product pivot (speed):** `size_swa` headroom back to live `n_ubatch`;
+  outer pad **128** (TurboQuant block), not 256. Fixed-2048 KEEP doubled product
+  `size_swa` (1536→3072 @ `-ub 512`) and ~halved decode. Telemetry: create
+  `size_swa calc` + apply_ubatch `SWA occupancy hwm` (used vs allocated). Estimator
+  default headroom = `--n-ubatch`. R&D override unchanged
+  (`TASK066_ALLOW_SIZE_SWA_HEADROOM` + `TASK066_SIZE_SWA_HEADROOM`).
+- **TASK-066.14 H6 KEEP (superseded for product headroom):** was fixed
+  `LLAMA_SWA_HEADROOM_MAX_UBATCH` (2048). Full corners GREEN
+  `logs/task066-14-c1-keep-full-20261109T004421Z` (C2/C3/C1/C1j). Kept as R&D
+  evidence that fixed headroom restores C1; product chose minimal `n_ubatch` instead.
 - **TASK-066.13 C2 KEEP (superseded for headroom source by 066.14):** was `n_batch`
   headroom (not live `-ub`). Stamp `logs/task066-13-c2-nbatch-headroom-20261108T220220Z`
   — C3-n1536 GREEN; KLD-UB PASS @4k/16k; C1 residual when `-b` differed (066.14 root).

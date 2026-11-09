@@ -321,6 +321,9 @@ private:
     // SWA
     const uint32_t n_swa = 0;
 
+    // High-water used_max_p1 for SWA rings (telemetry: allocated size vs real occupancy).
+    uint32_t swa_used_hwm = 0;
+
     // env: LLAMA_ATTN_ROT_DISABLE
     bool attn_rot_k = false;
     bool attn_rot_v = false;

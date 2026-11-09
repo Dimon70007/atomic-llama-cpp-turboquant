@@ -53,13 +53,11 @@ uint32_t llama_kv_cache_iswa_calc_size_swa(
     if (swa_full) {
         return size_base;
     }
-    // note: the SWA cache is always padded to 256 for performance
-    //       https://github.com/ggml-org/llama.cpp/issues/17037
-    //
-    // TASK-066.5 (ideas formula): windowed SWA + TurboQuant block align.
-    // TASK-066.14 H6 KEEP: product headroom = LLAMA_SWA_HEADROOM_MAX_UBATCH (not live -b).
-    // Optional TASK066_SIZE_SWA_HEADROOM overrides for R&D only (Exp A).
-    // Do not pass live -ub (066.11) or live -b (066.14 Exp A) as headroom.
+    // TASK-066.5 (ideas): windowed SWA + TurboQuant block align (128).
+    // Product headroom = live n_ubatch (minimal sufficient for one ubatch write).
+    // Optional TASK066_SIZE_SWA_HEADROOM overrides for R&D only.
+    // Outer pad = TURBO_KV_BLOCK_SIZE (128), not 256: ggml#17037 / get_n_kv pad-256 is
+    // FA graph reuse over *used* cells; oversizing the ring slows decode.
     // TASK-066.12 P1: compute window in uint64 to avoid uint32 wrap.
     n_swa_headroom = task066_resolve_swa_headroom(n_swa_headroom);
     uint32_t n_swa_eff = n_swa;
@@ -75,7 +73,8 @@ uint32_t llama_kv_cache_iswa_calc_size_swa(
         return size_base;
     }
     const uint32_t swa_window = (uint32_t) swa_window_64;
-    return GGML_PAD(std::min(size_base, swa_window + n_swa_headroom), 256);
+    const uint32_t raw = std::min(size_base, swa_window + n_swa_headroom);
+    return GGML_PAD(raw, (uint32_t) TURBO_KV_BLOCK_SIZE);
 }
 
 //
@@ -155,6 +154,10 @@ llama_kv_cache_iswa::llama_kv_cache_iswa(
             size_base, hparams.n_swa, n_seq_max, unified, swa_full, n_swa_headroom);
 
     LLAMA_LOG_INFO("%s: creating non-SWA KV cache, size = %u cells\n", __func__, size_base);
+    LLAMA_LOG_INFO("%s: size_swa calc: n_swa=%u headroom=%u (product=n_ubatch) "
+                   "unified=%d swa_full=%d → size_swa=%u (pad %d; FA n_kv still pads used→256)\n",
+            __func__, hparams.n_swa, n_swa_headroom, (int) unified, (int) swa_full,
+            size_swa, TURBO_KV_BLOCK_SIZE);
 
     llama_memory_t mem_other_base = nullptr;
     if (mem_other) {

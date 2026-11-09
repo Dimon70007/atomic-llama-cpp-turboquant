@@ -2230,18 +2230,15 @@ ggml_tensor * llama_model::get_rope_factors(const llama_cparams & cparams, int i
     return layers[il].rope_short;
 }
 
-// TASK-066.14 H6 KEEP: SWA headroom = fixed max-ubatch (not live n_batch).
+// Product SWA headroom = live n_ubatch (minimal sufficient; pad128 in calc_size_swa).
 static uint32_t llama_swa_headroom_product(const llama_cparams & cparams) {
-    if (cparams.n_ubatch > LLAMA_SWA_HEADROOM_MAX_UBATCH) {
-        throw std::runtime_error(format(
-                    "n_ubatch (%u) > LLAMA_SWA_HEADROOM_MAX_UBATCH (%u); "
-                    "SWA size_swa headroom is fixed (TASK-066.14 H6); lower -ub or raise the constant",
-                    cparams.n_ubatch, (uint32_t) LLAMA_SWA_HEADROOM_MAX_UBATCH));
+    if (cparams.n_ubatch == 0) {
+        throw std::runtime_error("n_ubatch == 0; SWA size_swa headroom requires n_ubatch > 0");
     }
     LLAMA_LOG_INFO(
-            "%s: SWA n_swa_headroom = %u (fixed MAX_UBATCH; n_batch=%u n_ubatch=%u not used for size_swa)\n",
-            __func__, (uint32_t) LLAMA_SWA_HEADROOM_MAX_UBATCH, cparams.n_batch, cparams.n_ubatch);
-    return (uint32_t) LLAMA_SWA_HEADROOM_MAX_UBATCH;
+            "%s: SWA n_swa_headroom = %u (live n_ubatch; n_batch=%u telemetry only)\n",
+            __func__, cparams.n_ubatch, cparams.n_batch);
+    return cparams.n_ubatch;
 }
 
 llama_memory_i * llama_model::create_memory(const llama_memory_params & params, const llama_cparams & cparams) const {
@@ -2366,7 +2363,7 @@ llama_memory_i * llama_model::create_memory(const llama_memory_params & params, 
                             cparams.kv_unified,
                             cparams.n_ctx_seq,
                             cparams.n_seq_max,
-                            /* n_swa_headroom */ llama_swa_headroom_product(cparams), // 066.14 H6
+                            /* n_swa_headroom */ llama_swa_headroom_product(cparams), // live n_ubatch + pad128
                             1,
                             nullptr,
                             filter_mtp,
@@ -2409,7 +2406,7 @@ llama_memory_i * llama_model::create_memory(const llama_memory_params & params, 
                             cparams.kv_unified,
                             cparams.n_ctx_seq,
                             cparams.n_seq_max,
-                            /* n_swa_headroom */ llama_swa_headroom_product(cparams), // 066.14 H6
+                            /* n_swa_headroom */ llama_swa_headroom_product(cparams), // live n_ubatch + pad128
                             1,
                             nullptr,
                             nullptr,
@@ -2487,7 +2484,7 @@ llama_memory_i * llama_model::create_memory(const llama_memory_params & params, 
                             /* attn_v_trans      */ !cparams.flash_attn,
                             /* attn_swa_full     */ params.swa_full,
                             /* attn_kv_size      */ cparams.n_ctx_seq,
-                            /* attn_n_swa_headroom */ llama_swa_headroom_product(cparams), // 066.14 H6
+                            /* attn_n_swa_headroom */ llama_swa_headroom_product(cparams), // live n_ubatch + pad128
                             /* attn_n_pad        */ 1,
                             /* recurrent_type_r  */ GGML_TYPE_F32,
                             /* recurrent_type_s  */ GGML_TYPE_F32,
@@ -2605,7 +2602,7 @@ llama_memory_i * llama_model::create_memory(const llama_memory_params & params, 
                                     cparams.kv_unified,
                                     cparams.n_ctx_seq,
                                     cparams.n_seq_max,
-                                    /* n_swa_headroom */ llama_swa_headroom_product(cparams), // 066.14 H6
+                                    /* n_swa_headroom */ llama_swa_headroom_product(cparams), // live n_ubatch + pad128
                                     1,
                                     mem_other,
                                     filter,
@@ -2625,7 +2622,7 @@ llama_memory_i * llama_model::create_memory(const llama_memory_params & params, 
                                     cparams.kv_unified,
                                     cparams.n_ctx_seq,
                                     cparams.n_seq_max,
-                                    /* n_swa_headroom */ llama_swa_headroom_product(cparams), // 066.14 H6
+                                    /* n_swa_headroom */ llama_swa_headroom_product(cparams), // live n_ubatch + pad128
                                     1,
                                     nullptr,
                                     filter,
