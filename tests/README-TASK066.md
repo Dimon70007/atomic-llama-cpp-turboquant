@@ -37,8 +37,8 @@ Self-contained in **this** llama.cpp / ggml fork. Other developers: start here.
 | **066.14** | [TASK-066.14-c1-s8-s1024-localize-rd.md](TASK-066.14-c1-s8-s1024-localize-rd.md) | 066.13 | 🟢 H6 + product pivot `n_ubatch`+pad128 |
 | **066.15** | [TASK-066.15-metal-perf-knobs-rd.md](TASK-066.15-metal-perf-knobs-rd.md) | 066.9 + 066.14 evidence | 🟡 DEFAULT=1 probe; env+quality stamps |
 | **066.16** | [TASK-066.16-min1-red-triage.md](TASK-066.16-min1-red-triage.md) | 066.15 full-suite RED | 🟢 R1–R9 **P**; **KEEP DEFAULT=1** (`…062918Z`) |
-| **066.17** | [TASK-066.17-product-ubatch-256-512-1024.md](TASK-066.17-product-ubatch-256-512-1024.md) | 066.14 | 🔴 OPEN; root locked `size_swa∝ub` |
-| **066.18** | [TASK-066.18-src-lever-ablation.md](TASK-066.18-src-lever-ablation.md) | squash tip vs `0fe16d12d` | 🟡 levers+orchestrator; matrix stamps open |
+| **066.17** | [TASK-066.17-product-ubatch-256-512-1024.md](TASK-066.17-product-ubatch-256-512-1024.md) | 066.14 | 🟢 DONE product C2p/C1p/C1jp (`…225212Z`); stress C1 RED |
+| **066.18** | [TASK-066.18-src-lever-ablation.md](TASK-066.18-src-lever-ablation.md) | squash tip vs `0fe16d12d` | 🟢 Mode A+B DONE (`…193709Z-fullA` / `…211533Z-fullB`) |
 
 Overview locks / DoD / out-of-scope: [TASK-066.0-overview.md](TASK-066.0-overview.md).  
 Latest suite GREEN/RED snapshot: [TASK-066-status-matrix-20261106.md](TASK-066-status-matrix-20261106.md).

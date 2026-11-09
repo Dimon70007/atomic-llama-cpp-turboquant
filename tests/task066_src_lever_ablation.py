@@ -23,9 +23,17 @@ _DEFAULT_CFG: Final[Path] = _TESTS_DIR / "task066_src_lever_ablation.json"
 _CORNERS: Final[Path] = _TESTS_DIR / "run-task066-metal-corners.sh"
 _UBATCH: Final[Path] = _TESTS_DIR / "run-task066-ubatch-s8-s1024-corners.sh"
 
-_RE_MAD: Final[re.Pattern[str]] = re.compile(r"\bmad[=:\s]+([0-9.eE+-]+)")
-_RE_RESULT_FAIL: Final[re.Pattern[str]] = re.compile(r"RESULT FAIL|\bRED\b|exact=0")
-_RE_RESULT_PASS: Final[re.Pattern[str]] = re.compile(r"RESULT PASS|exact=1|\bGREEN\b")
+_RE_MAD: Final[re.Pattern[str]] = re.compile(
+    r"\bmad[=:\s]+([0-9.eE+-]+)|max_abs_diff=([0-9.eE+-]+).*max_ulp=([0-9]+)",
+    re.IGNORECASE,
+)
+# Do NOT match bare "RED" / "GREEN" in prose ("RED gate", "PRE-PATCH RED").
+_RE_RESULT_FAIL: Final[re.Pattern[str]] = re.compile(
+    r"RESULT FAIL|VERDICT=FAIL|VERDICT=RED\b|exact=0\b.*\bFAIL\b|\bfails=\d+"
+)
+_RE_RESULT_PASS: Final[re.Pattern[str]] = re.compile(
+    r"RESULT PASS|VERDICT=PASS|VERDICT=GREEN\b|exact=1\b"
+)
 
 
 def _utc_stamp() -> str:
@@ -179,14 +187,21 @@ def _configure_and_build(
 def _classify_log(text: str, rc: int) -> tuple[str, str | None]:
     if rc == 77:
         return "SKIP", None
+    mad: str | None = None
     mad_m = _RE_MAD.search(text)
-    mad = mad_m.group(1) if mad_m else None
-    if rc != 0:
-        return "RED", mad
+    if mad_m:
+        if mad_m.group(1):
+            mad = mad_m.group(1)
+        elif mad_m.group(2) and mad_m.group(3):
+            mad = f"abs={mad_m.group(2)} ulp={mad_m.group(3)}"
+    # Prefer explicit RESULT/VERDICT lines over raw exit code (some runners exit 0
+    # after RESULT FAIL; some banner text said "RED gate" and fooled old regex).
     if _RE_RESULT_FAIL.search(text):
         return "RED", mad
-    if _RE_RESULT_PASS.search(text) or rc == 0:
+    if _RE_RESULT_PASS.search(text):
         return "GREEN", mad
+    if rc != 0:
+        return "RED", mad
     return "GREEN", mad
 
 
@@ -264,6 +279,121 @@ def _run_suite_row(
     }
 
 
+def _verdict_of(
+    results: list[dict[str, Any]], mode: str, lev: str | None, suite: str
+) -> str | None:
+    for r in results:
+        if r.get("mode") == mode and r.get("lever") == lev and r.get("suite_id") == suite:
+            return str(r.get("verdict") or "")
+    return None
+
+
+def _cell_label(
+    results: list[dict[str, Any]], mode: str, lev: str | None, suite: str
+) -> str:
+    for r in results:
+        if r.get("mode") == mode and r.get("lever") == lev and r.get("suite_id") == suite:
+            cell = r.get("verdict", "?")
+            mad = r.get("mad")
+            if mad:
+                return f"{cell} mad={mad}"
+            return str(cell)
+    return ""
+
+
+def _write_keep_drop(
+    stamp: Path,
+    results: list[dict[str, Any]],
+    levers: list[str],
+    suites: list[str],
+) -> None:
+    """Per-lever keep/drop aid: which suites fail when tip change is OFF (Mode A)."""
+    lines: list[str] = [
+        "# TASK-066.18 — per-lever keep/drop (Mode A tip−1)",
+        "",
+        "Baseline = tip all-ON. Each section = that tip change **OFF** (master-like at that site).",
+        "",
+        "- **harm (DROP candidate):** tip ON was RED, OFF → GREEN (change caused the fail)",
+        "- **help (KEEP candidate):** tip ON was GREEN, OFF → RED (change was fixing the suite)",
+        "- **still RED:** fail with or without the change (not decided by this lever alone)",
+        "- **still GREEN:** pass with or without the change",
+        "",
+    ]
+    tip = {s: _verdict_of(results, "tip_control", None, s) for s in suites}
+    if not any(tip.values()):
+        lines.append("_No tip_control rows yet._")
+        lines.append("")
+    for lev in levers:
+        harm: list[str] = []
+        help_: list[str] = []
+        still_red: list[str] = []
+        still_green: list[str] = []
+        missing: list[str] = []
+        for s in suites:
+            base = tip.get(s)
+            cur = _verdict_of(results, "tip_minus", lev, s)
+            if base is None or cur is None:
+                missing.append(s)
+                continue
+            if base == "RED" and cur == "GREEN":
+                harm.append(s)
+            elif base == "GREEN" and cur == "RED":
+                help_.append(s)
+            elif base == "RED" and cur == "RED":
+                still_red.append(s)
+            elif base == "GREEN" and cur == "GREEN":
+                still_green.append(s)
+            else:
+                still_red.append(f"{s} ({base}->{cur})")
+        lines.append(f"## `{lev}` OFF")
+        lines.append("")
+        lines.append(f"- harm (DROP?): {', '.join(harm) if harm else '—'}")
+        lines.append(f"- help (KEEP?): {', '.join(help_) if help_ else '—'}")
+        lines.append(f"- still RED: {', '.join(still_red) if still_red else '—'}")
+        lines.append(f"- still GREEN: {', '.join(still_green) if still_green else '—'}")
+        if missing:
+            lines.append(f"- pending: {', '.join(missing)}")
+        lines.append("")
+
+    # Mode B brief if present
+    master = {s: _verdict_of(results, "master_control", None, s) for s in suites}
+    if any(master.values()):
+        lines.append("# Mode B — master+1 (change ON alone vs master all-OFF)")
+        lines.append("")
+        lines.append(
+            "- **alone helps:** master RED, master+1 GREEN "
+            "(this change alone fixes the suite)"
+        )
+        lines.append(
+            "- **alone harms / insufficient:** master GREEN→RED, or both RED"
+        )
+        lines.append("")
+        for lev in levers:
+            alone_helps: list[str] = []
+            alone_red: list[str] = []
+            for s in suites:
+                m = master.get(s)
+                cur = _verdict_of(results, "master_plus", lev, s)
+                if m is None or cur is None:
+                    continue
+                if m == "RED" and cur == "GREEN":
+                    alone_helps.append(s)
+                elif cur == "RED":
+                    alone_red.append(s)
+            if alone_helps or alone_red:
+                lines.append(f"## `{lev}` ON alone")
+                lines.append("")
+                lines.append(
+                    f"- alone helps: {', '.join(alone_helps) if alone_helps else '—'}"
+                )
+                lines.append(
+                    f"- still/now RED: {', '.join(alone_red) if alone_red else '—'}"
+                )
+                lines.append("")
+
+    (stamp / "keep_drop.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
 def _write_tables(
     stamp: Path,
     results: list[dict[str, Any]],
@@ -272,16 +402,6 @@ def _write_tables(
 ) -> None:
     # Mode A: tip_control + tip_minus per lever
     # Mode B: master_control + master_plus per lever
-    def lookup(mode: str, lev: str | None, suite: str) -> str:
-        for r in results:
-            if r.get("mode") == mode and r.get("lever") == lev and r.get("suite_id") == suite:
-                cell = r.get("verdict", "?")
-                mad = r.get("mad")
-                if mad:
-                    return f"{cell} mad={mad}"
-                return str(cell)
-        return ""
-
     lines: list[str] = ["# TASK-066.18 ablation tables", ""]
     lines.append("## Table A — tip−1 (columns = CONTROL tip + lever OFF)")
     lines.append("")
@@ -289,9 +409,9 @@ def _write_tables(
     lines.append("| " + " | ".join(cols_a) + " |")
     lines.append("| " + " | ".join(["---"] * len(cols_a)) + " |")
     for s in suites:
-        row = [s, lookup("tip_control", None, s)]
+        row = [s, _cell_label(results, "tip_control", None, s)]
         for lev in levers:
-            row.append(lookup("tip_minus", lev, s))
+            row.append(_cell_label(results, "tip_minus", lev, s))
         lines.append("| " + " | ".join(row) + " |")
     lines.append("")
     lines.append("## Table B — master+1 (columns = CONTROL master + lever ON alone)")
@@ -300,16 +420,19 @@ def _write_tables(
     lines.append("| " + " | ".join(cols_b) + " |")
     lines.append("| " + " | ".join(["---"] * len(cols_b)) + " |")
     for s in suites:
-        row = [s, lookup("master_control", None, s)]
+        row = [s, _cell_label(results, "master_control", None, s)]
         for lev in levers:
-            row.append(lookup("master_plus", lev, s))
+            row.append(_cell_label(results, "master_plus", lev, s))
         lines.append("| " + " | ".join(row) + " |")
+    lines.append("")
+    lines.append("See also `keep_drop.md` (per-lever FAIL lists for keep/remove).")
     lines.append("")
     (stamp / "tables.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
     (stamp / "results.json").write_text(
         json.dumps(results, indent=2, ensure_ascii=False) + "\n",
         encoding="utf-8",
     )
+    _write_keep_drop(stamp, results, levers, suites)
 
 
 def main() -> None:
@@ -339,6 +462,12 @@ def main() -> None:
         "--skip-build",
         action="store_true",
         help="reuse existing ablation build dirs (no cmake)",
+    )
+    ap.add_argument(
+        "--reuse-builds-from",
+        type=Path,
+        default=None,
+        help="symlink tip_minus/master_* builds from a prior stamp (skip cmake when link ok)",
     )
     ap.add_argument(
         "--controls-only",
@@ -417,10 +546,17 @@ def main() -> None:
     results: list[dict[str, Any]] = []
     cmake_base = [str(x) for x in cfg.get("cmake_base") or []]
     targets = [str(x) for x in cfg.get("build_targets") or []]
+    tip_reuse = Path(os.environ.get("BUILD_DIR", "")).expanduser()
+    if tip_reuse and not tip_reuse.is_absolute():
+        tip_reuse = (_REPO_ROOT / tip_reuse).resolve()
+    elif tip_reuse:
+        tip_reuse = tip_reuse.resolve()
 
     print(f"STAMP={stamp}")
     print(f"MATRIX levers={levers}")
     print(f"MATRIX rows={rows}")
+    if tip_reuse.is_dir():
+        print(f"TIP_REUSE_BUILD_DIR={tip_reuse} (tip_control only when disable=[])")
     if args.dry_run:
         print("DRY_RUN matrix cells:")
         for mode, lid in cells:
@@ -440,7 +576,39 @@ def main() -> None:
 
         disabled = _disabled_cmake_ids(cfg, mode=mode, lever_id=lid)
         bdir = _build_dir_for(stamp, mode, lid)
-        if not args.skip_build:
+        reuse_tip = (
+            mode == "tip_control"
+            and not disabled
+            and tip_reuse.is_dir()
+            and (tip_reuse / "bin").is_dir()
+        )
+        reused_prior = False
+        if (
+            not reuse_tip
+            and args.reuse_builds_from is not None
+            and mode != "tip_control"
+        ):
+            prior_root = args.reuse_builds_from.expanduser().resolve()
+            prior = prior_root / "builds" / mode / (lid or "CONTROL")
+            if prior.is_dir() and (prior / "bin").is_dir():
+                bdir.parent.mkdir(parents=True, exist_ok=True)
+                if bdir.exists() or bdir.is_symlink():
+                    if bdir.is_symlink() or bdir.is_file():
+                        bdir.unlink()
+                    else:
+                        # keep existing real dir
+                        pass
+                if not bdir.exists():
+                    bdir.symlink_to(prior, target_is_directory=True)
+                reused_prior = True
+                print(f"REUSE prior build {prior} -> {bdir}")
+        if reuse_tip:
+            bdir = tip_reuse
+            print(f"REUSE tip build_dir={bdir} (no cmake)")
+        elif reused_prior or args.skip_build:
+            if not (bdir / "bin").is_dir() and not args.dry_run:
+                _fail(f"skip/reuse build missing bin/: {bdir}")
+        elif not args.skip_build:
             brc = _configure_and_build(
                 repo=_REPO_ROOT,
                 build_dir=bdir,
@@ -476,6 +644,8 @@ def main() -> None:
                 f"CELL {_cell_key(mode, lid, sid)} -> {meta['verdict']}"
                 + (f" mad={meta['mad']}" if meta.get("mad") else "")
             )
+            # Incremental stamp so a long GPU sweep can be resumed / inspected.
+            _write_tables(stamp, results, levers, rows)
 
     _write_tables(stamp, results, levers, rows)
     print(f"WROTE {stamp / 'tables.md'}")

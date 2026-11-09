@@ -35,7 +35,8 @@ if [[ ! -d "${BUILD_DIR}" ]]; then
   exit 1
 fi
 
-NCPU="$(sysctl -n hw.ncpu 2>/dev/null || nproc)"
+# Darwin has no nproc; never fall through to a missing binary (exit 127).
+NCPU="$(sysctl -n hw.ncpu 2>/dev/null || getconf _NPROCESSORS_ONLN 2>/dev/null || echo 8)"
 
 # 066.9 A2 — CPU policy unit first (no Metal). Catches DEFAULT=7 / rem hazard on merge.
 if [[ "${REBUILD:-0}" == "1" ]] || [[ ! -x "${POLICY_BIN}" ]]; then

@@ -50,6 +50,7 @@
     "test-metal-cb-fusion",
     "test-metal-mul-mm-policy",
     "test-iswa-size-swa",
-    "test-ubatch-s8-s1024-row0-parity"
+    "test-ubatch-s8-s1024-row0-parity",
+    "test-backend-ops"
   ]
 }

@@ -48,17 +48,20 @@ uint32_t llama_kv_cache_iswa_calc_swa_headroom(uint32_t n_batch, uint32_t n_ubat
     if (n_ubatch == 0) {
         throw std::runtime_error("n_ubatch == 0; SWA size_swa headroom requires n_ubatch > 0");
     }
+    if (n_batch == 0) {
+        throw std::runtime_error("n_batch == 0; SWA size_swa headroom requires n_batch > 0");
+    }
 #ifdef TASK066_DISABLE_SIZE_SWA_UB
-    // Master-like: headroom = live n_ubatch only (no max(ub,b/4), no PAD128).
+    // Ablation master-like: headroom = live n_ubatch only (∝ub; 066.18 lever).
     (void) n_batch;
     return n_ubatch;
 #else
-    // Fail closed: ubatch drives one-write room; batch/4 is only a floor for
-    // pathological autotests (ub << batch), not a second independent tax.
-    // Round headroom up to TurboQuant KV block (128) after the max().
-    const uint32_t batch_floor = n_batch / 4;
-    const uint32_t raw = std::max(n_ubatch, batch_floor);
-    return GGML_PAD(raw, (uint32_t) TURBO_KV_BLOCK_SIZE);
+    // TASK-066.17 (restore 066.13 C2 KEEP): headroom from -b only.
+    // Equal -b + differing -ub ⇒ identical size_swa (ubatch bit-exact).
+    // Safe: llama guarantees n_ubatch <= n_batch, so one-write room holds.
+    // PAD128 = TurboQuant KV block. n_ubatch only fail-closed above (⊥ub sizing).
+    (void) n_ubatch;
+    return GGML_PAD(n_batch, (uint32_t) TURBO_KV_BLOCK_SIZE);
 #endif
 }
 
@@ -73,10 +76,9 @@ uint32_t llama_kv_cache_iswa_calc_size_swa(
         return size_base;
     }
     // TASK-066.5 (ideas): windowed SWA; n_swa_eff aligned to TurboQuant block (128).
-    // Product headroom = max(n_ubatch, n_batch/4) from calc_swa_headroom.
+    // Product headroom = PAD128(n_batch) from calc_swa_headroom (066.17 / 066.13 KEEP).
     // Optional TASK066_SIZE_SWA_HEADROOM overrides for R&D only.
     // Outer pad = 256 (FA get_n_kv / ggml#17037 graph pad).
-    // Metal product envelope: n_ubatch <= 1024; larger ub blows size_swa (and RAM).
     // TASK-066.12 P1: compute window in uint64 to avoid uint32 wrap.
     n_swa_headroom = task066_resolve_swa_headroom(n_swa_headroom);
     uint32_t n_swa_eff = n_swa;
@@ -178,7 +180,7 @@ llama_kv_cache_iswa::llama_kv_cache_iswa(
             size_base, hparams.n_swa, n_seq_max, unified, swa_full, n_swa_headroom);
 
     LLAMA_LOG_INFO("%s: creating non-SWA KV cache, size = %u cells\n", __func__, size_base);
-    LLAMA_LOG_INFO("%s: size_swa calc: n_swa=%u headroom=%u (product=max(ub,b/4)) "
+    LLAMA_LOG_INFO("%s: size_swa calc: n_swa=%u headroom=%u (product=PAD128(n_batch)) "
                    "unified=%d swa_full=%d → size_swa=%u (n_swa_eff pad %d; outer pad 256)\n",
             __func__, hparams.n_swa, n_swa_headroom, (int) unified, (int) swa_full,
             size_swa, TURBO_KV_BLOCK_SIZE);

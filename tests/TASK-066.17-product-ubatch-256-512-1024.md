@@ -1,12 +1,14 @@
 # TASK-066.17 — Product ubatch parity gates (256↔512, 256↔1024)
 
-**Status:** 🔴 **OPEN / RED** (2026-11-09) — gates implemented; root class **locked** (below); fix until GREEN  
+**Status:** 🟢 **DONE** (2026-11-10) — product C2pf16/C2pq8/C2p/C1p/C1jp **GREEN** after `headroom=PAD128(n_batch)`; full-suite stress C1 16↔1024 still RED (066.5/066.6, out of 066.17 DoD)  
 **Policy:** red tests are **never** KEEP / waive / “accepted tax”.  
-**Depends on:** 066.5/066.6 product gate binary `test-ubatch-s8-s1024-row0-parity`; 066.14 size_swa pivot; tip `MUL_MM_MIN_DEFAULT=8` (upstream-like)  
+**Depends on:** 066.5/066.6 product gate binary `test-ubatch-s8-s1024-row0-parity`; 066.18 Mode B; tip `MUL_MM_MIN_DEFAULT=8`  
 **Product pointer:** [`tasks/TASK-066-nomtp-ubatch-s8-s1024.md`](../../../tasks/TASK-066-nomtp-ubatch-s8-s1024.md)  
 **Binary / runner:** `tests/test-ubatch-s8-s1024-row0-parity.cpp` + `tests/run-task066-ubatch-s8-s1024-corners.sh`  
 **Umbrella:** `SUITE=ubatch-s8-s1024` (no new suite name)  
-**Stamps:** product [`…173359Z`](../logs/task066-17-product-ub-20261109T173359Z/) · q8 [`…174850Z`](../logs/task066-17-c1p-q8-20261109T174850Z/) · f16 [`…175136Z`](../logs/task066-17-c1p-f16-20261109T175136Z/)
+**Merged operator log:** [`logs/run-06617-after-nbatch-headroom.log`](../logs/run-06617-after-nbatch-headroom.log)  
+**GREEN stamps:** f16 [`…215457Z-c1p-f16`](../logs/task066-17-product-ub-20261109T215457Z-c1p-f16/) · q8 [`…225117Z-c1p-q8`](../logs/task066-17-product-ub-20261109T225117Z-c1p-q8/) · full product path [`…225212Z`](../logs/task066-17-product-ub-20261109T225212Z/) (RED only at stress C1)  
+**Pre-fix RED:** [`…173359Z`](../logs/task066-17-product-ub-20261109T173359Z/) / [`…174850Z`](../logs/task066-17-c1p-q8-20261109T174850Z/) / [`…175136Z`](../logs/task066-17-c1p-f16-20261109T175136Z/)
 
 ---
 
@@ -27,7 +29,30 @@
 
 **Required fix direction:** restore bit-exact on C2pf16 → C2pq8 → C2p (then C1p/C1jp) by making SWA sizing **invariant to differing ub under equal `-b`** (or equivalent invariant). **No soft-ε, no KEEP-with-RED, no “accept the tax”.**
 
-**Not Done until:** C2pf16 + C2pq8 + C2p + C1p + C1jp all GREEN on a new stamp.
+### Fix landed in tip (2026-11-10) — restore 066.13 KEEP
+
+```text
+headroom = PAD128(n_batch)     # was PAD128(max(n_ubatch, n_batch/4)) — ∝ub
+size_swa = PAD256(n_swa_eff + headroom)
+```
+
+- Code: `llama_kv_cache_iswa_calc_swa_headroom` in `src/llama-kv-cache-iswa.cpp`.  
+- Unit: `test-iswa-size-swa` expects equal headroom for `(b=512,ub=256)` and `(b=512,ub=512)`.  
+- Memory: product `b=2048 ub=512` headroom **512→2048** (same tax 066.13 accepted for C2 KEEP).  
+- 066.18 Mode B: enabling tip `max(ub,b/4)` alone left ubatch mad≈4.70 — confirms need ⊥ub policy, not that lever.
+
+### GPU evidence (2026-11-09/10) — after `PAD128(n_batch)` — **066.17 DoD met**
+
+| Gate | Stamp | Result |
+|------|-------|--------|
+| **C2pf16** + **C1pf16** | [`…215457Z-c1p-f16`](../logs/task066-17-product-ub-20261109T215457Z-c1p-f16/) | **GREEN** `mad=0` / `first_token_diff=-1` |
+| **C2pq8** + **C1pq8** | [`…225117Z-c1p-q8`](../logs/task066-17-product-ub-20261109T225117Z-c1p-q8/) | **GREEN** `mad=0` / bit-exact greedy |
+| **C2** / **C3** / **C2pf16** / **C2pq8** / **C2p** / **C1p** / **C1jp** | [`…225212Z`](../logs/task066-17-product-ub-20261109T225212Z/) full | **all GREEN** (`C2p` `exact=1 mad=0` both pairs) |
+| Stress **C1** 16↔1024 | same full stamp | **RED** `first_token_diff=1` — **066.5/066.6**; explicitly out of 066.17 DoD |
+
+Note: SWA ring-full warnings at `used_max_p1=size_swa=1536` under equal `-b=512` still appear; product bit-exact holds.
+
+**066.17 closed.** Residual stress C1 stays open under parent 066.5/066.6 (no waive).
 
 ---
 
@@ -96,27 +121,25 @@ First RED stops the suite (no waive).
 1. [x] C2p + C1p + C1jp + C2pq8/C2pf16 isolates implemented; fail-closed ub + KV locks.  
 2. [x] `TASK066_DIAG=c1p` / `c1p-q8` / `c1p-f16` / `c1jp` wired; runner + CHANGELOG + README-TASK066.  
 3. [x] RED evidence + **locked conclusion** recorded (above).  
-4. [ ] **C2pf16 + C2pq8 + C2p + C1p + C1jp all GREEN** — no KEEP / waive / soft-ε.  
-5. [ ] This file + parent pointer → Done only after that GREEN stamp.
+4. [x] Fix `headroom=PAD128(n_batch)` + unit PASS.  
+5. [x] **C2pf16 + C1pf16 GREEN** (`…215457Z-c1p-f16`).  
+6. [x] **C2pq8 + C2p + C1p + C1jp GREEN** (`…225117Z-c1p-q8` + full `…225212Z`).  
+7. [x] This file + parent pointer + CHANGELOG synced.
 
 ---
 
-## Stamp / current RED (2026-11-09) — task OPEN
+## Stamp / post-fix (2026-11-10) — product GREEN
 
-**Stamp:** `logs/task066-17-product-ub-20261109T173359Z`  
-**Build:** `build-task066-cb-ws` / tip dirty + `MUL_MM_MIN_DEFAULT=8`  
-**Env:** `TASK066_MODEL=…/gemma-4-26B-A4B-it-UD-IQ4_XS.gguf` `TASK066_CTX=3072` (diag unset = full suite)
+**Full stamp:** [`…225212Z`](../logs/task066-17-product-ub-20261109T225212Z/) · log [`run-06617-after-nbatch-headroom.log`](../logs/run-06617-after-nbatch-headroom.log)
 
 | Gate | Result | Notes |
 |------|--------|--------|
-| C2 | GREEN | ub16 vs ub32 n=32 |
-| C3 | GREEN | n=1280 + n=1536 |
-| **C2p 256↔512** | **RED** | `exact=0` mad≈7.635 `first_diff_i=0` argmax `9494` vs `1314`; n_prefix=1536, equal `-b=512` |
-| C2p 256↔1024 | not run | suite stops on first RED |
-| C1p / C1jp | not run | after C2p |
-| C1 / C1j stress | not run | after C*p* |
+| C2 / C3 | GREEN | stress ub16 paths |
+| C2pf16 / C2pq8 / **C2p** | **GREEN** | product 256↔512 + 256↔1024 `mad=0` |
+| **C1p** / **C1jp** | **GREEN** | both pairs `first_token_diff=-1` |
+| Stress C1 16↔1024 | **RED** | `first_token_diff=1` — 066.5/066.6 residual (not 066.17 DoD) |
 
-See **Locked conclusion** above (stamps + mad ladder). SWA ring-full warnings at n=1536 on all three isolates (same class as C3 path).
+Pre-fix RED table preserved under **Locked conclusion** above.
 
 ---
 

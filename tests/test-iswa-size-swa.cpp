@@ -1,11 +1,10 @@
 // ISWA size_swa unit (CPU; no model).
 //
-// Locks TASK-066.5 ideas:
+// Locks TASK-066.5 / 066.17:
 //   n_swa_eff = ceil(n_swa / 128) * 128
-//   headroom  = PAD128(max(n_ubatch, n_batch / 4))  // product anti-footgun + TQ block
+//   headroom  = PAD128(n_batch)   // ⊥ub under equal -b (066.13 KEEP restored)
 //   size_swa  = PAD256(min(size_base, n_swa_eff * (unified ? n_seq_max : 1) + headroom))
 //   swa_full still forces size_base
-// Metal product envelope: n_ubatch <= 1024 (larger ub -> oversized size_swa).
 
 
 #include <cstdio>
@@ -37,30 +36,37 @@ void expect_u32(const char * name, uint32_t got, uint32_t want) {
 } // namespace
 
 int main() {
-    printf("ISWA size_swa unit (CPU; no model) — PAD128(max(ub,b/4)) + pad256\n");
+    printf("ISWA size_swa unit (CPU; no model) — PAD128(n_batch) + pad256\n");
 
-    // --- headroom helper ---
-    // Product YAML batch=2048 ub=512 -> PAD128(512)=512.
+    // --- headroom helper (066.17: from -b only) ---
+    // Product YAML batch=2048 ub=512 -> PAD128(2048)=2048.
     expect_u32(
             "headroom_product_2048_512",
             llama_kv_cache_iswa_calc_swa_headroom(2048, 512),
+            2048);
+    // Same -b, different -ub -> identical headroom (C2p class).
+    expect_u32(
+            "headroom_c2p_b512_ub256",
+            llama_kv_cache_iswa_calc_swa_headroom(512, 256),
             512);
-    // Idiot autotest: ub=8 b=1536 -> PAD128(max(8,384))=384 (already %128).
+    expect_u32(
+            "headroom_c2p_b512_ub512",
+            llama_kv_cache_iswa_calc_swa_headroom(512, 512),
+            512);
+    // Idiot / C3: headroom tracks -b (not ub).
     expect_u32(
             "headroom_idiot_1536_8",
             llama_kv_cache_iswa_calc_swa_headroom(1536, 8),
-            384);
-    // Oneshot ub=n: PAD128(1536)=1536.
+            1536);
     expect_u32(
             "headroom_idiot_1536_1536",
             llama_kv_cache_iswa_calc_swa_headroom(1536, 1536),
             1536);
-    // b=1280 ub=8 -> max(8,320)=320 -> PAD128(320)=384.
     expect_u32(
             "headroom_c3_1280_8",
             llama_kv_cache_iswa_calc_swa_headroom(1280, 8),
-            384);
-    // ub=8 b=8 -> max(8,2)=8 -> PAD128(8)=128.
+            1280);
+    // ub=8 b=8 -> PAD128(8)=128.
     expect_u32(
             "headroom_tiny_8_8",
             llama_kv_cache_iswa_calc_swa_headroom(8, 8),
@@ -70,12 +76,11 @@ int main() {
     const uint32_t n_swa = 1024;
     const uint32_t ctx   = 3072;
 
-    // headroom=8  -> PAD256(1024+8) = 1280  (direct headroom arg; product would floor first)
+    // headroom=8  -> PAD256(1024+8) = 1280  (direct headroom arg)
     expect_u32(
             "gemma4_headroom8",
             llama_kv_cache_iswa_calc_size_swa(ctx, n_swa, /*n_seq_max*/ 1, true, false, /*headroom*/ 8),
             1280);
-    // idiot C3 multi effective headroom 384 -> PAD256(1024+384)=PAD256(1408)=1536
     expect_u32(
             "gemma4_headroom384_idiot_c3",
             llama_kv_cache_iswa_calc_size_swa(ctx, n_swa, 1, true, false, 384),

@@ -12,16 +12,23 @@ Releases before `b10269-1.5.0` predate this file; see the git history.
 
 ## Unreleased
 
+### Changed
+
+- **TASK-066.17 DONE:** SWA `headroom=PAD128(n_batch)` (⊥ub). Product
+  C2pf16/C2pq8/C2p/C1p/C1jp **GREEN** (stamps `…215457Z-c1p-f16`,
+  `…225117Z-c1p-q8`, full `…225212Z`). Stress C1 16↔1024 still RED
+  (066.5/066.6). Log `logs/run-06617-after-nbatch-headroom.log`. SSOT
+  `tests/TASK-066.17-product-ubatch-256-512-1024.md`.
+
 ### Added
 
-- **TASK-066.18 (impl scaffolding):** src-delta lever ablation tip−1 / master+1.
-  Per-lever compile toggles `TASK066_DISABLE_*` (cmake
-  `TASK066_ABLATION_DISABLE=FA_TILE;…`); Metal float-tile via embed prep macros.
-  Orchestrator `tests/task066_src_lever_ablation.py` +
-  `tests/run-task066-src-lever-ablation.sh`; stamp
-  `logs/task066-18-ablation-<UTC>/` with tables.md. Parent Make:
-  `minillm-task066-src-lever-ablation`. SSOT
-  `tests/TASK-066.18-src-lever-ablation.md`. Full matrix stamps still open.
+- **TASK-066.18 Mode A+B DONE:** Mode A tip−1 `…193709Z-fullA`; Mode B
+  master+1 `…211533Z-fullB` (operator Terminal; log `logs/run-modeB-full.log`).
+  Alone GREEN: `L_fa_tile`→fa, `L_no_mv_ext`→mul_mat. `L_float_tile` alone
+  improves residual ulp 10735→8 and c2pf16 mad 4.70→0.255 (still RED — soft
+  KEEP). `L_size_swa_ub` alone does **not** clear ubatch (mad (=) master).
+  No alone-harms. Wrapper auto-`minillm-stop`; residual corners Darwin `nproc`
+  fix. SSOT `tests/TASK-066.18-src-lever-ablation.md`.
 
 - **TASK-066.17 (impl; OPEN/RED):** product ubatch gates C2p/C1p/C1jp —
   pairs `256↔512` and `256↔1024` only (no `512↔1024`); equal `-b=max(ub)`

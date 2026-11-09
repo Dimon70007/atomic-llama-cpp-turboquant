@@ -1,162 +1,214 @@
 # TASK-066.18 — Src-delta lever ablation (tip−1 / master+1)
 
-**Status:** 🟡 **IMPL IN PROGRESS** (2026-11-09) — levers + orchestrator landed; matrix stamps open  
-**Depends on:** squash tip `999c737a6` on `0fe16d12d` (single commit vs upstream release); 066.17 locked root (`size_swa∝ub`); suite map in [`README-TASK066.md`](README-TASK066.md)  
+**Status:** 🟢 **Mode A DONE (corrected)** · **Mode B DONE** (`…211533Z-fullB`, 2026-11-09)  
+**Depends on:** squash tip `999c737a6` on `0fe16d12d`; 066.17 locked root (`size_swa∝ub`); suite map in [`README-TASK066.md`](README-TASK066.md)  
 **Product pointer:** [`tasks/TASK-066-nomtp-ubatch-s8-s1024.md`](../../../tasks/TASK-066-nomtp-ubatch-s8-s1024.md)  
-**Branch note:** operator push uses `task066-metal-batch-invariance-rebased` (no force-push to old tip).  
-**Why not “all off”:** disabling every tip change at once ≡ rebuild of `0fe16d12d` — useless. Ablation is **one lever at a time**.
+**Branch note:** `task066-metal-batch-invariance-rebased` (no force-push to old tip).  
+**Policy:** RED is never KEEP. Ablation attributes contribution; it does not waive 066.17.  
+**Why not “all off” alone:** all-off ≡ master rebuild — useless as the *only* experiment. Use it as Mode B **baseline**, then enable **one** lever.
 
 ---
 
 ## Goal
 
-For each logical src change vs master, measure **which suites flip** when that change is alone toggled:
-
 | Mode | Baseline | Action | Answers |
 |------|----------|--------|---------|
-| **A — tip−1** | tip (all levers ON) | turn **OFF** lever `i` only | “What does this change still buy on tip?” |
-| **B — master+1** | `0fe16d12d` (all OFF) | turn **ON** lever `i` only | “What does this change buy alone?” |
-
-Collect two result tables (rows = suites/gates, columns = levers) for **ON** and **OFF** (or tip / tip−i / master / master+i — see DoD).
-
-**Policy:** RED is never KEEP. Ablation explains contribution; it does not waive 066.17.
+| **A — tip−1** | tip (all levers ON) | turn **OFF** lever `i` only | “What does this tip change still buy?” |
+| **B — master+1** | all levers OFF (master-like) | turn **ON** lever `i` only | “What does this change buy alone?” |
 
 ---
 
-## Lever registry (must match src delta)
+## Lever registry
 
-IDs are stable selectors for cmake/env/orchestrator. One run changes **exactly one** lever from the mode baseline.
+| Lever id | Src cluster | Toggle | Primary suites |
+|----------|-------------|--------|----------------|
+| `L_fa_tile` | FA always-tile / nsg pin | `TASK066_DISABLE_FA_TILE` | `fa` |
+| `L_no_mv_ext` | dead `mul_mv_ext` for ne11 2..8 | `TASK066_DISABLE_NO_MV_EXT` | `mul-mat` |
+| `L_float_tile` | q8_0/iq4_xs float tiles + smem | `TASK066_DISABLE_FLOAT_TILE` | `mul-mat-residual`, ubatch |
+| `L_mm_min` | MoE id min 8 vs master 32 + env policy | `TASK066_DISABLE_MM_MIN` | `mul-mat-residual` |
+| `L_fusion_cb` | fusion_max CB snap | `TASK066_DISABLE_FUSION_CB` | `cb-fusion` |
+| `L_moe_view_add` | always view+ADD MoE out | `TASK066_DISABLE_MOE_VIEW_ADD` | `moe-out` |
+| `L_size_swa_ub` | tip `PAD128(max(ub,b/4))` vs master `n_ubatch` | `TASK066_DISABLE_SIZE_SWA_UB` | ubatch, `test-iswa-size-swa` |
+| `L_iswa_pads` | n_swa pad128 | `TASK066_DISABLE_ISWA_PADS` | `test-iswa-size-swa` |
+| `L_shared_kv` | `memory_has_shared_cells` | `TASK066_DISABLE_SHARED_KV` | `b1-shared-kv` |
+| `L_swa_hwm_log` | SWA HWM telemetry | `TASK066_DISABLE_SWA_HWM_LOG` | logs only |
 
-| Lever id | Src cluster | Default tip | Toggle mechanism (impl) | Primary suites |
-|----------|-------------|-------------|-------------------------|----------------|
-| `L_fa_tile` | FA always-tile / nsg pin (`ggml-metal-ops`) | ON | compile `#ifndef TASK066_DISABLE_FA_TILE` (or equiv.) | `fa` |
-| `L_no_mv_ext` | disable `mul_mv_ext` for bad ne11 | ON | compile flag | `mul-mat` |
-| `L_float_tile` | q8_0/iq4_xs float tiles + smem | ON | compile flag / metal template | `mul-mat-residual`, `mul-mat` |
-| `L_mm_min` | `MUL_MM_MIN` policy default | ON (=8) | **runtime** `GGML_METAL_MUL_MM_MIN` + optional DEFAULT rebuild | `mul-mat-residual`, `test-metal-mul-mm-policy`, ubatch C1j |
-| `L_fusion_cb` | `ggml-metal-fusion` + CB pack | ON | compile flag (skip fusion_max → upstream CB) | `cb-fusion` |
-| `L_moe_view_add` | always view+ADD MoE out | ON | compile flag restore N=1 permute path | `moe-out` |
-| `L_size_swa_ub` | headroom `PAD128(max(ub,b/4))` | ON | compile/runtime: tip formula vs **batch-only** / **fixed** (066.13/14 class) | `ubatch-s8-s1024` (C2/C3/C2p/C2pq8/C2pf16), `test-iswa-size-swa` |
-| `L_iswa_pads` | n_swa pad128 + outer pad256 | ON | compile flag | `test-iswa-size-swa`, ubatch C3 |
-| `L_shared_kv` | `get_has_shared_cells` + speculative | ON | compile flag | `b1-shared-kv` |
-| `L_swa_hwm_log` | occupancy HWM / ring-full warn | ON | compile flag (telemetry only) | log presence; optional skip in matrix |
-
-Optional later (not blocking DoD): longctx / moe-router / fullgraph as **extra** suite rows if a lever touches them.
-
-**Anti-pattern:** one cmake switch that disables “all TASK-066” — forbidden as primary matrix (≡ master).
+cmake: `-DTASK066_ABLATION_DISABLE=FA_TILE;…` (`cmake/task066-ablation-levers.cmake`).
 
 ---
 
-## Suites / gates (rows of the result table)
-
-Minimum rows (fail-closed names):
-
-| Row id | Command / gate |
-|--------|----------------|
-| `S_fa` | `SUITE=fa` |
-| `S_mul_mat` | `SUITE=mul-mat` |
-| `S_mul_mat_res` | `SUITE=mul-mat-residual` |
-| `S_cb_fusion` | `SUITE=cb-fusion` |
-| `S_moe_out` | `SUITE=moe-out` |
-| `S_iswa_unit` | `test-iswa-size-swa` (CPU) |
-| `S_ub_c2` | ubatch C2 |
-| `S_ub_c3` | ubatch C3 (n1280 + n1536) |
-| `S_ub_c2pf16` | `TASK066_DIAG=c1p-f16` (C2pf16 only is enough for first matrix) |
-| `S_ub_c2pq8` | `TASK066_DIAG=c1p-q8` |
-| `S_ub_c2p` | `TASK066_DIAG=c1p` (C2p+C1p product KV; stop at first RED OK) |
-| `S_b1_shared` | `SUITE=b1-shared-kv` |
-
-Env for product ubatch rows (fail-closed):  
-`TASK066_MODEL=…/gemma-4-26B-A4B-it-UD-IQ4_XS.gguf` `TASK066_CTX=3072`  
-`BUILD_DIR=…/build-task066-cb-ws` · GPU: `required_permissions: all`.
-
-Cell values: `GREEN` / `RED` / `SKIP` / `MISUSE` + optional `mad=` / `first_token_diff=` for ubatch rows.
-
----
-
-## Automation (§5.8)
-
-**Single entry:** Makefile target → thin shell → Python orchestrator.
-
-Proposed names (impl may adjust, keep one Make verb):
+## Automation
 
 - Orchestrator: `tests/task066_src_lever_ablation.py`
-- Runner: `tests/run-task066-src-lever-ablation.sh`
-- Make: `make task066-src-lever-ablation` (or document under fork README-TASK066 only until parent wires it)
+- Shell: `tests/run-task066-src-lever-ablation.sh`
+- Make: `TASK066_MODEL=… TASK066_CTX=3072 make minillm-task066-src-lever-ablation`
+- Config: `tests/task066_src_lever_ablation.json`
+- Flags: `--mode A|B|both`, `--dry-run`, `--from-lever`, `--from-row`, `--reuse-builds-from`, `--controls-only`
+- Artifacts: `tables.md`, `keep_drop.md`, `results.json` under `logs/task066-18-ablation-<UTC>/`
 
-**Config:** `tests/task066_src_lever_ablation.json` — lever ids, suite rows, mode A/B, `--dry-run`, `--from-lever`, resume, stamp dir.
-
-**Per cell:**
-
-1. Select mode + lever (exactly one delta from baseline).  
-2. Configure/build if compile lever changed (reuse build dir per lever id).  
-3. Run suite row; capture exit + key log lines.  
-4. Append to stamp JSON/CSV + human markdown table.
-
-**Stamp root:** `logs/task066-18-ablation-<UTC>/`
-
-Must support `--dry-run` and resume (`--from-lever` / `--from-row`).
+Env (fail-closed for ubatch):  
+`TASK066_MODEL=…/gemma-4-26B-A4B-it-UD-IQ4_XS.gguf` `TASK066_CTX=3072`  
+`BUILD_DIR=…/build-task066-cb-ws` (tip_control reuse).
 
 ---
 
-## Result tables (DoD artifacts)
+## Mode A — DONE (corrected 2026-11-09)
 
-### Table A — tip−1 (tip ON except listed OFF)
+**Stamp:** [`logs/task066-18-ablation-20261109T193709Z-fullA/`](../logs/task066-18-ablation-20261109T193709Z-fullA/)  
+**Note:** first write mis-labeled `S_cb_fusion` / `S_moe_out` as RED (classifier matched prose `"RED gate"` / `"PRE-PATCH RED"`). Reclassified from `run.log` with fixed orchestrator; tables below are **corrected**.
 
-Rows = suite ids; columns = `tip` (control) + each `L_*` (that lever OFF).
+### Tip control (all ON)
 
-### Table B — master+1 (master OFF except listed ON)
+| Suite | Verdict | Numeric |
+|-------|---------|---------|
+| `S_fa` | GREEN | mad=0 |
+| `S_mul_mat` | GREEN | abs=0 ulp=0 |
+| `S_mul_mat_res` | **RED** | residual vs N=8: abs≈**1.19e-6** ulp=**8** (q8); MoE ne21 abs≈9.5e-7 ulp=13; `fails=18`. MTP verify N=2..4 **PASS** exact |
+| `S_cb_fusion` | GREEN | — |
+| `S_moe_out` | GREEN | exact=1 abs=0 |
+| `S_iswa_unit` | GREEN | tip headroom formula |
+| `S_ub_c2pf16` | **RED** | mad≈**0.255** (256↔512, f16/f16) |
+| `S_ub_c2pq8` | **RED** | mad≈**3.878** |
+| `S_ub_c2p` | **RED** | mad≈**7.635** |
+| `S_b1_shared` | GREEN | API present |
 
-Rows = suite ids; columns = `master` (control) + each `L_*` (that lever ON).
+### Table A — tip−1 (lever OFF). Cell = verdict (+ numeric when RED / meaningful)
 
-Controls first (no lever change): stamp tip once, stamp `0fe16d12d` once (or rebuild with all levers OFF).
+| suite | tip | L_fa_tile OFF | L_no_mv_ext OFF | L_float_tile OFF | L_mm_min | L_fusion_cb | L_moe_view_add | L_size_swa_ub | L_iswa_pads | L_shared_kv | L_swa_hwm_log |
+|-------|-----|---------------|-----------------|------------------|----------|-------------|---------------|--------------|-------------|-------------|--------------|
+| S_fa | GREEN | **RED** mad=0 | GREEN | GREEN | GREEN | GREEN | GREEN | GREEN | GREEN | GREEN | GREEN |
+| S_mul_mat | GREEN | GREEN | **RED** abs≈2.4e-7 ulp=5 | GREEN | GREEN | GREEN | GREEN | GREEN | GREEN | GREEN | GREEN |
+| S_mul_mat_res | RED abs≈1.19e-6 ulp=8 | RED same | RED same | **RED worse** abs≈**1.1e-4** ulp=**10729** (iq4≈3.5e-4/3224) | RED same | RED same | RED same | RED same | RED same | RED same | RED same |
+| S_cb_fusion | GREEN | GREEN | GREEN | GREEN | GREEN | GREEN | GREEN | GREEN | GREEN | GREEN | GREEN |
+| S_moe_out | GREEN | GREEN | GREEN | GREEN | GREEN | GREEN | GREEN | GREEN | GREEN | GREEN | GREEN |
+| S_iswa_unit | GREEN | GREEN | GREEN | GREEN | GREEN | GREEN | GREEN | **RED** | **RED** | GREEN | GREEN |
+| S_ub_c2pf16 | RED 0.255 | RED 0.255 (=) | RED 0.255 (=) | **RED worse 4.703** (Δ+4.45) | RED 0.255 (=) | RED 0.255 (=) | RED 0.255 (=) | RED 0.255 (=) | RED 0.255 (=) | RED 0.255 (=) | RED 0.255 (=) |
+| S_ub_c2pq8 | RED 3.878 | RED 3.878 (=) | RED 3.878 (=) | **RED worse 4.779** (Δ+0.90) | RED 3.878 (=) | RED 3.878 (=) | RED 3.878 (=) | RED 3.878 (=) | RED 3.878 (=) | RED 3.878 (=) | RED 3.878 (=) |
+| S_ub_c2p | RED 7.635 | RED 7.635 (=) | RED 7.635 (=) | **RED worse 8.094** (Δ+0.46) | RED 7.635 (=) | RED 7.635 (=) | RED 7.635 (=) | RED 7.635 (=) | RED 7.635 (=) | RED 7.635 (=) | RED 7.635 (=) |
+| S_b1_shared | GREEN | GREEN | GREEN | GREEN | GREEN | GREEN | GREEN | GREEN | GREEN | GREEN | GREEN |
 
-Interpret: if `S_ub_c2pf16` stays RED when `L_size_swa_ub` OFF on tip (tip−1) **or** goes GREEN when ON alone on master — confirms / refines 066.17 lock. Other levers should mostly affect their primary suites only.
+`(=)` = mad identical to tip within stamp precision.
+
+### Keep / drop from Mode A (tip−1 flips + severity)
+
+| Lever | KEEP candidate | DROP candidate | Severity / notes |
+|-------|----------------|----------------|------------------|
+| `L_fa_tile` | **yes** — OFF → `S_fa` GREEN→RED | no | required for FA suite |
+| `L_no_mv_ext` | **yes** — OFF → `S_mul_mat` GREEN→RED (abs≈2.4e-7 ulp=5) | no | required for mul-mat |
+| `L_float_tile` | **yes (soft)** — no GREEN↔RED flip, but OFF **worsens** residual ulp 8→10729 and ubatch mad | no | do not drop without Mode B |
+| `L_mm_min` | undecided on tip−1 | no | no flip; residual/ubatch still RED same |
+| `L_fusion_cb` | undecided | no | `S_cb_fusion` stays GREEN with OFF (this host) |
+| `L_moe_view_add` | undecided | no | `S_moe_out` stays GREEN with OFF (this host / shapes) |
+| `L_size_swa_ub` | unit only (`S_iswa_unit`) | no | ubatch mad **unchanged** (master `n_ubatch` still ∝ub for 256↔512@b=512) |
+| `L_iswa_pads` | unit only | no | same as size_swa for ubatch |
+| `L_shared_kv` | undecided | no | audit gate always sees API in tree |
+| `L_swa_hwm_log` | telemetry | no | no suite flip |
+
+**No DROP from Mode A** (nothing went RED→GREEN when a tip lever was turned OFF).
+
+### Earlier partial stamps (still valid)
+
+- C2pf16-only tip−1: [`…184917Z`](../logs/task066-18-ablation-20261109T184917Z/)  
+- master_control C2pf16: [`…190351Z-master-c2pf16`](../logs/task066-18-ablation-20261109T190351Z-master-c2pf16/) — RED mad≈**4.703**  
+- master+1 `L_float_tile` C2pf16: [`…190548Z-mplus-float`](../logs/task066-18-ablation-20261109T190548Z-mplus-float/) — mad **4.703→0.255** (still RED; float-tile helps)
 
 ---
 
-## Implementation order (when «start implementation»)
+## Subtask 066.18.B — Mode B full matrix (DONE)
 
-1. Introduce **compile/runtime levers** for each `L_*` (fail-closed unknown id; no silent “all off”).  
-2. JSON + orchestrator + shell + Make; dry-run prints matrix.  
-3. Run controls (tip + master).  
-4. Run mode A then mode B (or A-only first if master+1 build cost high — document choice in stamp README).  
-5. Write tables into stamp + update this file DoD checkboxes.  
-6. CHANGELOG + README-TASK066 blurb **same changeset as code** (§5.0). Parent pointer MITL.
+**Status:** 🟢 **DONE** — operator Terminal stamp [`…211533Z-fullB`](../logs/task066-18-ablation-20261109T211533Z-fullB/) (`ABLATION_EXIT=0`, Metal smoke OK, 0× `command queue` fails). Operator log: [`logs/run-modeB-full.log`](../logs/run-modeB-full.log).
 
-**Out of scope:** fixing 066.17 GREEN inside this task (follow-up after ablation evidence); soft-ε; waiving RED.
+### Master control (all tip levers OFF)
+
+| Suite | Verdict | Numeric |
+|-------|---------|---------|
+| `S_fa` | **RED** | suite RED (orchestrator mad=0 on partial exact rows) |
+| `S_mul_mat` | **RED** | abs≈**2.38e-7** ulp=**5** |
+| `S_mul_mat_res` | **RED** | abs≈**1.11e-4** ulp=**10735** |
+| `S_cb_fusion` | GREEN | — |
+| `S_moe_out` | GREEN | exact |
+| `S_iswa_unit` | **RED** | fails=4 (master `n_ubatch` headroom) |
+| `S_ub_c2pf16` | **RED** | mad≈**4.703** |
+| `S_ub_c2pq8` | **RED** | mad≈**4.779** |
+| `S_ub_c2p` | **RED** | mad≈**8.094** |
+| `S_b1_shared` | **RED** | audit MISSING (no shared-cells API in all-off tree) |
+
+### Table B — master+1 (lever ON alone). Cell = verdict (+ numeric / Δ vs master when meaningful)
+
+| suite | master | L_fa_tile | L_no_mv_ext | L_float_tile | L_mm_min | L_fusion_cb | L_moe_view_add | L_size_swa_ub | L_iswa_pads | L_shared_kv | L_swa_hwm_log |
+|-------|--------|-----------|-------------|--------------|----------|-------------|----------------|--------------|-------------|-------------|--------------|
+| S_fa | RED | **GREEN** | RED | RED | RED | RED | RED | RED | RED | RED | RED |
+| S_mul_mat | RED abs≈2.4e-7 ulp=5 | RED same | **GREEN** abs=0 | RED same | RED same | RED same | RED same | RED same | RED same | RED same | RED same |
+| S_mul_mat_res | RED ulp=10735 | RED same | RED ≈ulp 10729 | **RED better** ulp=**8** (abs≈1.19e-6) | RED same | RED same | RED same | RED same | RED same | RED same | RED same |
+| S_cb_fusion | GREEN | GREEN | GREEN | GREEN | GREEN | GREEN | GREEN | GREEN | GREEN | GREEN | GREEN |
+| S_moe_out | GREEN | GREEN | GREEN | GREEN | GREEN | GREEN | GREEN | GREEN | GREEN | GREEN | GREEN |
+| S_iswa_unit | RED fails=4 | RED | RED | RED | RED | RED | RED | RED fails=1 | RED | RED | RED |
+| S_ub_c2pf16 | RED 4.703 | RED 4.703 (=) | RED 4.703 (=) | **RED better 0.255** (Δ−4.45) | RED 4.703 (=) | RED 4.703 (=) | RED 4.703 (=) | RED 4.703 (=) | RED 4.703 (=) | RED 4.703 (=) | RED 4.703 (=) |
+| S_ub_c2pq8 | RED 4.779 | RED 4.779 (=) | RED 4.779 (=) | **RED better 3.878** (Δ−0.90) | RED 4.779 (=) | RED 4.779 (=) | RED 4.779 (=) | RED 4.779 (=) | RED 4.779 (=) | RED 4.779 (=) | RED 4.779 (=) |
+| S_ub_c2p | RED 8.094 | RED 8.094 (=) | RED 8.094 (=) | **RED better 7.635** (Δ−0.46) | RED 8.094 (=) | RED 8.094 (=) | RED 8.094 (=) | RED 8.094 (=) | RED 8.094 (=) | RED 8.094 (=) | RED 8.094 (=) |
+| S_b1_shared | RED | RED | RED | RED | RED | RED | RED | RED | RED | RED | RED |
+
+`(=)` = mad identical to master within stamp precision. **Better ≠ GREEN.**
+
+### Mode B keep / drop (alone-ON flips + severity)
+
+| Lever | Alone helps (RED→GREEN) | Severity / notes | KEEP? |
+|-------|-------------------------|------------------|-------|
+| `L_fa_tile` | **S_fa** | matches Mode A tip−1 | **KEEP** |
+| `L_no_mv_ext` | **S_mul_mat** | abs 2.4e-7→0 | **KEEP** |
+| `L_float_tile` | — (still RED) | residual ulp 10735→**8**; c2pf16 4.70→**0.255**; c2pq8/c2p also better | **KEEP (soft)** — severity only |
+| `L_mm_min` | — | no flip / no mad Δ | undecided (no alone value here) |
+| `L_fusion_cb` | — | cb already GREEN on master | no alone need on this host |
+| `L_moe_view_add` | — | moe already GREEN on master | no alone need on this host |
+| `L_size_swa_ub` | — | iswa fails 4→1 still RED; **ubatch mad unchanged** | not sufficient alone for 066.17 |
+| `L_iswa_pads` | — | no alone GREEN; ubatch (=) | not sufficient alone |
+| `L_shared_kv` | — | b1 still MISSING alone | needs tip combo / other deps |
+| `L_swa_hwm_log` | — | telemetry | no suite value |
+
+**No alone-harms** (no GREEN→RED). **No KEEP-with-claiming-GREEN from better mad.**
+
+### Invalid agent stamps (do not cite)
+
+`…200140Z-fullB`, `…200925Z-fullB` — Cursor agent sandbox Metal `device=null` (`INVALID.txt`).
+
+### Definition of Done (066.18.B)
+
+1. [x] `master_control` all default rows.  
+2. [x] Every `L_*` master+1 column.  
+3. [x] Numerics + Δ vs master on RED ubatch/residual.  
+4. [x] `keep_drop.md` Mode B alone-helps.  
+5. [x] This file Table B + CHANGELOG; no KEEP-with-RED-as-GREEN.  
+6. [x] Valid stamp; moe GREEN (not HOST_SKIP).
 
 ---
 
-## Definition of Done
+## Combined verdict (A + B)
 
-1. [x] Every lever in the registry has a documented ON/OFF switch (compile and/or runtime).  
-2. [x] Orchestrator + Make entry; `--dry-run` + resume (`--from-lever` / `--from-row`).  
-3. [ ] Control stamps: tip all-ON + master all-OFF.  
-4. [ ] Mode A table complete (tip−1 per lever × suite rows).  
-5. [ ] Mode B table complete **or** explicit deferral recorded with reason + Make flag.  
-6. [ ] Stamp dir under `logs/task066-18-ablation-…/` with machine-readable + markdown tables (live GPU).  
-7. [ ] This file + parent pointer updated; no KEEP-with-RED language.
-
-### Impl notes (2026-11-09)
-
-| Piece | Path |
-|-------|------|
-| cmake levers | `cmake/task066-ablation-levers.cmake` → `-DTASK066_ABLATION_DISABLE=SIZE_SWA_UB;…` |
-| tip ON | no `TASK066_DISABLE_*` |
-| tip−1 | one `TASK066_DISABLE_<ID>` |
-| master all-OFF | all `TASK066_DISABLE_*` |
-| master+1 | all DISABLE except the lever under test |
-| orchestrator | `tests/task066_src_lever_ablation.py` |
-| shell | `tests/run-task066-src-lever-ablation.sh` |
-| Make | `make minillm-task066-src-lever-ablation` (parent) |
-
-Dry-run evidence: `logs/task066-18-ablation-20261109T184013Z/` (matrix print only).
+| Lever | Mode A tip−1 | Mode B master+1 | Decision |
+|-------|--------------|-----------------|----------|
+| `L_fa_tile` | OFF → fa RED | ON → fa GREEN | **KEEP** |
+| `L_no_mv_ext` | OFF → mul_mat RED | ON → mul_mat GREEN | **KEEP** |
+| `L_float_tile` | OFF worsens residual/ubatch | ON improves residual/ubatch (still RED) | **KEEP (soft)** |
+| `L_size_swa_ub` / `L_iswa_pads` | unit flips only; ubatch mad (=) | alone cannot clear ubatch / unit GREEN | **not the 066.17 fix alone** — need ⊥ub policy |
+| others | no tip−1 flip | no alone GREEN | low / host-undecided |
 
 ---
 
-## Non-goals / anti-patterns
+## Definition of Done (066.18 overall)
 
-- Disabling all levers in one shot as the only experiment.  
-- Manual “run suite X by hand for each lever” as primary path (§5.8).  
-- Silent default lever list / silent MODEL/CTX.  
-- Claiming 066.17 fixed because ablation “looks better” without GREEN gates.
+1. [x] Every lever has ON/OFF switch.  
+2. [x] Orchestrator + Make; `--dry-run` + resume.  
+3. [x] Mode A tip control + tip−1 full matrix (corrected).  
+4. [x] Mode B full matrix (subtask **066.18.B**, `…211533Z-fullB`).  
+5. [x] Stamp dirs with tables + keep_drop + results.  
+6. [x] Parent pointer sync.  
+7. [x] Classifier fixed (no bare `\bRED\b` prose match).
+
+---
+
+## Non-goals
+
+- All-off as the *only* experiment (allowed as Mode B baseline only).  
+- Manual per-suite leash as primary path.  
+- Waiving 066.17 / soft-ε.  
+- Claiming GREEN from “mad got better”.

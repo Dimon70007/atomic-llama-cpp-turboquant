@@ -169,11 +169,11 @@ private:
     const llama_memory_status status;
 };
 
-// Product SWA headroom (TASK-066.14 + anti-footgun):
-//   headroom = PAD128(max(n_ubatch, n_batch / 4))
-// Normal product (batch=2048, ub=512) -> PAD128(512) = 512 (unchanged).
-// Tiny-ub / large-b autotests (ub=8, b=1536) -> PAD128(max(8, 384)) = 384.
-// b=1280 ub=8 -> PAD128(max(8, 320)) = 384 (320 not on 128 grid).
+// Product SWA headroom (TASK-066.17 — restore 066.13 C2 KEEP):
+//   headroom = PAD128(n_batch)   // ⊥ live -ub; equal -b ⇒ equal size_swa
+// n_ubatch must be > 0 (fail-closed) but does not enter the formula.
+// Product (batch=2048, ub=512) -> PAD128(2048) = 2048 (memory tax vs 066.16 max(ub,b/4)).
+// Pair C2p equal -b=512 ub=256 vs 512 -> headroom 512 both sides.
 uint32_t llama_kv_cache_iswa_calc_swa_headroom(uint32_t n_batch, uint32_t n_ubatch);
 
 // Pure size_swa helper (TASK-066.5 ideas).
@@ -181,7 +181,6 @@ uint32_t llama_kv_cache_iswa_calc_swa_headroom(uint32_t n_batch, uint32_t n_ubat
 //   size_swa = PAD256(min(size_base, n_swa_eff * (unified ? n_seq_max : 1) + n_swa_headroom))
 // Product callers pass llama_kv_cache_iswa_calc_swa_headroom(n_batch, n_ubatch).
 // Outer pad 256 aligns with FA get_n_kv pad; n_swa_eff still uses TurboQuant 128.
-// 066.11: size_swa still tracks headroom -> cross-ubatch text may differ when ub differs a lot.
 // Used by ctor + CPU unit test-iswa-size-swa.
 uint32_t llama_kv_cache_iswa_calc_size_swa(
         uint32_t size_base,

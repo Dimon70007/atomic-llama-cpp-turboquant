@@ -2230,12 +2230,12 @@ ggml_tensor * llama_model::get_rope_factors(const llama_cparams & cparams, int i
     return layers[il].rope_short;
 }
 
-// Product SWA headroom = max(n_ubatch, n_batch/4); see llama_kv_cache_iswa_calc_swa_headroom.
+// Product SWA headroom = PAD128(n_batch) (066.17 / 066.13 KEEP; ⊥ub under equal -b).
 static uint32_t llama_swa_headroom_product(const llama_cparams & cparams) {
     const uint32_t headroom = llama_kv_cache_iswa_calc_swa_headroom(cparams.n_batch, cparams.n_ubatch);
     LLAMA_LOG_INFO(
-            "%s: SWA n_swa_headroom = %u (PAD128(max(n_ubatch=%u, n_batch/4=%u)); n_batch=%u)\n",
-            __func__, headroom, cparams.n_ubatch, cparams.n_batch / 4, cparams.n_batch);
+            "%s: SWA n_swa_headroom = %u (PAD128(n_batch=%u); n_ubatch=%u telemetry only)\n",
+            __func__, headroom, cparams.n_batch, cparams.n_ubatch);
     return headroom;
 }
 
