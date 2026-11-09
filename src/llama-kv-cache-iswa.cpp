@@ -45,15 +45,21 @@ static uint32_t task066_resolve_swa_headroom(uint32_t n_swa_headroom) {
 }
 
 uint32_t llama_kv_cache_iswa_calc_swa_headroom(uint32_t n_batch, uint32_t n_ubatch) {
-    // Fail closed: ubatch drives one-write room; batch/4 is only a floor for
-    // pathological autotests (ub << batch), not a second independent tax.
-    // Round headroom up to TurboQuant KV block (128) after the max().
     if (n_ubatch == 0) {
         throw std::runtime_error("n_ubatch == 0; SWA size_swa headroom requires n_ubatch > 0");
     }
+#ifdef TASK066_DISABLE_SIZE_SWA_UB
+    // Master-like: headroom = live n_ubatch only (no max(ub,b/4), no PAD128).
+    (void) n_batch;
+    return n_ubatch;
+#else
+    // Fail closed: ubatch drives one-write room; batch/4 is only a floor for
+    // pathological autotests (ub << batch), not a second independent tax.
+    // Round headroom up to TurboQuant KV block (128) after the max().
     const uint32_t batch_floor = n_batch / 4;
     const uint32_t raw = std::max(n_ubatch, batch_floor);
     return GGML_PAD(raw, (uint32_t) TURBO_KV_BLOCK_SIZE);
+#endif
 }
 
 uint32_t llama_kv_cache_iswa_calc_size_swa(
@@ -74,12 +80,15 @@ uint32_t llama_kv_cache_iswa_calc_size_swa(
     // TASK-066.12 P1: compute window in uint64 to avoid uint32 wrap.
     n_swa_headroom = task066_resolve_swa_headroom(n_swa_headroom);
     uint32_t n_swa_eff = n_swa;
+#ifndef TASK066_DISABLE_ISWA_PADS
     if (n_swa % TURBO_KV_BLOCK_SIZE != 0) {
         n_swa_eff = ((n_swa + TURBO_KV_BLOCK_SIZE - 1) / TURBO_KV_BLOCK_SIZE) * TURBO_KV_BLOCK_SIZE;
         LLAMA_LOG_WARN("%s: n_swa (%u) is not a multiple of TurboQuant block size (%d), "
                        "padding effective SWA size to %u to prevent context drift\n",
                        __func__, n_swa, TURBO_KV_BLOCK_SIZE, n_swa_eff);
     }
+#endif
+
     const uint64_t swa_window_64 = (uint64_t) n_swa_eff * (unified ? n_seq_max : 1);
     if (swa_window_64 + (uint64_t) n_swa_headroom > (uint64_t) UINT32_MAX) {
         LLAMA_LOG_WARN("%s: SWA window calculation overflow, clamping to base size\n", __func__);

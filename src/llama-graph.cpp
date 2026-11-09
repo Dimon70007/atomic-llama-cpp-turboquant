@@ -2352,14 +2352,19 @@ ggml_tensor * llm_graph_context::build_moe_ffn(
     assert(n_expert_used > 0);
 
     // experts layout: [n_embd, n_expert_used, n_tokens]
-    // TASK-066 patch C (Metal batch-invariance): do NOT special-case n_tokens==1 with
-    // permute+sum_rows. That dual topology vs the verify view+ADD tree makes
-    // ffn_moe_out row0 diverge (ULP) under speculative N>1 — see test-moe-out-row0-parity.
-    // Always use the view+ADD reduce for n_expert_used > 1 (incl. decode N=1).
     ggml_tensor * moe_out;
     if (hparams.n_expert_used == 1) {
         moe_out = ggml_cont(ctx0, ggml_view_2d(ctx0, experts, n_embd, n_tokens, experts->nb[2], 0));
+#ifdef TASK066_DISABLE_MOE_VIEW_ADD
+    } else if (n_tokens == 1) {
+        // Master-like: permute+sum_rows for decode N=1.
+        ggml_tensor * experts_pe = ggml_cont(ctx0, ggml_permute(ctx0, experts, 1, 0, 2, 3));
+        ggml_tensor * summed     = ggml_sum_rows(ctx0, experts_pe);
+        moe_out = ggml_reshape_2d(ctx0, summed, n_embd, n_tokens);
+#endif
     } else {
+        // TASK-066 tip: always view+ADD for n_expert_used > 1 (incl. decode N=1)
+        // unless TASK066_DISABLE_MOE_VIEW_ADD restores the N=1 branch above.
         // note: use hparams.n_expert_used (not n_expert_used) so warmup stays small
         // ref: https://github.com/ggml-org/llama.cpp/pull/14753
         ggml_tensor * cur_experts[LLAMA_MAX_EXPERTS] = { nullptr };

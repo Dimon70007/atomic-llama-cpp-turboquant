@@ -92,6 +92,12 @@ else()
         list   (APPEND XC_FLAGS -std=${GGML_METAL_STD})
     endif()
 
+    # TASK-066.18: pass ablation -D macros into metallib (FLOAT_TILE etc.)
+    if (TASK066_ABLATION_METAL_FLAGS)
+        message(STATUS "Adding TASK-066.18 ablation flags to metal: ${TASK066_ABLATION_METAL_FLAGS}")
+        list(APPEND XC_FLAGS ${TASK066_ABLATION_METAL_FLAGS})
+    endif()
+
     add_custom_command(
         OUTPUT ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/default.metallib
         COMMAND xcrun -sdk macosx metal ${XC_FLAGS} -c ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/ggml-metal.metal -o - |

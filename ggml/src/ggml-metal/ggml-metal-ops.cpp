@@ -2466,13 +2466,24 @@ int ggml_metal_op_mul_mat(ggml_metal_op_t ctx, int idx) {
     // ub=8 rem+full share a kernel (A2 hole was min=7, not 8). MTP verify N<=4
     // also stays on mul_mv (no N=1 vs {2,3,4} cross-kernel). Override via env:
     // GGML_METAL_MUL_MM_MIN=0 → all-mm (Phase B); =1 → A2-style rem close + MTP hazard.
+#ifdef TASK066_DISABLE_MM_MIN
+    const int ne11_mm_min = 8;
+#else
     const int ne11_mm_min = ggml_metal_mul_mm_batch_min();
+#endif
+
 
     // first try to use small-batch mat-mv kernels
     // these should be efficient for BS [2, ~8]
     // TASK-066 / ggml-org/llama.cpp#25618 (skoulik): disable mul_mv_ext for ne11 in 2..8.
     // N=1 uses mul_mv; verify batches used mul_mv_ext → row0 float drift (~1 ULP). Force mul_mv.
+    // Ablation OFF (TASK066_DISABLE_NO_MV_EXT): restore master live mul_mv_ext gate.
+#ifdef TASK066_DISABLE_NO_MV_EXT
+    if (op->src[1]->type == GGML_TYPE_F32 && (ne00%128 == 0) &&
+#else
     if (false && op->src[1]->type == GGML_TYPE_F32 && (ne00%128 == 0) &&
+#endif
+
         (
          (
           (
@@ -2795,11 +2806,21 @@ int ggml_metal_op_mul_mat_id(ggml_metal_op_t ctx, int idx) {
     // to the matrix-vector kernel
     // ne20 = n_used_experts
     // ne21 = n_rows (batch size)
-    // TASK-066.7/B: MoE shares GGML_METAL_MUL_MM_MIN (default 0). TQ still forces mul_mm_id (min=1).
+    // TASK-066.7/B: MoE shares GGML_METAL_MUL_MM_MIN. TQ still forces mul_mm_id (min=1).
+    // Ablation OFF: master MoE id threshold 32 (non-TQ).
+#ifdef TASK066_DISABLE_MM_MIN
+    const int ne21_mm_id_min = is_tq_weight ? 1 : 32;
+#else
     const int ne21_mm_id_min = is_tq_weight ? 1 : ggml_metal_mul_mm_batch_min();
+#endif
 
     if (props_dev->has_simdgroup_mm && ne00 >= 64 &&
+#ifdef TASK066_DISABLE_MM_MIN
+        (ne21 >= ne21_mm_id_min)) {
+#else
         ggml_metal_mul_mm_ne11_uses_mm(ne21, ne21_mm_id_min)) {
+#endif
+
         // some Metal matrix data types require aligned pointers
         // ref: https://developer.apple.com/metal/Metal-Shading-Language-Specification.pdf (Table 2.5)
         //switch (op->src[0]->type) {
@@ -3057,6 +3078,17 @@ bool ggml_metal_op_flash_attn_ext_use_vec(const ggml_tensor * op) {
     const int64_t ne00 = op->src[0]->ne[0]; // head size
     const int64_t ne01 = op->src[0]->ne[1]; // batch size (queries)
 
+#ifdef TASK066_DISABLE_FA_TILE
+    // Master-like: shape-based FA-vec (no always-tile).
+    const ggml_type ktype = op->src[1]->type;
+    if (ktype == GGML_TYPE_TURBO2_0 || ktype == GGML_TYPE_TURBO3_0 || ktype == GGML_TYPE_TURBO4_0) {
+        const char * force_nonvec = getenv("TURBO_FORCE_NONVEC");
+        if (force_nonvec && force_nonvec[0] == '1') {
+            return false;
+        }
+    }
+    return (ne01 < 20) && (ne00 % 32 == 0);
+#else
     // TASK-066 C2 / Thinking Machines batch-invariance:
     // Legacy gate `(ne01 < 20)` made product ubatch ub=8 take FA-vec while
     // ub=32/1024 took FA-tile → different reduction kernels for the same
@@ -3099,6 +3131,7 @@ bool ggml_metal_op_flash_attn_ext_use_vec(const ggml_tensor * op) {
     }
 
     return use_vec;
+#endif
 }
 
 // TurboFlash: two-pass fused asymmetric attention for turbo3 V decode
@@ -3761,11 +3794,19 @@ int ggml_metal_op_flash_attn_ext(ggml_metal_op_t ctx, int idx) {
             nsg = 4;
         } else {
             nwg = 32;
+#ifdef TASK066_DISABLE_FA_TILE
+            // Master-like: scale nsg with KV length.
+            nsg = 1;
+            while (2*nwg*nsg*ncpsg < ne11 && nsg < 4) {
+                nsg *= 2;
+            }
+#else
             // TASK-066 / ggml-org/llama.cpp#25618 (skoulik): pin nsg.
             // Doubling past padded KV 2048/4096 makes verify batches (longer ne11)
             // cross the threshold earlier than N=1 decode → different reduction tree
             // for the same query. Keep nsg=1 so row0(N>1) matches N=1.
             nsg = 1;
+#endif
         }
 
         ggml_metal_kargs_flash_attn_ext_vec args = {

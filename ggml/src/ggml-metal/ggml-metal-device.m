@@ -226,6 +226,11 @@ ggml_metal_library_t ggml_metal_library_init(ggml_metal_device_t dev) {
                 [prep setObject:@"1" forKey:@"GGML_METAL_EMBED_LIBRARY"];
 #endif
 
+                // TASK-066.18: float-tile lever OFF → half tiles (master-like)
+#ifdef TASK066_DISABLE_FLOAT_TILE
+                [prep setObject:@"1" forKey:@"TASK066_DISABLE_FLOAT_TILE"];
+#endif
+
                 // TurboQuant: auto-select dequant path based on hardware
                 // M1/M2/M3/M4 (no tensor API): 4-mag LUT (+38-45% decode at long ctx)
                 // M5+ (has tensor API): 8-entry full LUT (best decode speed)

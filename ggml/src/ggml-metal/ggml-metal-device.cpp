@@ -807,9 +807,14 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mm(ggml_meta
         res.nr0 = 64;
         res.nr1 = 32;
 
+#ifdef TASK066_DISABLE_FLOAT_TILE
+        res.smem = bc_out ? 8192 : (4096 + 2048);
+#else
         // TASK-066.7: float-tile q8_0/iq4_xs need NR0*NK*4 + NR1*NK*4 = 12288.
         // Half tiles only use 8192; over-alloc is harmless.
         res.smem = 12288;
+#endif
+
     }
 
     res.nsg = N_MM_SIMD_GROUP_X * N_MM_SIMD_GROUP_Y;
@@ -1164,8 +1169,13 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mm_id(ggml_m
         ggml_metal_cv_free(cv);
     }
 
+#ifdef TASK066_DISABLE_FLOAT_TILE
+    res.smem = 8192;
+#else
     // TASK-066.7: match mul_mm float-tile smem (q8_0 / iq4_xs id path).
     res.smem = 12288;
+#endif
+
 
     return res;
 }

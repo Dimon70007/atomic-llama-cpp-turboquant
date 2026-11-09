@@ -1667,6 +1667,7 @@ void llama_kv_cache::apply_ubatch(const slot_info & sinfo, const llama_ubatch & 
         head = sinfo.idxs[s].back() + 1;
     }
 
+#ifndef TASK066_DISABLE_SWA_HWM_LOG
     // SWA occupancy telemetry: allocated size_swa vs peak used_max_p1 / used cells.
     // Log on high-water growth so operators can verify headroom is minimal-but-sufficient.
     if (n_swa > 0) {
@@ -1693,6 +1694,7 @@ void llama_kv_cache::apply_ubatch(const slot_info & sinfo, const llama_ubatch & 
             }
         }
     }
+#endif
 }
 
 size_t llama_kv_cache::cell_ext_io_size() const {
