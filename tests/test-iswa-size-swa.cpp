@@ -1,10 +1,11 @@
 // ISWA size_swa unit (CPU; no model).
 //
-// Locks TASK-066.5 ideas + TASK-066.13 C2:
+// Locks TASK-066.5 ideas + TASK-066.14 H6:
 //   n_swa_eff = ceil(n_swa / 128) * 128
 //   size_swa  = PAD(min(size_base, n_swa_eff * (unified ? n_seq_max : 1) + n_swa_headroom), 256)
-//   n_swa_headroom = n_batch (NOT live -ub)
+//   product headroom = LLAMA_SWA_HEADROOM_MAX_UBATCH (2048); helper still takes explicit headroom
 //   swa_full still forces size_base
+
 
 #include <cstdio>
 #include <cstdint>

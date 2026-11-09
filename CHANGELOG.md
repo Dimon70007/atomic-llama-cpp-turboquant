@@ -14,14 +14,16 @@ Releases before `b10269-1.5.0` predate this file; see the git history.
 
 ### Changed
 
-- **TASK-066.14 (spec only):** R&D `tests/TASK-066.14-c1-s8-s1024-localize-rd.md` —
-  localize C1 S8↔S1024 RED after C2 (H1: unequal `-b` first). Status TODO / not started.
-- **TASK-066.13 C2 KEEP:** `size_swa` uses `n_batch` headroom (not live `-ub`).
-  Call sites pass `cparams.n_batch`; estimator requires `--n-batch`. Stamp
-  `logs/task066-13-c2-nbatch-headroom-20261108T220220Z` — C3-n1536 GREEN; KLD-UB
-  PASS @4k/16k; 100k estimate size_swa=3072 invariant; C1 residual when `-b` differs.
-  CTX=64k smoke `logs/task066-13-ctx64k-smoke-20261108T225702Z` — corners C3 GREEN/C1 RED;
-  MTP↔nomtp ub512 product PASS.
+- **TASK-066.14 H6 KEEP:** `size_swa` headroom = fixed `LLAMA_SWA_HEADROOM_MAX_UBATCH`
+  (2048), not live `n_batch` / `n_ubatch`. Fail-closed if `n_ubatch >` cap. Full corners
+  GREEN `logs/task066-14-c1-keep-full-20261109T004421Z` (C2/C3/C1/C1j). Estimator
+  `--n-swa-headroom` default 2048; `N_BATCH` telemetry. R&D override needs
+  `TASK066_ALLOW_SIZE_SWA_HEADROOM=1` + `TASK066_SIZE_SWA_HEADROOM`.
+- **TASK-066.13 C2 KEEP (superseded for headroom source by 066.14):** was `n_batch`
+  headroom (not live `-ub`). Stamp `logs/task066-13-c2-nbatch-headroom-20261108T220220Z`
+  — C3-n1536 GREEN; KLD-UB PASS @4k/16k; C1 residual when `-b` differed (066.14 root).
+  CTX=64k smoke `logs/task066-13-ctx64k-smoke-20261108T225702Z` — corners C3 GREEN/C1 RED.
+
 - **TASK-066.11 root named:** cross-ub divergence = `size_swa ∝ n_ubatch`. Stamp
   `logs/task066-11-localize-20261108T212103Z` — ub8↔ub256 (same size_swa=1280)
   KLD cross-ub 0; ub 256/512/1024 turbo3 FAIL; C3-bisect FIRST_DIFF `kqv_out-0`

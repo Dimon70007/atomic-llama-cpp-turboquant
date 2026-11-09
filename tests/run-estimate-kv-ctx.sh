@@ -18,7 +18,8 @@ Usage (env or flags via Make):
   ./tests/run-estimate-kv-ctx.sh
 
 Required: MODEL N_CTX CTK CTV N_SEQ_MAX N_BATCH N_UBATCH UNIFIED SWA_FULL
-N_BATCH = size_swa headroom (TASK-066.13 C2); N_UBATCH is telemetry only.
+Optional: N_SWA_HEADROOM (default 2048 = LLAMA_SWA_HEADROOM_MAX_UBATCH; 066.14 H6)
+N_BATCH / N_UBATCH = telemetry; size_swa headroom is N_SWA_HEADROOM (not live -b).
 CTV is uniform only (f16, q8_0, turbo3, turbo4, ... — no layer-bracket aliases).
 EOF
 }
@@ -68,6 +69,10 @@ args=(
   --unified "${UNIFIED}"
   --swa-full "${SWA_FULL}"
 )
+
+if [[ -n "${N_SWA_HEADROOM:-}" ]]; then
+  args+=(--n-swa-headroom "${N_SWA_HEADROOM}")
+fi
 
 if [[ -n "${KV_BUDGET_MIB:-}" ]]; then
   args+=(--kv-budget-mib "${KV_BUDGET_MIB}")

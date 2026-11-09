@@ -169,11 +169,18 @@ private:
     const llama_memory_status status;
 };
 
-// Pure size_swa helper (TASK-066.5 ideas + TASK-066.13 C2).
+// TASK-066.14 H6 KEEP: product SWA headroom is a fixed max-ubatch cap, not live -b/-ub.
+// llama_decode splits into ubatches of size <= n_ubatch; need n_swa + max_ubatch cells.
+// n_ubatch must be <= this constant (fail-closed in llama-model create_memory).
+#ifndef LLAMA_SWA_HEADROOM_MAX_UBATCH
+#define LLAMA_SWA_HEADROOM_MAX_UBATCH 2048
+#endif
+
+// Pure size_swa helper (TASK-066.5 ideas + TASK-066.13/066.14).
 // Pads n_swa up to TurboQuant KV block (128), then:
 //   size_swa = PAD(min(size_base, n_swa_eff * (unified ? n_seq_max : 1) + n_swa_headroom), 256)
-// n_swa_headroom MUST be n_batch (or a ub-invariant cap), NOT live -ub
-// (066.11: size_swa ∝ live -ub breaks cross-ubatch logits/KLD).
+// Product callers pass LLAMA_SWA_HEADROOM_MAX_UBATCH (NOT live n_batch / n_ubatch).
+// 066.11: size_swa ∝ live -ub breaks cross-ubatch; 066.14 Exp A: ∝ live -b breaks C1.
 // Used by ctor + CPU unit test-iswa-size-swa.
 uint32_t llama_kv_cache_iswa_calc_size_swa(
         uint32_t size_base,

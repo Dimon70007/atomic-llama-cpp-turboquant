@@ -6,12 +6,42 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <cstdlib>
 
 // TurboQuant KV block size (turbo2/3/4). SWA window must be a multiple so
 // quantized blocks align with cache rotation (ideas/llamacpp_swa_size_calculate.md).
 #ifndef TURBO_KV_BLOCK_SIZE
 #define TURBO_KV_BLOCK_SIZE 128
 #endif
+
+// TASK-066.14 R&D override: requires BOTH env vars (avoids poisoning unit tests /
+// leftover shell exports). Unset = product headroom from caller (MAX_UBATCH KEEP).
+static uint32_t task066_resolve_swa_headroom(uint32_t n_swa_headroom) {
+    const char * allow = std::getenv("TASK066_ALLOW_SIZE_SWA_HEADROOM");
+    const char * e = std::getenv("TASK066_SIZE_SWA_HEADROOM");
+    if (!allow || allow[0] != '1') {
+        return n_swa_headroom;
+    }
+    if (!e || !e[0]) {
+        LLAMA_LOG_ERROR("%s: FAIL TASK066_ALLOW_SIZE_SWA_HEADROOM=1 but "
+                        "TASK066_SIZE_SWA_HEADROOM unset\n",
+                        __func__);
+        GGML_ABORT("TASK066_SIZE_SWA_HEADROOM required when ALLOW=1");
+    }
+    char * end = nullptr;
+    const long v = std::strtol(e, &end, 10);
+    if (end == e || *end != '\0' || v < 1 || v > (long) UINT32_MAX) {
+        LLAMA_LOG_ERROR("%s: FAIL TASK066_SIZE_SWA_HEADROOM=%s (need positive int); "
+                        "refusing silent headroom fallback (caller had %u)\n",
+                        __func__, e, n_swa_headroom);
+        GGML_ABORT("invalid TASK066_SIZE_SWA_HEADROOM");
+    }
+    const uint32_t locked = (uint32_t) v;
+    LLAMA_LOG_WARN("%s: DIAG_ONLY TASK066_SIZE_SWA_HEADROOM=%u (caller had %u) — "
+                   "R&D override; unset ALLOW for product KEEP\n",
+                   __func__, locked, n_swa_headroom);
+    return locked;
+}
 
 uint32_t llama_kv_cache_iswa_calc_size_swa(
         uint32_t size_base,
@@ -27,9 +57,11 @@ uint32_t llama_kv_cache_iswa_calc_size_swa(
     //       https://github.com/ggml-org/llama.cpp/issues/17037
     //
     // TASK-066.5 (ideas formula): windowed SWA + TurboQuant block align.
-    // TASK-066.13 C2: headroom is n_batch (ub-invariant when only -ub changes).
-    // Do not pass live -ub here (066.11 root: size_swa ∝ -ub breaks cross-ub).
+    // TASK-066.14 H6 KEEP: product headroom = LLAMA_SWA_HEADROOM_MAX_UBATCH (not live -b).
+    // Optional TASK066_SIZE_SWA_HEADROOM overrides for R&D only (Exp A).
+    // Do not pass live -ub (066.11) or live -b (066.14 Exp A) as headroom.
     // TASK-066.12 P1: compute window in uint64 to avoid uint32 wrap.
+    n_swa_headroom = task066_resolve_swa_headroom(n_swa_headroom);
     uint32_t n_swa_eff = n_swa;
     if (n_swa % TURBO_KV_BLOCK_SIZE != 0) {
         n_swa_eff = ((n_swa + TURBO_KV_BLOCK_SIZE - 1) / TURBO_KV_BLOCK_SIZE) * TURBO_KV_BLOCK_SIZE;

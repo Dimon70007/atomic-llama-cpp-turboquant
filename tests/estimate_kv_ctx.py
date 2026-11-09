@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Fail-closed KV / n_ctx estimator for this TurboQuant fork (TASK-066.10).
+"""Fail-closed KV / n_ctx estimator for this TurboQuant fork (TASK-066.10/066.14).
 
-Mirrors llama.cpp ISWA size_swa under TASK-066.5 ideas + TASK-066.13 C2:
+Mirrors llama.cpp ISWA size_swa under TASK-066.5 ideas + TASK-066.14 H6 KEEP:
   n_swa_eff = ceil(n_swa / 128) * 128
   size_swa  = PAD(min(size_base, n_swa_eff * (unified ? n_seq_max : 1) + n_swa_headroom), 256)
-  n_swa_headroom = n_batch (NOT live -ub; 066.11 root)
+  n_swa_headroom = LLAMA_SWA_HEADROOM_MAX_UBATCH (2048), NOT live -b/-ub
 """
 
 from __future__ import annotations
@@ -32,6 +32,8 @@ _TYPE_LAYOUT: dict[str, tuple[int, int]] = {
 _CTK_TYPES = frozenset(_TYPE_LAYOUT.keys())
 _CTV_TYPES = _CTK_TYPES
 _TURBO_TYPES = frozenset({"turbo2", "turbo3", "turbo4"})
+# Mirrors LLAMA_SWA_HEADROOM_MAX_UBATCH in llama-kv-cache-iswa.h (066.14 H6 KEEP).
+LLAMA_SWA_HEADROOM_MAX_UBATCH = 2048
 
 
 def die(msg: str, code: int = 2) -> None:
@@ -84,9 +86,9 @@ def calc_size_swa(
     swa_full: bool,
     n_swa_headroom: int,
 ) -> int:
-    """Python port of llama_kv_cache_iswa_calc_size_swa (ideas + 066.13 C2)."""
+    """Python port of llama_kv_cache_iswa_calc_size_swa (ideas + 066.14 H6)."""
     if n_swa_headroom < 0:
-        die("n_swa_headroom (n_batch) must be >= 0")
+        die("n_swa_headroom must be >= 0")
     if swa_full:
         return size_base
     n_swa_eff = pad128(n_swa) if n_swa > 0 else 0
@@ -269,6 +271,7 @@ class EstimateResult:
     n_seq_max: int
     n_batch: int
     n_ubatch: int
+    n_swa_headroom: int
     unified: bool
     swa_full: bool
     n_stream: int
@@ -319,6 +322,7 @@ def compute_kv_from_meta(
     swa_full: bool,
     n_batch: int,
     n_ubatch: int,
+    n_swa_headroom: int = LLAMA_SWA_HEADROOM_MAX_UBATCH,
     kv_budget_mib: float | None = None,
     model_label: str = "<meta>",
 ) -> EstimateResult:
@@ -328,9 +332,16 @@ def compute_kv_from_meta(
     if n_seq_max <= 0:
         die("--n-seq-max must be > 0")
     if n_batch <= 0:
-        die("--n-batch must be > 0 (066.13 C2 size_swa headroom)")
+        die("--n-batch must be > 0 (telemetry; not size_swa headroom)")
     if n_ubatch < 0:
         die("--n-ubatch must be >= 0 (telemetry; not used in size_swa)")
+    if n_swa_headroom <= 0:
+        die("--n-swa-headroom must be > 0 (066.14 H6; product default 2048)")
+    if n_ubatch > n_swa_headroom:
+        die(
+            f"n_ubatch={n_ubatch} > n_swa_headroom={n_swa_headroom} "
+            f"(must be <= LLAMA_SWA_HEADROOM_MAX_UBATCH / override)"
+        )
     ctk_l = ctk.strip().lower()
     ctv_l = ctv.strip().lower()
     if ctk_l not in _CTK_TYPES:
@@ -339,14 +350,14 @@ def compute_kv_from_meta(
         die(f"--ctv must be one of {sorted(_CTV_TYPES)}")
 
     size_base = ggml_pad(n_ctx, 256)
-    # TASK-066.13 C2: headroom = n_batch (ub-invariant when only -ub changes).
+    # TASK-066.14 H6: headroom = fixed MAX_UBATCH (not live n_batch / n_ubatch).
     size_swa = calc_size_swa(
         size_base,
         int(meta["n_swa"]),
         n_seq_max,
         unified,
         swa_full,
-        n_swa_headroom=n_batch,
+        n_swa_headroom=n_swa_headroom,
     )
     n_stream = 1 if unified else n_seq_max
     n_layer = int(meta["n_layer"])
@@ -399,6 +410,7 @@ def compute_kv_from_meta(
         n_seq_max=n_seq_max,
         n_batch=n_batch,
         n_ubatch=n_ubatch,
+        n_swa_headroom=n_swa_headroom,
         unified=unified,
         swa_full=swa_full,
         n_stream=n_stream,
@@ -424,6 +436,7 @@ def estimate(
     swa_full: bool,
     n_batch: int,
     n_ubatch: int,
+    n_swa_headroom: int,
     kv_budget_mib: float | None,
 ) -> EstimateResult:
     meta = load_model_meta(model)
@@ -437,6 +450,7 @@ def estimate(
         swa_full=swa_full,
         n_batch=n_batch,
         n_ubatch=n_ubatch,
+        n_swa_headroom=n_swa_headroom,
         kv_budget_mib=kv_budget_mib,
         model_label=str(model),
     )
@@ -455,13 +469,22 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--n-batch",
         required=True,
         type=int,
-        help="-b / n_batch (required; TASK-066.13 C2 size_swa headroom)",
+        help="-b / n_batch (required telemetry; NOT size_swa headroom after 066.14)",
     )
     p.add_argument(
         "--n-ubatch",
         required=True,
         type=int,
-        help="-ub / n_ubatch (required telemetry; NOT used in size_swa)",
+        help="-ub / n_ubatch (required telemetry; must be <= --n-swa-headroom)",
+    )
+    p.add_argument(
+        "--n-swa-headroom",
+        type=int,
+        default=LLAMA_SWA_HEADROOM_MAX_UBATCH,
+        help=(
+            f"size_swa headroom (default {LLAMA_SWA_HEADROOM_MAX_UBATCH} = "
+            "LLAMA_SWA_HEADROOM_MAX_UBATCH; 066.14 H6 KEEP)"
+        ),
     )
     p.add_argument("--unified", required=True, help="true|false (KV unified)")
     p.add_argument("--swa-full", required=True, help="true|false (--swa-full)")
@@ -486,6 +509,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         swa_full=parse_bool(str(args.swa_full), "--swa-full"),
         n_batch=int(args.n_batch),
         n_ubatch=int(args.n_ubatch),
+        n_swa_headroom=int(args.n_swa_headroom),
         kv_budget_mib=args.kv_budget_mib,
     )
     payload = asdict(result)
@@ -497,7 +521,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     print(
         f"size_base={result.size_base} size_swa={result.size_swa} "
         f"n_batch={result.n_batch} n_ubatch={result.n_ubatch} "
-        f"(size_swa headroom=n_batch) n_stream={result.n_stream}"
+        f"n_swa_headroom={result.n_swa_headroom} "
+        f"(size_swa headroom=fixed MAX_UBATCH path) n_stream={result.n_stream}"
     )
     print(
         f"layers={result.n_layer} swa_layers={result.n_swa_layers} "
