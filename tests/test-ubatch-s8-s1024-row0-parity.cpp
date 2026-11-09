@@ -1,14 +1,17 @@
-// TASK-066.5 / 066.6 — product ubatch S8 vs S1024 greedy token-stream parity (TDD RED gate).
+// TASK-066.5 / 066.6 / 066.17 — product ubatch parity (TDD RED gate).
 //
 // Ladder confirm class (pre-A2 DIFF@text under MUL_MM_MIN=7). This autotest covers:
-//   C1  raw tokenize + greedy
-//   C1j jinja chat tokens + greedy (066.9 Phase A2)
+//   C2 / C3     stress prefill logits (ub 16 corners)
+//   C2p / C1p / C1jp  product operator ubatch (066.17): 256↔512, 256↔1024
+//   C1          raw tokenize + greedy stress 16↔1024
+//   C1j         jinja chat tokens + greedy (066.9 Phase A2) stress 16↔1024
 //
-//   Same prompt + product KV/FA knobs; greedy (argmax) decode for N tokens with
+//   Stress greedy (argmax) decode for N tokens with
 //     A: -b max(512,16)=512  -ub 16
 //     B: -b 1024             -ub 1024
+//   Product C*p* pairs: equal -b = max(ub_a,ub_b) both sides; no 512↔1024.
 //   Product gates: every ubatch >= 9 and multiple of 8 (no ub<9).
-//   Require identical generated token ids. First mismatch → RED (not ε).
+//   Require identical generated token ids / logits. First mismatch → RED (not ε).
 //
 // Root-cause diagnostics (no PASS change; evidence only):
 //   TASK066_DIAG=localize     — ubatch step / threshold matrix (product KV)
@@ -35,6 +38,13 @@
 //       Unset = A b=512 ub=16 / B b=1024 ub=1024.
 //       Set  = equal -b (expect equal size_swa under 066.13 C2). Refuse n < max(ub).
 //   TASK066_DIAG=c1       — skip C2/C3; run raw C1 only (fast H1/H2 loop).
+// 066.17 product pairs (additional to stress C1/C1j):
+//   TASK066_DIAG=c1p      — C2p + C1p only (256↔512, 256↔1024; product KV).
+//   TASK066_DIAG=c1p-q8   — same pairs under ctk=q8_0 ctv=q8_0 (KV quality isolate).
+//   TASK066_DIAG=c1p-f16  — same pairs under ctk=f16 ctv=f16 (FP16 KV isolate).
+//       Refuse if TASK066_CTK/CTV already set to a different type.
+//   TASK066_DIAG=c1jp     — C1jp only (jinja on same product pairs).
+// Full suite: after C3, C2pf16 → C2pq8 → C2p (product turbo4) …
 
 #include "arg.h"
 #include "chat.h"
@@ -391,6 +401,203 @@ int run_c1j_gate(
 void print_cmp(const char * label, const logits_cmp & c) {
     printf("DIAG %s: exact=%d mad=%.8g first_diff_i=%lld argmax_a=%d argmax_b=%d\n",
            label, c.exact ? 1 : 0, c.mad, (long long) c.first_diff_i, c.argmax_a, c.argmax_b);
+}
+
+// 066.17 — product operator ubatch pairs (no 512↔1024).
+struct product_ub_pair {
+    int32_t     ub_lo;
+    int32_t     ub_hi;
+    const char * label;
+};
+
+constexpr product_ub_pair k_product_ub_pairs[] = {
+    {256, 512, "256v512"},
+    {256, 1024, "256v1024"},
+};
+
+bool ubatch_product_contract_ok(int32_t ub) {
+    return ub >= 9 && (ub % 8) == 0;
+}
+
+// Fail-closed: ub contract + equal -b = max(ub_lo, ub_hi).
+int product_pair_batch(int32_t ub_lo, int32_t ub_hi, int32_t & b_out) {
+    if (!ubatch_product_contract_ok(ub_lo) || !ubatch_product_contract_ok(ub_hi)) {
+        fprintf(stderr,
+                "FAIL: product ubatch contract violated (need ub>=9 and ub%%8==0); "
+                "got ub_lo=%d ub_hi=%d\n",
+                ub_lo, ub_hi);
+        return 2;
+    }
+    b_out = std::max(ub_lo, ub_hi);
+    return 0;
+}
+
+// C2p — prefill logits bit-exact on product ubatch pairs (equal -b).
+// gate_id: "C2p" (product KV), "C2pq8" (q8/q8), or "C2pf16" (f16/f16).
+int run_c2p_gate(
+        llama_model * model,
+        const llama_vocab * vocab,
+        common_params params,
+        const std::vector<llama_token> & tokens,
+        const char * gate_id = "C2p") {
+    constexpr int32_t n_prefix = 1536;
+    if ((int32_t) tokens.size() < n_prefix) {
+        fprintf(stderr, "FAIL: prompt needs >= %d tokens for %s (got %zu)\n", n_prefix, gate_id,
+                tokens.size());
+        return 2;
+    }
+    printf("UBATCH-S8-S1024-%s product ubatch prefill logits (066.17)\n", gate_id);
+    printf("  model=%s n_prefix=%d ctk=%s ctv=%s fa=%s pairs=256v512,256v1024\n",
+           params.model.path.c_str(), n_prefix, ggml_type_name(params.cache_type_k),
+           ggml_type_name(params.cache_type_v),
+           params.flash_attn_type == LLAMA_FLASH_ATTN_TYPE_DISABLED ? "off" : "on");
+    const int32_t n_vocab = llama_vocab_n_tokens(vocab);
+    for (const product_ub_pair & p : k_product_ub_pairs) {
+        int32_t b = 0;
+        const int rc_b = product_pair_batch(p.ub_lo, p.ub_hi, b);
+        if (rc_b != 0) {
+            return rc_b;
+        }
+        printf("  %s_pair %s: b=%d ub=%d vs ub=%d\n", gate_id, p.label, b, p.ub_lo, p.ub_hi);
+        const logits_result a =
+                run_prefill_logits(model, params, tokens, n_prefix, b, p.ub_lo);
+        const logits_result hi =
+                run_prefill_logits(model, params, tokens, n_prefix, b, p.ub_hi);
+        if (!a.ok || !hi.ok) {
+            return 1;
+        }
+        const logits_cmp c = compare_logits(a.logits.data(), hi.logits.data(), n_vocab);
+        char label[64];
+        std::snprintf(label, sizeof(label), "%s_%s", gate_id, p.label);
+        print_cmp(label, c);
+        if (!c.exact) {
+            printf("RESULT FAIL (RED) — %s %s prefill logits not bit-exact; "
+                   "066.17 gate open (no KEEP)\n",
+                   gate_id, p.label);
+            return 1;
+        }
+        printf("%s %s PASS — continuing\n", gate_id, p.label);
+    }
+    printf("%s PASS — both product pairs bit-exact at n=%d (ctk=%s ctv=%s)\n", gate_id, n_prefix,
+           ggml_type_name(params.cache_type_k), ggml_type_name(params.cache_type_v));
+    return 0;
+}
+
+// C1p — greedy raw token-stream bit-exact on product ubatch pairs.
+int run_c1p_gate(
+        llama_model * model,
+        const llama_vocab * vocab,
+        common_params params,
+        const std::vector<llama_token> & tokens,
+        int32_t n_predict,
+        const char * gate_id = "C1p") {
+    printf("UBATCH-S8-S1024-%s product ubatch greedy raw (066.17)\n", gate_id);
+    printf("  model=%s n_prompt_tokens=%zu n_predict=%d ctk=%s ctv=%s\n",
+           params.model.path.c_str(), tokens.size(), n_predict,
+           ggml_type_name(params.cache_type_k), ggml_type_name(params.cache_type_v));
+    for (const product_ub_pair & p : k_product_ub_pairs) {
+        int32_t b = 0;
+        const int rc_b = product_pair_batch(p.ub_lo, p.ub_hi, b);
+        if (rc_b != 0) {
+            return rc_b;
+        }
+        printf("  %s_pair %s: b=%d ub=%d vs ub=%d\n", gate_id, p.label, b, p.ub_lo, p.ub_hi);
+        const gen_result a = run_greedy_ubatch(model, params, tokens, n_predict, b, p.ub_lo);
+        if (!a.ok) {
+            return 1;
+        }
+        const gen_result hi = run_greedy_ubatch(model, params, tokens, n_predict, b, p.ub_hi);
+        if (!hi.ok) {
+            return 1;
+        }
+        const int32_t diff_i = first_token_diff(a.tokens, hi.tokens);
+        printf("  %s gen_len_a=%zu gen_len_b=%zu first_token_diff=%d\n",
+               p.label, a.tokens.size(), hi.tokens.size(), diff_i);
+        if (diff_i >= 0 && diff_i < (int32_t) a.tokens.size() &&
+            diff_i < (int32_t) hi.tokens.size()) {
+            printf("  tok_a=%d tok_b=%d\n", a.tokens[size_t(diff_i)], hi.tokens[size_t(diff_i)]);
+        }
+        char lab_lo[48];
+        char lab_hi[48];
+        std::snprintf(lab_lo, sizeof(lab_lo), "%s_%s_lo", gate_id, p.label);
+        std::snprintf(lab_hi, sizeof(lab_hi), "%s_%s_hi", gate_id, p.label);
+        print_gen_prefix(lab_lo, vocab, a.tokens, 16);
+        print_gen_prefix(lab_hi, vocab, hi.tokens, 16);
+        if (diff_i >= 0) {
+            printf("RESULT FAIL (RED) — %s %s greedy not bit-exact; 066.17 gate open (no KEEP)\n",
+                   gate_id, p.label);
+            return 1;
+        }
+        printf("%s %s PASS — continuing\n", gate_id, p.label);
+    }
+    printf("RESULT PASS (GREEN) — %s both product pairs bit-exact for n_predict=%d\n",
+           gate_id, n_predict);
+    return 0;
+}
+
+// Lock KV to an explicit pair for quality isolate. Fail if CTK/CTV env disagrees.
+int lock_kv_pair(
+        common_params & params,
+        ggml_type type_k,
+        ggml_type type_v,
+        const char * name_k,
+        const char * name_v,
+        const char * where) {
+    const char * ctk_e = std::getenv("TASK066_CTK");
+    const char * ctv_e = std::getenv("TASK066_CTV");
+    if (ctk_e && ctk_e[0] && std::strcmp(ctk_e, name_k) != 0) {
+        fprintf(stderr,
+                "FAIL: %s needs ctk=%s but TASK066_CTK=%s (refusing silent KV override)\n",
+                where, name_k, ctk_e);
+        return 2;
+    }
+    if (ctv_e && ctv_e[0] && std::strcmp(ctv_e, name_v) != 0) {
+        fprintf(stderr,
+                "FAIL: %s needs ctv=%s but TASK066_CTV=%s (refusing silent KV override)\n",
+                where, name_v, ctv_e);
+        return 2;
+    }
+    params.cache_type_k = type_k;
+    params.cache_type_v = type_v;
+    fprintf(stderr, "%s: KV lock ctk=%s ctv=%s (quality isolate vs product turbo4)\n", where,
+            name_k, name_v);
+    return 0;
+}
+
+int lock_kv_q8_q8(common_params & params, const char * where) {
+    return lock_kv_pair(params, GGML_TYPE_Q8_0, GGML_TYPE_Q8_0, "q8_0", "q8_0", where);
+}
+
+int lock_kv_f16_f16(common_params & params, const char * where) {
+    return lock_kv_pair(params, GGML_TYPE_F16, GGML_TYPE_F16, "f16", "f16", where);
+}
+
+// C1jp — jinja greedy on product ubatch pairs (after C1p GREEN in full suite).
+int run_c1jp_gate(
+        llama_model * model,
+        const llama_vocab * vocab,
+        common_params params,
+        const std::string & user_text,
+        int32_t n_predict) {
+    printf("UBATCH-S8-S1024-C1jp product ubatch jinja greedy (066.17)\n");
+    for (const product_ub_pair & p : k_product_ub_pairs) {
+        int32_t b = 0;
+        const int rc_b = product_pair_batch(p.ub_lo, p.ub_hi, b);
+        if (rc_b != 0) {
+            return rc_b;
+        }
+        printf("  c1jp_pair %s: b=%d ub=%d vs ub=%d\n", p.label, b, p.ub_lo, p.ub_hi);
+        const int rc = run_c1j_gate(
+                model, vocab, params, user_text, n_predict, b, p.ub_lo, b, p.ub_hi);
+        if (rc != 0) {
+            printf("RESULT FAIL (RED) — C1jp %s (see C1j detail above); 066.17 open\n", p.label);
+            return rc;
+        }
+        printf("C1jp %s PASS — continuing\n", p.label);
+    }
+    printf("RESULT PASS (GREEN) — C1jp both product pairs bit-exact for n_predict=%d\n",
+           n_predict);
+    return 0;
 }
 
 // --- C3 bisect (066.5): last-ubatch cb_eval + last-token named F32/F16 slices ---
@@ -1186,6 +1393,10 @@ int main(int argc, char ** argv) {
     const bool do_c3_thresh = diag && std::strcmp(diag, "c3-thresh") == 0;
     const bool do_c1j = diag && std::strcmp(diag, "c1j") == 0;
     const bool do_c1_only = diag && std::strcmp(diag, "c1") == 0;
+    const bool do_c1p = diag && std::strcmp(diag, "c1p") == 0;
+    const bool do_c1p_q8 = diag && std::strcmp(diag, "c1p-q8") == 0;
+    const bool do_c1p_f16 = diag && std::strcmp(diag, "c1p-f16") == 0;
+    const bool do_c1jp = diag && std::strcmp(diag, "c1jp") == 0;
 
     // Product C1/C1j pair: ubatch >= 9 and multiple of 8 (A-side 16, not historical 8).
     const int32_t ub_a = 16;
@@ -1313,6 +1524,46 @@ int main(int argc, char ** argv) {
         printf("UBATCH-S8-S1024-DIAG C1j only (066.9 Phase A2)\n");
         return run_c1j_gate(
                 model, vocab, params, params.prompt, n_predict, b_a, ub_a, b_b, ub_b);
+    }
+
+    if (do_c1jp) {
+        printf("UBATCH-S8-S1024-DIAG C1jp only (066.17 product jinja)\n");
+        return run_c1jp_gate(model, vocab, params, params.prompt, n_predict);
+    }
+
+    if (do_c1p_q8) {
+        printf("UBATCH-S8-S1024-DIAG C1p-q8 (066.17: C2pq8+C1pq8 under q8_0/q8_0)\n");
+        const int rc_lock = lock_kv_q8_q8(params, "c1p-q8");
+        if (rc_lock != 0) {
+            return rc_lock;
+        }
+        const int rc_c2p = run_c2p_gate(model, vocab, params, tokens, "C2pq8");
+        if (rc_c2p != 0) {
+            return rc_c2p;
+        }
+        return run_c1p_gate(model, vocab, params, tokens, n_predict, "C1pq8");
+    }
+
+    if (do_c1p_f16) {
+        printf("UBATCH-S8-S1024-DIAG C1p-f16 (066.17: C2pf16+C1pf16 under f16/f16)\n");
+        const int rc_lock = lock_kv_f16_f16(params, "c1p-f16");
+        if (rc_lock != 0) {
+            return rc_lock;
+        }
+        const int rc_c2p = run_c2p_gate(model, vocab, params, tokens, "C2pf16");
+        if (rc_c2p != 0) {
+            return rc_c2p;
+        }
+        return run_c1p_gate(model, vocab, params, tokens, n_predict, "C1pf16");
+    }
+
+    if (do_c1p) {
+        printf("UBATCH-S8-S1024-DIAG C1p (066.17 product: C2p then C1p)\n");
+        const int rc_c2p = run_c2p_gate(model, vocab, params, tokens, "C2p");
+        if (rc_c2p != 0) {
+            return rc_c2p;
+        }
+        return run_c1p_gate(model, vocab, params, tokens, n_predict, "C1p");
     }
 
     if (do_c1_only) {
@@ -1443,16 +1694,57 @@ int main(int argc, char ** argv) {
         const logits_cmp c_bad = compare_logits(bad_a.logits.data(), bad_b.logits.data(), n_vocab);
         print_cmp("C3_n1536", c_bad);
         if (c_bad.exact) {
-            printf("C3 n=1536 GREEN (ub=%d vs ub=%d) — continuing to C1\n", c3_ub_multi, n_bad);
+            printf("C3 n=1536 GREEN (ub=%d vs ub=%d) — continuing to C2p (066.17)\n",
+                   c3_ub_multi, n_bad);
         } else {
             printf("RESULT FAIL (RED) — C3 n=1536 multi-step ubatch (ub=%d vs ub=%d; "
-                   "both sides on %%128 grid for one-shot). Skip C1 until C3 GREEN\n",
+                   "both sides on %%128 grid for one-shot). Skip C*p*/C1 until C3 GREEN\n",
                    c3_ub_multi, n_bad);
             return 1;
         }
     }
 
-    printf("UBATCH-S8-S1024-C1 greedy token-stream bit-exact\n");
+    // 066.17 preferred order: C2pf16 → C2pq8 → C2p (product turbo4) →
+    // C1p → C1jp, then stress C1/C1j. First RED stops (no KEEP).
+    {
+        common_params params_f16 = params;
+        const int rc_lock_f16 = lock_kv_f16_f16(params_f16, "C2pf16");
+        if (rc_lock_f16 != 0) {
+            return rc_lock_f16;
+        }
+        const int rc_c2pf16 = run_c2p_gate(model, vocab, params_f16, tokens, "C2pf16");
+        if (rc_c2pf16 != 0) {
+            return rc_c2pf16;
+        }
+        printf("note: C2pf16 GREEN under f16/f16 — continuing to C2pq8 (q8/q8)\n");
+
+        common_params params_q8 = params;
+        const int rc_lock_q8 = lock_kv_q8_q8(params_q8, "C2pq8");
+        if (rc_lock_q8 != 0) {
+            return rc_lock_q8;
+        }
+        const int rc_c2pq8 = run_c2p_gate(model, vocab, params_q8, tokens, "C2pq8");
+        if (rc_c2pq8 != 0) {
+            return rc_c2pq8;
+        }
+        printf("note: C2pq8 GREEN under q8_0/q8_0 — continuing to product C2p (turbo4)\n");
+
+        const int rc_c2p = run_c2p_gate(model, vocab, params, tokens, "C2p");
+        if (rc_c2p != 0) {
+            return rc_c2p;
+        }
+        const int rc_c1p = run_c1p_gate(model, vocab, params, tokens, n_predict, "C1p");
+        if (rc_c1p != 0) {
+            return rc_c1p;
+        }
+        const int rc_c1jp = run_c1jp_gate(model, vocab, params, params.prompt, n_predict);
+        if (rc_c1jp != 0) {
+            return rc_c1jp;
+        }
+        printf("note: C2pf16/C2pq8/C2p/C1p/C1jp GREEN — continuing to stress C1/C1j (16↔1024)\n");
+    }
+
+    printf("UBATCH-S8-S1024-C1 greedy token-stream bit-exact (stress 16↔1024)\n");
     printf("  model=%s\n", params.model.path.c_str());
     printf("  n_prompt_tokens=%zu n_predict=%d n_vocab=%d\n",
            tokens.size(), n_predict, llama_vocab_n_tokens(vocab));
@@ -1477,7 +1769,7 @@ int main(int argc, char ** argv) {
 
     if (diff_i >= 0) {
         printf("RESULT FAIL (RED) — greedy token stream not bit-exact S16 vs S1024; "
-               "066.5/066.6 TDD gate open\n");
+               "066.5/066.6 TDD gate open (stress; C*p* already recorded)\n");
         return 1;
     }
 
@@ -1485,6 +1777,6 @@ int main(int argc, char ** argv) {
            n_predict);
     printf("note: raw C1 GREEN ≠ A2 Done; continuing to C1j (jinja chat)\n");
 
-    // Phase A2 — jinja-wrapped prompt; same ubatch pair as C1.
+    // Phase A2 — jinja-wrapped prompt; same ubatch pair as C1 stress.
     return run_c1j_gate(model, vocab, params, params.prompt, n_predict, b_a, ub_a, b_b, ub_b);
 }

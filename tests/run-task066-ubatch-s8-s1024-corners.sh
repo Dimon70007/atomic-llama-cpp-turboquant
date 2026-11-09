@@ -10,8 +10,13 @@
 #   TASK066_CTX       — required (>= prompt + n_predict); ladder uses 3072
 #   TASK066_PROMPT    — optional; default tests/fixtures/task066/...prompt.txt
 #   TASK066_N_PREDICT — optional; default 64 (binary); raise if GREEN but ladder DIFF
-#   TASK066_DIAG=localize|fa-ablation|c3-bisect|c3-thresh|c1|c1j — evidence / fast gates
-#   TASK066_C1_BATCH=<n> — 066.14 H1: equal -b both sides; product ub 16 vs 1024
+#   TASK066_DIAG=localize|fa-ablation|c3-bisect|c3-thresh|c1|c1j|c1p|c1p-q8|c1p-f16|c1jp
+#       c1p     = 066.17 C2p+C1p product pairs (product KV q8_0/turbo4)
+#       c1p-q8  = C2pq8+C1pq8 under ctk=q8_0 ctv=q8_0
+#       c1p-f16 = C2pf16+C1pf16 under ctk=f16 ctv=f16
+#       c1jp    = 066.17 C1jp only (jinja on product pairs)
+#   Full suite: C2→C3→C2pf16→C2pq8→C2p→C1p→C1jp→C1(stress)→C1j(stress)
+#   TASK066_C1_BATCH=<n> — 066.14 H1: equal -b both sides; stress ub 16 vs 1024
 #   TASK066_BISECT_FILTER / TASK066_BISECT_HASH_ONLY — c3-bisect knobs
 #   TASK066_FA=off + TASK066_CTV=f16 — true FA-off diag (refuse turbo KV); NOT product waiver
 #   BUILD_DIR, REBUILD=1, TASK066_REQUIRE_GPU (default 1 on Darwin)
@@ -114,7 +119,7 @@ echo "ubatch_s8_s1024_exit=${RC}" | tee "${OUT_DIR}/ubatch-s8-s1024.exit"
     echo "VERDICT=MISUSE"
   else
     echo "VERDICT=RED"
-    echo "note=greedy S8 vs S1024 token stream not bit-exact (066.5/066.6 TDD gate)"
+    echo "note=suite RED (first failing gate; see log for C2/C3/C2p/C1p/C1jp/C1/C1j)"
   fi
 } | tee "${OUT_DIR}/summary.txt"
 

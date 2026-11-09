@@ -14,9 +14,17 @@ Releases before `b10269-1.5.0` predate this file; see the git history.
 
 ### Added
 
-- **TASK-066.17 (spec):** product ubatch gates design — pairs `256↔512` and
-  `256↔1024` (C2p/C1p/C1jp); no `512↔1024`. SSOT
-  `tests/TASK-066.17-product-ubatch-256-512-1024.md` (implementation pending).
+- **TASK-066.17 (impl; OPEN/RED):** product ubatch gates C2p/C1p/C1jp —
+  pairs `256↔512` and `256↔1024` only (no `512↔1024`); equal `-b=max(ub)`
+  fail-closed; `ub≥9` and `ub%8==0`. KV isolates: **C2pq8** (`q8_0`/`q8_0`,
+  `DIAG=c1p-q8`) and **C2pf16** (`f16`/`f16`, `DIAG=c1p-f16`). Suite order
+  `C2→C3→C2pf16→C2pq8→C2p→C1p→C1jp→C1(stress)→C1j(stress)`. Stamp
+  `…173359Z`: C2/C3 GREEN; **C2p RED**. Isolates: **C2pq8 RED** (`…174850Z`,
+  mad≈3.9); **C2pf16 RED** (`…175136Z`, mad≈0.26, same argmax) — KV quality
+  shrinks mad but does not clear bit-exact. **Root locked in SSOT:** not
+  KV-quant; `size_swa∝ub` under equal `-b` — fix to GREEN (no KEEP).
+  Binary `test-ubatch-s8-s1024-row0-parity`. SSOT
+  `tests/TASK-066.17-product-ubatch-256-512-1024.md`.
 
 ### Changed
 

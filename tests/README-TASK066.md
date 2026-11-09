@@ -113,7 +113,7 @@ cmake --build build --parallel \
 | `mtp-acc-trace` | `run-task066-mtp-acc-trace-checklist.sh` | ACC_TRACE log attach |
 | `mtp-e2e` | `run-task066-mtp-e2e-corners.sh` | MTP e2e (blocked for now) |
 | `mul-mat-residual` | `run-task066-mul-mat-residual-corners.sh` | mul_mm policy unit (CPU) + ne11 residual |
-| `ubatch-s8-s1024` | `run-task066-ubatch-s8-s1024-corners.sh` | greedy S8 vs S1024 (product ladder class; needs MODEL+CTX) |
+| `ubatch-s8-s1024` | `run-task066-ubatch-s8-s1024-corners.sh` | C2/C3 + C2pf16 + C2pq8 + C2p/C1p/C1jp (256↔512, 256↔1024) + stress 16↔1024; DIAG=c1p / c1p-q8 / c1p-f16 / c1jp |
 | `followup` | `run-task066-followup-all.sh` | Track A+B one-shot |
 | `all` | umbrella | fa…moe-router |
 
