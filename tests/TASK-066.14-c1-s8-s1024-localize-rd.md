@@ -42,7 +42,9 @@ R&D override (optional): `TASK066_ALLOW_SIZE_SWA_HEADROOM=1` + `TASK066_SIZE_SWA
 - [x] Unit `test-iswa-size-swa` PASS (env clear)  
 - [x] `pytest tests/test_estimate_kv_ctx.py` PASS  
 - [x] Full corners GREEN without DIAG  
+- [x] Ubatch ladder all≡S8 (`…005138Z`); MTP↔nomtp PASS (`…010049Z`)  
 - [x] CHANGELOG + pointer  
+- [x] Metal install-src overlay + sync-build `--skip-checkout`; `switch-model MODEL=gemma4-26b-a4b-mtp` (ctx=140000, health OK) 
 
 ## Non-goals
 
