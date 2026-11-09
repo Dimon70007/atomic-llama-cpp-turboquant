@@ -11,7 +11,9 @@
 //   066.7 KEEP:    mm_min=7  → N>=8 on mul_mm; rem∈{2..7} still on mul_mv (A2 hole)
 //   066.9 A2:      mm_min=1  → N>=2 on mul_mm; closes last-ubatch rem cross-kernel
 //   066.9 B:       mm_min=0  → N>=1 on mul_mm; closes MTP verify N=1 vs {2,3,4}
-//                  (Phase B flips DEFAULT after RED autotest; A2 rem lock retained)
+//                  (decode tax ~2.45x tg; MTP speed sense eroded — see 066.15)
+//   066.15 probe:  mm_min=1  → restore decode speed; accept MTP verify cross-kernel
+//                  hazard pending quality A/B (MTP vs nomtp). Rem A2 lock retained.
 
 #pragma once
 
@@ -23,7 +25,7 @@ extern "C" {
 #endif
 
 #ifndef GGML_METAL_MUL_MM_MIN_DEFAULT
-#define GGML_METAL_MUL_MM_MIN_DEFAULT 0
+#define GGML_METAL_MUL_MM_MIN_DEFAULT 1
 #endif
 
 /** True when the Metal mul_mat path selects mul_mm for this ne11 under mm_min. */

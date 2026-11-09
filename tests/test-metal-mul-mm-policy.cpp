@@ -1,10 +1,10 @@
 // TASK-066.9 Phase A2 + B — CPU unit for Metal mul_mm vs mul_mv dispatch policy.
 //
 // Locks without GPU / model:
-//   A2 rem: jinja n=1708, ub=8 → rem=4; min=7 hazard; product default safe
-//   B MTP:  N=1 vs {2,3,4}; min=1 hazard; product default min=0 → no hazard
+//   A2 rem: jinja n=1708, ub=8 → rem=4; min=7 hazard; product default min=1 safe
+//   MTP:    N=1 vs {2,3,4}; min=1 → hazard (accepted under 066.15 speed probe)
 //
-// Bad merge that bumps DEFAULT back to 7 (A2) or 1 (Phase B MTP) fails here.
+// Bad merge that bumps DEFAULT back to 7 (A2 rem hole) fails here.
 // Runner: SUITE=mul-mat-residual (policy gate first) or build target alone.
 // No Metal required.
 
@@ -49,8 +49,8 @@ int main() {
     printf("TASK-066 mul_mm policy unit (CPU; no Metal)\n");
     printf("  GGML_METAL_MUL_MM_MIN_DEFAULT=%d\n", GGML_METAL_MUL_MM_MIN_DEFAULT);
 
-    // Product pin after Phase B — do not silently restore 7 (A2) or 1 (MTP hole).
-    expect_eq_int("product_default_min_is_0", GGML_METAL_MUL_MM_MIN_DEFAULT, 0);
+    // 066.15 probe pin: DEFAULT=1 (A2 rem OK, decode on mv). Do not restore 7.
+    expect_eq_int("product_default_min_is_1", GGML_METAL_MUL_MM_MIN_DEFAULT, 1);
 
     // Dispatch rule: ne11 > mm_min → mul_mm (matches ggml-metal-ops.cpp).
     expect_true("n1_min0_on_mm", ggml_metal_mul_mm_ne11_uses_mm(1, 0));
@@ -86,17 +86,19 @@ int main() {
                 !ggml_metal_ubatch_rem_cross_kernel_hazard(
                         1708, 8, GGML_METAL_MUL_MM_MIN_DEFAULT));
 
-    // 066.9 Phase B — MTP verify N=1 vs {2,3,4}: A2 min=1 leaves N=1 on mv, N>=2 on mm.
+    // MTP verify N=1 vs {2,3,4}: min=1 → hazard (N=1 mv, N>=2 mm). min=0 closes it.
     expect_true("mtp_hazard_n2_min1", ggml_metal_mtp_verify_cross_kernel_hazard(2, 1));
     expect_true("mtp_hazard_n3_min1", ggml_metal_mtp_verify_cross_kernel_hazard(3, 1));
     expect_true("mtp_hazard_n4_min1", ggml_metal_mtp_verify_cross_kernel_hazard(4, 1));
     expect_true("no_mtp_hazard_n2_min0", !ggml_metal_mtp_verify_cross_kernel_hazard(2, 0));
     expect_true("no_mtp_hazard_n4_min0", !ggml_metal_mtp_verify_cross_kernel_hazard(4, 0));
     expect_true("no_mtp_hazard_n4_min7", !ggml_metal_mtp_verify_cross_kernel_hazard(4, 7));
-    expect_true("product_default_safe_for_mtp_n2",
-                !ggml_metal_mtp_verify_cross_kernel_hazard(2, GGML_METAL_MUL_MM_MIN_DEFAULT));
-    expect_true("product_default_safe_for_mtp_n4",
-                !ggml_metal_mtp_verify_cross_kernel_hazard(4, GGML_METAL_MUL_MM_MIN_DEFAULT));
+    // 066.15: DEFAULT=1 deliberately re-opens MTP matmul hazard for decode speed;
+    // quality impact measured by mtp-vs-nomtp / short-bug probes (not this unit).
+    expect_true("product_default_mtp_hazard_n2_expected",
+                ggml_metal_mtp_verify_cross_kernel_hazard(2, GGML_METAL_MUL_MM_MIN_DEFAULT));
+    expect_true("product_default_mtp_hazard_n4_expected",
+                ggml_metal_mtp_verify_cross_kernel_hazard(4, GGML_METAL_MUL_MM_MIN_DEFAULT));
 
     if (g_fails != 0) {
         printf("RESULT FAIL (%d assertion(s)) — mul_mm policy regress\n", g_fails);

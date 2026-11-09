@@ -14,15 +14,33 @@ Releases before `b10269-1.5.0` predate this file; see the git history.
 
 ### Changed
 
+- **TASK-066.15 MUL_MM_MIN DEFAULT 0→1 (speed probe):** N=1 decode back on `mul_mv`;
+  A2 rem lock retained; MTP verify cross-kernel accepted. Quality stamp
+  `logs/task066-15-min1-mtp-quality-20261109T041653Z` — mtp-vs-nomtp min=0 vs min=1:
+  no duel regression (hits 1/2→2/2); acceptance 0.884→0.893. Override
+  `GGML_METAL_MUL_MM_MIN=0` restores Phase B all-mm. Residual: mtp-verify RED under
+  min=1 is telemetry.
+- **TASK-066.15 env matrix:** stamp `logs/task066-15-perf-knobs-20261109T025448Z`
+  (Mini MTL, Gemma4 IQ4_XS, turbo3, build `bc49022c4`/11459). Decode tax =
+  `MUL_MM_MIN=0` → tg128 ~10.15 vs ~24.8–24.9 at `MUL_MM_MIN∈{1,8}` (~2.45×);
+  `FA_VEC=1` noop on flat bench; pp512/pp2048 flat across env (~±1%). H1 REFUTE /
+  H2 KEEP / H3 PARTIAL; H4/H5 defer to binary bisect. Draft: keep product
+  `MUL_MM_MIN=0` (A2/B tax); R&D speed `GGML_METAL_MUL_MM_MIN=1`.
+- **TASK-066.15 (spec):** Metal perf-knobs R&D since `d60d01875` — suspects
+  FA always-tile / `MUL_MM_MIN` / float-tile smem / fusion CB; env matrix + invariance
+  constraints. SSOT `tests/TASK-066.15-metal-perf-knobs-rd.md`.
+- **TASK-066.14 pivot evidence:** stamp `logs/task066-14-pivot-evidence-20261109T022827Z`
+  — live `size_swa calc` / occupancy hwm need `-lv 4` (INFO→TRACE map); pivot
+  `size_swa=1536` / fixed-2048 `3072`; filled-ring nomtp decode 8.61 vs 8.08 tok/s
+  (~+6.5%; ÷2 not reproduced); short `llama-bench` flat. Product stays `n_ubatch`+pad128.
 - **TASK-066.14 docs:** `tests/TASK-066.14-…md` § «What `calc_size_swa` is» —
   allocates `kv_swa` only; window vs `--swa-full`; FA does not set ring length;
   pad128 = `QK_TURBO3/4`, 256 = FA `get_n_kv` pad.
 - **TASK-066.14 product pivot (speed):** `size_swa` headroom back to live `n_ubatch`;
   outer pad **128** (TurboQuant block), not 256. Fixed-2048 KEEP doubled product
-  `size_swa` (1536→3072 @ `-ub 512`) and ~halved decode. Telemetry: create
-  `size_swa calc` + apply_ubatch `SWA occupancy hwm` (used vs allocated). Estimator
-  default headroom = `--n-ubatch`. R&D override unchanged
-  (`TASK066_ALLOW_SIZE_SWA_HEADROOM` + `TASK066_SIZE_SWA_HEADROOM`).
+  `size_swa` (1536→3072 @ `-ub 512`). Telemetry: create `size_swa calc` + apply_ubatch
+  `SWA occupancy hwm` (used vs allocated). Estimator default headroom = `--n-ubatch`.
+  R&D override unchanged (`TASK066_ALLOW_SIZE_SWA_HEADROOM` + `TASK066_SIZE_SWA_HEADROOM`).
 - **TASK-066.14 H6 KEEP (superseded for product headroom):** was fixed
   `LLAMA_SWA_HEADROOM_MAX_UBATCH` (2048). Full corners GREEN
   `logs/task066-14-c1-keep-full-20261109T004421Z` (C2/C3/C1/C1j). Kept as R&D

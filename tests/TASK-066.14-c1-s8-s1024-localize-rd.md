@@ -13,8 +13,7 @@ Equal `-b` (H1) or fixed headroom (Exp A) → GREEN even with unequal decode chu
 
 **Not causal here:** Metal mul_mm; decode chunk borders alone (Exp A).
 
-**Speed lesson:** fixed headroom `2048` with product `-ub=512` doubled `size_swa` (1536→3072) and ~halved decode.  
-`size_swa` ~∝ SWA FA `n_kv` ceiling → keep **minimal sufficient** (`n_swa + n_ubatch`), pad **128** (TurboQuant), not 256 (256 is FA *graph* pad in `get_n_kv`, not allocation).
+**Speed lesson:** fixed headroom `2048` with product `-ub=512` doubles `size_swa` (1536→3072). When the SWA ring fills, `used_max_p1→size_swa` so FA `n_kv` grows with allocation — keep **minimal sufficient** (`n_swa + n_ubatch`), pad **128** (TurboQuant), not 256 (256 is FA *graph* pad in `get_n_kv`, not allocation). Stamp `…022827Z`: filled-ring nomtp ~+6.5% vs fixed-2048; short bench flat; earlier ÷2 claim not reproduced.
 
 ## Product (post-pivot)
 
@@ -26,7 +25,8 @@ size_swa = PAD128(min(size_base, n_swa_eff + n_swa_headroom))
 Cross-ub text divergence accepted (already present). R&D override still:  
 `TASK066_ALLOW_SIZE_SWA_HEADROOM=1` + `TASK066_SIZE_SWA_HEADROOM=<n>`.
 
-Telemetry: create log `size_swa calc:…`; apply_ubatch `SWA occupancy hwm: used_max_p1=… size_swa=… slack=…`.
+Telemetry: create log `size_swa calc:…`; apply_ubatch `SWA occupancy hwm: used_max_p1=… size_swa=… slack=…`.  
+**Visibility:** `LLAMA_LOG_INFO` maps to verbosity TRACE (**4**); product default `-lv 3` hides calc/hwm — use `-lv 4` / `LLAMA_ARG_LOG_VERBOSITY=4`.
 
 ## What `llama_kv_cache_iswa_calc_size_swa` is (and is not)
 
@@ -88,7 +88,7 @@ alloc = PAD128(min(size_base, need))
 ```
 
 Product YAML `-ub 512`, Gemma `n_swa=1024` → **`size_swa=1536`** (raw need
-exactly; pad slack 0). Fixed-2048 KEEP had forced **3072** (~÷2 decode).
+exactly; pad slack 0). Fixed-2048 KEEP forced **3072** (filled-ring hwm→3072).
 
 ## Stamps
 
@@ -101,6 +101,7 @@ exactly; pad slack 0). Fixed-2048 KEEP had forced **3072** (~÷2 decode).
 | **`logs/task066-14-c1-keep-full-20261109T004421Z/`** | full C2+C3+C1+C1j | **GREEN** |
 | `logs/task066-14-ubatch-ladder-keep-20261109T005138Z/` | ubatch ladder floor, ub 1…2048 | **all identical vs S8** |
 | `logs/task066-14-mtp-vs-nomtp-keep-20261109T010049Z/` | MTP↔nomtp ub512 product | **PASS** (DIFF telemetry OK) |
+| **`logs/task066-14-pivot-evidence-20261109T022827Z/`** | pivot live calc/hwm + nomtp A/B vs fixed-2048 | **pivot OK**; filled-ring decode **8.61 vs 8.08** tok/s (~+6.5%); short `llama-bench` flat; **÷2 not reproduced** |
 
 ## Definition of Done
 
@@ -113,10 +114,13 @@ exactly; pad slack 0). Fixed-2048 KEEP had forced **3072** (~÷2 decode).
 - [x] CHANGELOG + pointer  
 - [x] Metal install-src overlay + sync-build `--skip-checkout`; `switch-model MODEL=gemma4-26b-a4b-mtp` (ctx=140000, health OK)  
 - [x] **Pivot code:** product headroom=`n_ubatch`, outer pad=128; occupancy hwm log; Metal overlay rebuild + MTP switch  
-- [ ] **Pivot evidence:** live `size_swa calc` / occupancy hwm in server log (verbosity); clean nomtp A/B decode vs fixed-2048
+- [x] **Pivot evidence:** live `size_swa calc` / occupancy hwm at `-lv 4` (`…022827Z`); clean nomtp A/B vs fixed-2048 (mechanism confirmed; ÷2 not reproduced in harness)
+
+**Follow-up (perf, not size_swa):** dual pp+tg regression vs `d60d01875^` → **[066.15](TASK-066.15-metal-perf-knobs-rd.md)**.
 
 ## Non-goals
 
 - Long-ctx TurboQuant drift / `TURBO_LAYER_ADAPTIVE` (066.5 / 066.10)  
 - ε-PASS  
 - Claiming all of 066.5 Done without remaining long-ctx KLD gates  
+- Metal FA/mm default retune (066.15)  

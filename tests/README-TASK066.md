@@ -7,7 +7,8 @@ Self-contained in **this** llama.cpp / ggml fork. Other developers: start here.
 **PR fidelity:** **[TASK-066-pr-audit-registry.md](TASK-066-pr-audit-registry.md)** (re-check after every Metal edit + suites).  
 **Done:** **[066.7 KEEP](TASK-066.7-mul-mat-residual.md)** + **[066.8](TASK-066.8-fp-comparison-metrics-rd.md)** + FA always-tile + **A2** + **B** + **C** knobs matrix.  
 **Open (ideas reopen):** **[066.5](TASK-066.5-fusion-table-parity.md)** + **[066.10](TASK-066.10-kv-ctx-sizing.md)** + **[066.11](TASK-066.11-small-ctx-q8-turbo3-cross-ub-rd.md)** — TODO (pad128 / KLD / estimator / turbo3 small-CTX cross-ub R&D).  
-**Priority:** `A1 → A2 → B (MTP) → C (knobs Pareto)`. Hist Stage 1 WAIVE ≠ Done.
+**Open (perf):** **[066.15](TASK-066.15-metal-perf-knobs-rd.md)** — env stamp `…025448Z`: decode tax = `MUL_MM_MIN=0` (~2.45× tg); `FA_VEC` noop; pp flat → binary bisect next if needed.  
+**Priority:** `A1 → A2 → B (MTP) → C (knobs Pareto)`. Hist Stage 1 WAIVE ≠ Done. Parallel: **066.15** perf matrix.
 
 ## Evidence hierarchy (hard)
 
@@ -31,6 +32,9 @@ Self-contained in **this** llama.cpp / ggml fork. Other developers: start here.
 | **066.7** | [TASK-066.7-mul-mat-residual.md](TASK-066.7-mul-mat-residual.md) | 066.4 done; residual was RED | 🟢 **KEEP** |
 | **066.8** | [TASK-066.8-fp-comparison-metrics-rd.md](TASK-066.8-fp-comparison-metrics-rd.md) ([lit](task066-hist/TASK-066.8-lit-notes.md)) | 066.7 KEEP | 🟢 **R&D DELIVERED** |
 | **066.9** | [TASK-066.9-fa-batch-invariance.md](TASK-066.9-fa-batch-invariance.md) ([draft](task066-hist/draft_mtp_research_task-066_fa.md)) | C2 GREEN + 066.7 | 🟢 A1+A2+B+C (`043032Z`; KEEP `(2,0.95)`) |
+| **066.13** | [TASK-066.13-size-swa-ub-invariant-rd.md](TASK-066.13-size-swa-ub-invariant-rd.md) | 066.11 | 🟢 C2 KEEP (headroom source superseded by 066.14) |
+| **066.14** | [TASK-066.14-c1-s8-s1024-localize-rd.md](TASK-066.14-c1-s8-s1024-localize-rd.md) | 066.13 | 🟢 H6 + product pivot `n_ubatch`+pad128 |
+| **066.15** | [TASK-066.15-metal-perf-knobs-rd.md](TASK-066.15-metal-perf-knobs-rd.md) | 066.9 + 066.14 evidence | 🟡 env `…025448Z` (H1–H3); bisect/orch open |
 
 Overview locks / DoD / out-of-scope: [TASK-066.0-overview.md](TASK-066.0-overview.md).  
 Latest suite GREEN/RED snapshot: [TASK-066-status-matrix-20261106.md](TASK-066-status-matrix-20261106.md).
