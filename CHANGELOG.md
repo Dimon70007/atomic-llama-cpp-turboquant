@@ -14,12 +14,36 @@ Releases before `b10269-1.5.0` predate this file; see the git history.
 
 ### Changed
 
+- **TASK-066.16 DONE — KEEP `MUL_MM_MIN_DEFAULT=1`:** R1–R9 all final **P**; no **Q**.
+  Control stamp `logs/task066-16-r1r5-control-20261109T062918Z` — min=0 GREEN /
+  min=1 RED for mul-mat/moe*/mtp-verify/fullgraph/mtp-e2e; residual vs N=8 GREEN
+  both; moe-router **ids match**. R8/R9 size_swa∝ub orthogonal. A+rem optional.
+- **TASK-066.16 R9 final (P):** equal-`-b` C1 (`TASK066_C1_BATCH=1024`) still RED @
+  min=0 and min=1 — same `first_token_diff` as product pair (3 / 8). Equal-b does
+  not equalize `size_swa` under tip `max(ub,b/4)` (1280 vs 2048). Residual =
+  `size_swa∝ub` policy, not chunking, not min=1 alone. Stamp
+  `logs/task066-16-r9-equalb-c1-20261109T061835Z`.
+- **TASK-066.16 headroom anti-footgun:** `PAD128(max(n_ubatch, n_batch/4))` + outer
+  pad256; stamp `logs/task066-16-headroom-pad128max-ub-b4-20261109T060048Z` —
+  unit PASS; C2 + C3_n1280 + **C3_n1536 GREEN** (min0/min1); C1 S8 vs S1024 still RED.
+- **TASK-066.16 pad256 probe:** outer `size_swa` pad 128→256; unit retargeted;
+  stamp `logs/task066-16-pad256-ubatch-c3-20261109T052740Z` — C3_n1280 GREEN (min0/min1);
+  C3_n1536 RED mad≈7.63 (oneshot ub=1536 → size_swa=2560; above Metal ub≤1024).
+- **TASK-066.16 R8 final (P):** ubatch C3 n=1280 REGRESS is **not** `MUL_MM_MIN=1` —
+  control stamp `logs/task066-16-r8-ubatch-c3-20261109T044702Z` (same binary min=0 vs 1):
+  C2 PASS both; C3 mad≈14.35 both; `SWA ring full size=1152` on ub=8. Root =
+  066.14 `size_swa∝n_ubatch` (ub8=1152 vs ub1280=2304). Track under 066.5/066.14;
+  does not argue revert DEFAULT→0.
+- **TASK-066.16 (spec):** RED triage after `MUL_MM_MIN_DEFAULT=1` — rubric T/P/Q/S/F;
+  checklist R1–R9 from stamp `logs/task066-15-full-suite-20261109T042939Z`.
+  SSOT `tests/TASK-066.16-min1-red-triage.md`.
 - **TASK-066.15 MUL_MM_MIN DEFAULT 0→1 (speed probe):** N=1 decode back on `mul_mv`;
   A2 rem lock retained; MTP verify cross-kernel accepted. Quality stamp
   `logs/task066-15-min1-mtp-quality-20261109T041653Z` — mtp-vs-nomtp min=0 vs min=1:
-  no duel regression (hits 1/2→2/2); acceptance 0.884→0.893. Override
-  `GGML_METAL_MUL_MM_MIN=0` restores Phase B all-mm. Residual: mtp-verify RED under
-  min=1 is telemetry.
+  no duel regression (hits 1/2→2/2); acceptance 0.884→0.893. Full suite stamp
+  `logs/task066-15-full-suite-20261109T042939Z` — residual/FA/longctx/cb PASS;
+  mul-mat/moe RED expected (N=1 vs N≥2); ubatch C3_n1280 REGRESS (triage);
+  mtp-vs-nomtp duel 2/2. Override `GGML_METAL_MUL_MM_MIN=0` restores Phase B all-mm.
 - **TASK-066.15 env matrix:** stamp `logs/task066-15-perf-knobs-20261109T025448Z`
   (Mini MTL, Gemma4 IQ4_XS, turbo3, build `bc49022c4`/11459). Decode tax =
   `MUL_MM_MIN=0` → tg128 ~10.15 vs ~24.8–24.9 at `MUL_MM_MIN∈{1,8}` (~2.45×);

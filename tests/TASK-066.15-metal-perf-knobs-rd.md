@@ -1,6 +1,6 @@
 # TASK-066.15 — R&D: Metal perf knobs (prefill + decode) since `d60d01875`
 
-**Status:** 🟡 **IN PROGRESS** (env matrix + min=1 quality probe; rem-fix / A+rem still open)  
+**Status:** 🟡 **IN PROGRESS** (env + min=1 quality + full suite; RED triage → **[066.16](TASK-066.16-min1-red-triage.md)**; A+rem still open)  
 **Depends on:** 066.9 A1–C Done (always-tile / mul_mm policy shipped); 066.14 pivot evidence `…022827Z`  
 **Branch:** `task066-metal-batch-invariance`  
 **Baseline commit (perf regression window start):** `d60d01875` (`fix(metal): pin flash_attn_ext_vec nsg…`) — compare vs parent `d60d01875^`  
@@ -160,3 +160,4 @@ Any recommended default must cite which suite stays GREEN (or name the accepted 
 | `logs/task066-14-pivot-evidence-20261109T022827Z/` | size_swa 1536 vs 3072 | size_swa **not** primary dual tax |
 | `logs/task066-15-perf-knobs-20261109T025448Z/` | tip env matrix (6 cells); build `bc49022c4` / 11459 | **H1 REFUTE / H2 KEEP / H3 PARTIAL**; decode tax = `MUL_MM_MIN=0`; pp flat under env |
 | `logs/task066-15-min1-mtp-quality-20261109T041653Z/` | paired mtp-vs-nomtp min=0 vs min=1 | **no quality drop** on duel fixture; acc 0.884→0.893; duel_hits 1/2→2/2; DEFAULT pin **1** |
+| `logs/task066-15-full-suite-20261109T042939Z/` | full TASK-066 suites @ DEFAULT=1 | residual/FA/longctx/cb **PASS**; mul-mat/moe* **RED expected**; ubatch C3_n1280 **REGRESS**; mtp-vs-nomtp duel 2/2 |
