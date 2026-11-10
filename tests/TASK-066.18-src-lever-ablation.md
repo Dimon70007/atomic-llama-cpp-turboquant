@@ -5,7 +5,8 @@
 **Product pointer:** [`tasks/TASK-066-nomtp-ubatch-s8-s1024.md`](../../../tasks/TASK-066-nomtp-ubatch-s8-s1024.md)  
 **Branch note:** `task066-metal-batch-invariance-rebased` (no force-push to old tip).  
 **Policy:** RED is never KEEP. Ablation attributes contribution; it does not waive 066.17.  
-**Why not “all off” alone:** all-off ≡ master rebuild — useless as the *only* experiment. Use it as Mode B **baseline**, then enable **one** lever.
+**Why not “all off” alone:** all-off ≡ master rebuild — useless as the *only* experiment. Use it as Mode B **baseline**, then enable **one** lever.  
+**Human-readable Mode B influence table (metrics + plain language):** [`TASK-066.18-modeB-influence-table.md`](TASK-066.18-modeB-influence-table.md).
 
 ---
 
@@ -189,8 +190,36 @@ Env (fail-closed for ubatch):
 | `L_fa_tile` | OFF → fa RED | ON → fa GREEN | **KEEP** |
 | `L_no_mv_ext` | OFF → mul_mat RED | ON → mul_mat GREEN | **KEEP** |
 | `L_float_tile` | OFF worsens residual/ubatch | ON improves residual/ubatch (still RED) | **KEEP (soft)** |
-| `L_size_swa_ub` / `L_iswa_pads` | unit flips only; ubatch mad (=) | alone cannot clear ubatch / unit GREEN | **not the 066.17 fix alone** — need ⊥ub policy |
+| `L_size_swa_ub` | tip−1 OFF @ new tip: ubatch GREEN→RED (`…232638Z`) | **alone-ON `PAD128(n_batch)`:** ubatch RED→GREEN mad=0 (`…001626Z`) | **KEEP product** ⊥ub headroom |
+| `L_iswa_pads` | unit flips only; ubatch mad (=) under old tip | alone cannot clear ubatch | secondary to pads / not 066.17 alone |
 | others | no tip−1 flip | no alone GREEN | low / host-undecided |
+
+### Post-066.17 causality (tip @ `PAD128(n_batch)`, Terminal)
+
+Stamps: tip_control [`…232338Z`](../logs/task066-17-tip-control-20261109T232338Z/) · tip−1 OFF [`…232638Z`](../logs/task066-17-size-swa-off-20261109T232638Z/) · log [`run-06617-tip-control-restamp.log`](../logs/run-06617-tip-control-restamp.log)
+
+| Cell | `S_iswa_unit` | `S_ub_c2pf16` | `S_ub_c2pq8` | `S_ub_c2p` |
+|------|---------------|---------------|--------------|------------|
+| tip_control | GREEN | GREEN mad=0 | GREEN mad=0 | GREEN mad=0 |
+| tip−1 `L_size_swa_ub` OFF | **RED** | **RED mad=0.255** | **RED mad=3.878** | **RED mad=7.635** |
+
+**KEEP product lever** = tip `PAD128(n_batch)` (not the old `max(ub,b/4)` ablation id alone). Mode A/B tables above stay historical for pre-066.17 tip.
+
+### Mode B alone-ON @ `PAD128(n_batch)` — DONE
+
+Stamp: [`…001626Z-modeB-size-swa`](../logs/task066-18-ablation-20261110T001626Z-modeB-size-swa/) · log [`run-06618-modeB-size-swa-alone.log`](../logs/run-06618-modeB-size-swa-alone.log)
+
+| suite | master | `L_size_swa_ub` ON alone | Δ |
+|-------|--------|--------------------------|---|
+| `S_iswa_unit` | RED | RED | still RED (unit expects tip pads/formula set) |
+| `S_ub_c2pf16` | RED mad=4.703 | **GREEN mad=0** | alone helps |
+| `S_ub_c2pq8` | RED mad=4.779 | **GREEN mad=0** | alone helps |
+| `S_ub_c2p` | RED mad=8.094 | **GREEN mad=0** | alone helps |
+| `S_mul_mat_res` | RED ulp=10735 | RED ulp=10735 | (=) — size_swa does not touch residual |
+
+**KEEP product lever:** `PAD128(n_batch)` alone clears product ubatch (no FA/float_tile required).  
+Historical Mode B on old `max(ub,b/4)` (ubatch mad (=) master) — superseded for this lever.  
+Other levers: still covered by `…211533Z-fullB`.
 
 ---
 

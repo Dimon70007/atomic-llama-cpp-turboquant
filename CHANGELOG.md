@@ -17,8 +17,15 @@ Releases before `b10269-1.5.0` predate this file; see the git history.
 - **TASK-066.17 DONE:** SWA `headroom=PAD128(n_batch)` (⊥ub). Product
   C2pf16/C2pq8/C2p/C1p/C1jp **GREEN** (stamps `…215457Z-c1p-f16`,
   `…225117Z-c1p-q8`, full `…225212Z`). Stress C1 16↔1024 still RED
-  (066.5/066.6). Log `logs/run-06617-after-nbatch-headroom.log`. SSOT
-  `tests/TASK-066.17-product-ubatch-256-512-1024.md`.
+  (066.5/066.6). Log `logs/run-06617-after-nbatch-headroom.log`.
+  Post-tip restamp: tip_control `…232338Z` ubatch GREEN mad=0; tip−1
+  `L_size_swa_ub` OFF `…232638Z` GREEN→RED (mad 0.255/3.878/7.635) —
+  log `logs/run-06617-tip-control-restamp.log`. Mode B alone-ON
+  `PAD128(n_batch)` `…001626Z-modeB-size-swa`: ubatch RED→GREEN mad=0
+  (iswa/residual still RED (=)); log
+  `logs/run-06618-modeB-size-swa-alone.log`. SSOT
+  `tests/TASK-066.17-product-ubatch-256-512-1024.md` /
+  `tests/TASK-066.18-src-lever-ablation.md`.
 
 ### Added
 
@@ -26,9 +33,10 @@ Releases before `b10269-1.5.0` predate this file; see the git history.
   master+1 `…211533Z-fullB` (operator Terminal; log `logs/run-modeB-full.log`).
   Alone GREEN: `L_fa_tile`→fa, `L_no_mv_ext`→mul_mat. `L_float_tile` alone
   improves residual ulp 10735→8 and c2pf16 mad 4.70→0.255 (still RED — soft
-  KEEP). `L_size_swa_ub` alone does **not** clear ubatch (mad (=) master).
-  No alone-harms. Wrapper auto-`minillm-stop`; residual corners Darwin `nproc`
-  fix. SSOT `tests/TASK-066.18-src-lever-ablation.md`.
+  KEEP). Product `PAD128(n_batch)` alone-ON `…001626Z`: ubatch mad→0 GREEN.
+  No alone-harms. Plain-language influence table:
+  `tests/TASK-066.18-modeB-influence-table.md`. SSOT
+  `tests/TASK-066.18-src-lever-ablation.md`.
 
 - **TASK-066.17 (impl; OPEN/RED):** product ubatch gates C2p/C1p/C1jp —
   pairs `256↔512` and `256↔1024` only (no `512↔1024`); equal `-b=max(ub)`

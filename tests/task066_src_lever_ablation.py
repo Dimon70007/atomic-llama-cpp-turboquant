@@ -260,15 +260,19 @@ def _run_suite_row(
             "cmd": cmd,
         }
 
+    # Metal / llama logs can emit non-UTF8 (e.g. 0xa0); never crash the matrix.
     proc = subprocess.run(
         cmd,
         cwd=repo,
         env=env,
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
     )
-    log_path.write_text(proc.stdout + "\n" + proc.stderr, encoding="utf-8")
-    verdict, mad = _classify_log(proc.stdout + "\n" + proc.stderr, proc.returncode)
+    combined = (proc.stdout or "") + "\n" + (proc.stderr or "")
+    log_path.write_text(combined, encoding="utf-8", errors="replace")
+    verdict, mad = _classify_log(combined, proc.returncode)
     return {
         "suite_id": sid,
         "verdict": verdict,
@@ -299,6 +303,44 @@ def _cell_label(
                 return f"{cell} mad={mad}"
             return str(cell)
     return ""
+
+
+def _mad_of(
+    results: list[dict[str, Any]], mode: str, lev: str | None, suite: str
+) -> str | None:
+    for r in results:
+        if r.get("mode") == mode and r.get("lever") == lev and r.get("suite_id") == suite:
+            mad = r.get("mad")
+            return str(mad) if mad else None
+    return None
+
+
+def _primary_mad_float(mad: str | None) -> float | None:
+    """Parse leading numeric from mad=… or abs=… (for Δ when still RED)."""
+    if not mad:
+        return None
+    m = re.search(r"([0-9]+(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?)", mad)
+    if not m:
+        return None
+    try:
+        return float(m.group(1))
+    except ValueError:
+        return None
+
+
+def _mad_delta_note(master_mad: str | None, cur_mad: str | None) -> str:
+    """Human Δ note: better/worse/same when both cells still RED."""
+    a = _primary_mad_float(master_mad)
+    b = _primary_mad_float(cur_mad)
+    if a is None or b is None:
+        if master_mad or cur_mad:
+            return f"mad {master_mad or '?'}->{cur_mad or '?'}"
+        return ""
+    if abs(a - b) <= max(1e-12, abs(a) * 1e-9):
+        return f"mad={cur_mad} (=)"
+    delta = b - a
+    tag = "better" if abs(b) < abs(a) else "worse"
+    return f"mad {master_mad}->{cur_mad} (Δ{delta:+.6g}, {tag})"
 
 
 def _write_keep_drop(
@@ -365,29 +407,46 @@ def _write_keep_drop(
             "(this change alone fixes the suite)"
         )
         lines.append(
-            "- **alone harms / insufficient:** master GREEN→RED, or both RED"
+            "- **still RED but improved/worsened:** both RED — cite mad Δ "
+            "(Better ≠ GREEN; RED ≠ KEEP)"
+        )
+        lines.append(
+            "- **alone harms:** master GREEN→RED"
         )
         lines.append("")
         for lev in levers:
             alone_helps: list[str] = []
-            alone_red: list[str] = []
+            alone_harms: list[str] = []
+            still_red_notes: list[str] = []
             for s in suites:
                 m = master.get(s)
                 cur = _verdict_of(results, "master_plus", lev, s)
                 if m is None or cur is None:
                     continue
+                m_mad = _mad_of(results, "master_control", None, s)
+                c_mad = _mad_of(results, "master_plus", lev, s)
                 if m == "RED" and cur == "GREEN":
-                    alone_helps.append(s)
+                    note = s
+                    if c_mad or m_mad:
+                        note = f"{s} ({m_mad or 'RED'}->{c_mad or 'GREEN'})"
+                    alone_helps.append(note)
+                elif m == "GREEN" and cur == "RED":
+                    alone_harms.append(s)
                 elif cur == "RED":
-                    alone_red.append(s)
-            if alone_helps or alone_red:
+                    delta = _mad_delta_note(m_mad, c_mad)
+                    still_red_notes.append(f"{s}: {delta}" if delta else s)
+            if alone_helps or alone_harms or still_red_notes:
                 lines.append(f"## `{lev}` ON alone")
                 lines.append("")
                 lines.append(
                     f"- alone helps: {', '.join(alone_helps) if alone_helps else '—'}"
                 )
                 lines.append(
-                    f"- still/now RED: {', '.join(alone_red) if alone_red else '—'}"
+                    f"- alone harms: {', '.join(alone_harms) if alone_harms else '—'}"
+                )
+                lines.append(
+                    "- still RED (+ mad Δ): "
+                    + (", ".join(still_red_notes) if still_red_notes else "—")
                 )
                 lines.append("")
 
@@ -544,6 +603,30 @@ def main() -> None:
                 cells.append(("master_plus", lid))
 
     results: list[dict[str, Any]] = []
+    prior_results = stamp / "results.json"
+    if prior_results.is_file() and not args.dry_run:
+        try:
+            loaded = json.loads(prior_results.read_text(encoding="utf-8"))
+            if isinstance(loaded, list):
+                results = loaded
+                print(f"RESUME loaded {len(results)} cells from {prior_results}")
+        except (OSError, json.JSONDecodeError) as exc:
+            print(f"WARN: could not load prior results.json ({exc}); starting empty")
+
+    def _already_done(mode: str, lever_id: str | None, suite_id: str) -> bool:
+        for r in results:
+            if (
+                r.get("mode") == mode
+                and r.get("lever") == lever_id
+                and r.get("suite_id") == suite_id
+            ):
+                # DRY / empty never counts as done (dry-run must not block resume).
+                ver = str(r.get("verdict") or "")
+                if ver in ("", "DRY"):
+                    return False
+                return True
+        return False
+
     cmake_base = [str(x) for x in cfg.get("cmake_base") or []]
     targets = [str(x) for x in cfg.get("build_targets") or []]
     tip_reuse = Path(os.environ.get("BUILD_DIR", "")).expanduser()
@@ -571,7 +654,11 @@ def main() -> None:
                 continue
             skip_until_lever = False
         elif skip_until_lever and lid is None:
-            # controls always allowed before from-lever
+            # Resume mid-lever: skip controls when prior results already cover them.
+            if any(r.get("mode") in ("tip_control", "master_control") for r in results):
+                print(f"SKIP {mode}/CONTROL (resume; prior control rows present)")
+                continue
+            # Fresh resume from lever: still run controls first.
             pass
 
         disabled = _disabled_cmake_ids(cfg, mode=mode, lever_id=lid)
@@ -627,6 +714,9 @@ def main() -> None:
                     continue
                 row_skip = False
                 skip_until_row = False
+            if _already_done(mode, lid, sid):
+                print(f"SKIP {_cell_key(mode, lid, sid)} (already in results.json)")
+                continue
             cell_out = stamp / "cells" / mode / (lid or "CONTROL") / sid
             meta = _run_suite_row(
                 repo=_REPO_ROOT,
@@ -639,17 +729,36 @@ def main() -> None:
             meta["lever"] = lid
             meta["disabled_cmake"] = disabled
             meta["build_dir"] = str(bdir)
+            # Replace any prior DRY placeholder for this cell.
+            results = [
+                r
+                for r in results
+                if not (
+                    r.get("mode") == mode
+                    and r.get("lever") == lid
+                    and r.get("suite_id") == sid
+                )
+            ]
             results.append(meta)
             print(
                 f"CELL {_cell_key(mode, lid, sid)} -> {meta['verdict']}"
                 + (f" mad={meta['mad']}" if meta.get("mad") else "")
             )
             # Incremental stamp so a long GPU sweep can be resumed / inspected.
-            _write_tables(stamp, results, levers, rows)
+            # Never let --dry-run clobber a real stamp's results.json.
+            if not args.dry_run:
+                _write_tables(stamp, results, levers, rows)
 
-    _write_tables(stamp, results, levers, rows)
-    print(f"WROTE {stamp / 'tables.md'}")
-    print(f"WROTE {stamp / 'results.json'}")
+    if args.dry_run:
+        dry_stamp = stamp / "dry-run"
+        dry_stamp.mkdir(parents=True, exist_ok=True)
+        _write_tables(dry_stamp, results, levers, rows)
+        print(f"WROTE {dry_stamp / 'tables.md'} (dry-run; real stamp untouched)")
+        print(f"WROTE {dry_stamp / 'results.json'} (dry-run; real stamp untouched)")
+    else:
+        _write_tables(stamp, results, levers, rows)
+        print(f"WROTE {stamp / 'tables.md'}")
+        print(f"WROTE {stamp / 'results.json'}")
 
 
 if __name__ == "__main__":

@@ -9,7 +9,7 @@ Self-contained in **this** llama.cpp / ggml fork. Other developers: start here.
 **Open (ideas reopen):** **[066.5](TASK-066.5-fusion-table-parity.md)** + **[066.10](TASK-066.10-kv-ctx-sizing.md)** + **[066.11](TASK-066.11-small-ctx-q8-turbo3-cross-ub-rd.md)** — TODO (pad128 / KLD / estimator / turbo3 small-CTX cross-ub R&D).  
 **Open (perf closeout):** **[066.15](TASK-066.15-metal-perf-knobs-rd.md)** — DEFAULT=1 probe stamped; triage **066.16 DONE** → commit/orchestrator still open.  
 **Done (triage):** **[066.16](TASK-066.16-min1-red-triage.md)** — R1–R9 all **P**; **KEEP DEFAULT=1**; stamp `…062918Z` (R1–R7) + R8/R9.  
-**Priority:** commit size_swa + lock SHA → 066.15 closeout / optional A+rem → 066.5/066.10 → TASK-067.
+**Priority:** commit tip docs/066.17–19 → lock SHA → **066.19** KEEP-stack speed gates → 066.15 closeout → 066.5/066.10 → TASK-067.
 
 ## Evidence hierarchy (hard)
 
@@ -38,7 +38,8 @@ Self-contained in **this** llama.cpp / ggml fork. Other developers: start here.
 | **066.15** | [TASK-066.15-metal-perf-knobs-rd.md](TASK-066.15-metal-perf-knobs-rd.md) | 066.9 + 066.14 evidence | 🟡 DEFAULT=1 probe; env+quality stamps |
 | **066.16** | [TASK-066.16-min1-red-triage.md](TASK-066.16-min1-red-triage.md) | 066.15 full-suite RED | 🟢 R1–R9 **P**; **KEEP DEFAULT=1** (`…062918Z`) |
 | **066.17** | [TASK-066.17-product-ubatch-256-512-1024.md](TASK-066.17-product-ubatch-256-512-1024.md) | 066.14 | 🟢 DONE product C2p/C1p/C1jp (`…225212Z`); stress C1 RED |
-| **066.18** | [TASK-066.18-src-lever-ablation.md](TASK-066.18-src-lever-ablation.md) | squash tip vs `0fe16d12d` | 🟢 Mode A+B DONE (`…193709Z-fullA` / `…211533Z-fullB`) |
+| **066.18** | [TASK-066.18-src-lever-ablation.md](TASK-066.18-src-lever-ablation.md) · [Mode B influence table](TASK-066.18-modeB-influence-table.md) | squash tip vs `0fe16d12d` | 🟢 Mode A+B DONE; size_swa `PAD128(n_batch)` alone-ON `…001626Z` |
+| **066.19** | [TASK-066.19-keep-stack-speed-gates.md](TASK-066.19-keep-stack-speed-gates.md) | 066.17 + 066.18 §5 | ⬜ TODO cumulative KEEP stack + nomtp≥23 / MTP≥30 tg + final report |
 
 Overview locks / DoD / out-of-scope: [TASK-066.0-overview.md](TASK-066.0-overview.md).  
 Latest suite GREEN/RED snapshot: [TASK-066-status-matrix-20261106.md](TASK-066-status-matrix-20261106.md).

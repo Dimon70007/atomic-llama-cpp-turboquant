@@ -10,7 +10,7 @@
     {"id": "L_mm_min", "cmake": "MM_MIN", "kind": "compile", "note": "env policy + MoE id min 8 vs master 32"},
     {"id": "L_fusion_cb", "cmake": "FUSION_CB", "kind": "compile", "note": "fusion_max CB snap"},
     {"id": "L_moe_view_add", "cmake": "MOE_VIEW_ADD", "kind": "compile", "note": "always view+ADD MoE out"},
-    {"id": "L_size_swa_ub", "cmake": "SIZE_SWA_UB", "kind": "compile", "note": "PAD128(max(ub,b/4)) headroom"},
+    {"id": "L_size_swa_ub", "cmake": "SIZE_SWA_UB", "kind": "compile", "note": "product PAD128(n_batch); OFF=master n_ubatch"},
     {"id": "L_iswa_pads", "cmake": "ISWA_PADS", "kind": "compile", "note": "n_swa pad128"},
     {"id": "L_shared_kv", "cmake": "SHARED_KV", "kind": "compile", "note": "memory_has_shared_cells"},
     {"id": "L_swa_hwm_log", "cmake": "SWA_HWM_LOG", "kind": "compile", "note": "occupancy HWM telemetry"}

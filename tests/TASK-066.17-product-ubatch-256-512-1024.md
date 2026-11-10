@@ -141,6 +141,18 @@ First RED stops the suite (no waive).
 
 Pre-fix RED table preserved under **Locked conclusion** above.
 
+### Post-`e46b779` tip_control + causality (2026-11-09 Terminal)
+
+Operator log: [`run-06617-tip-control-restamp.log`](../logs/run-06617-tip-control-restamp.log)  
+Harness: [`run-06617-tip-control-restamp.sh`](../logs/run-06617-tip-control-restamp.sh)
+
+| Stamp | What | Result |
+|-------|------|--------|
+| [`…232338Z`](../logs/task066-17-tip-control-20261109T232338Z/) | tip_control @ `PAD128(n_batch)` | **S_ub_c2pf16/c2pq8/c2p GREEN mad=0**; fa/mul_mat/cb/moe/iswa GREEN; `S_mul_mat_res` RED ulp=8 (066.7); `S_b1_shared` RED=`MISSING` API audit (not headroom) |
+| [`…232638Z`](../logs/task066-17-size-swa-off-20261109T232638Z/) | tip−1 `L_size_swa_ub` OFF (= master `n_ubatch`) | **causality GREEN→RED**: iswa RED; c2pf16 mad **0→0.255**; c2pq8 **0→3.878**; c2p **0→7.635** (pre-fix class) |
+
+**Locked:** product ⊥ub headroom is necessary for tip ubatch GREEN; disabling it alone restores pre-fix mad.
+
 ---
 
 ## Non-goals / anti-patterns
