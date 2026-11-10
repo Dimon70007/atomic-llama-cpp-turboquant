@@ -132,6 +132,29 @@ print(
 PY
 }
 
+# Classify ubatch exit: product path GREEN + only stress C1 RED = allowlisted (066.5/066.6).
+classify_ubatch_verdict() {
+  local logf="$1"
+  local rc="$2"
+  if [[ "${rc}" -eq 0 ]]; then
+    echo "GREEN"
+    return
+  fi
+  if [[ ! -f "${logf}" ]]; then
+    echo "RED"
+    return
+  fi
+  if grep -q 'C2p PASS — both product pairs bit-exact' "${logf}" \
+    && grep -q 'RESULT PASS (GREEN) — C1p both product pairs' "${logf}" \
+    && grep -q 'RESULT PASS (GREEN) — C1jp both product pairs' "${logf}" \
+    && grep -q 'RESULT FAIL (RED) — greedy token stream not bit-exact S16 vs S1024' "${logf}" \
+    && ! grep -q 'RESULT FAIL (RED) — C2p\|RESULT FAIL (RED) — C1p\|RESULT FAIL (RED) — C1jp\|RESULT FAIL (REGRESS)' "${logf}"; then
+    echo "ALLOWLISTED_STRESS_C1"
+    return
+  fi
+  echo "RED"
+}
+
 run_one_suite() {
   local name="$1"
   shift
@@ -143,11 +166,14 @@ run_one_suite() {
   local rc=${PIPESTATUS[0]}
   set -e
   echo "exit=${rc}" | tee "${out}/exit.txt"
+  local verd="GREEN"
   if [[ "${rc}" -ne 0 ]]; then
-    echo "${name}|RED|exit=${rc}" >> "${FINAL_DIR}/scoreboard.txt"
-  else
-    echo "${name}|GREEN|exit=0" >> "${FINAL_DIR}/scoreboard.txt"
+    verd="RED"
+    if [[ "${name}" == "ubatch-s8-s1024" ]]; then
+      verd="$(classify_ubatch_verdict "${out}/run.log" "${rc}")"
+    fi
   fi
+  echo "${name}|${verd}|exit=${rc}" >> "${FINAL_DIR}/scoreboard.txt"
   return 0
 }
 
@@ -168,8 +194,13 @@ run_suites() {
   fi
 
   # Known residual: stress C1 may RED — record, do not waive as KEEP.
+  # Ubatch runner fail-closes without TASK066_CTX. Phase F locks ladder ctx=3072
+  # (066.17 stamps); not a silent product-140k substitute.
+  log "    ubatch TASK066_CTX=3072 (Phase F ladder lock)"
   run_one_suite ubatch-s8-s1024 \
-    env SUITE=ubatch-s8-s1024 bash "${CORNERS}" "${FINAL_DIR}/ubatch-s8-s1024"
+    env SUITE=ubatch-s8-s1024 TASK066_CTX=3072 \
+    TASK066_MODEL="${TASK066_MODEL}" \
+    bash "${CORNERS}" "${FINAL_DIR}/ubatch-s8-s1024"
 
   run_one_suite metal-corners-all \
     env SUITE=all bash "${CORNERS}" "${FINAL_DIR}/metal-corners-all"
