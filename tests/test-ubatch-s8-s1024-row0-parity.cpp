@@ -51,6 +51,7 @@
 #include "common.h"
 #include "llama.h"
 #include "log.h"
+#include "task069-suite-lock.h"
 
 #include "ggml-backend.h"
 #include "ggml.h"
@@ -1333,14 +1334,17 @@ int main(int argc, char ** argv) {
         return 2;
     }
 
-    params.n_gpu_layers = 999;
-    params.cache_type_k = GGML_TYPE_Q8_0;
-    params.cache_type_v = GGML_TYPE_TURBO4_0;
-    params.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_ENABLED;
-    params.cache_ram_mib = 0;
-    params.cpuparams.n_threads = 4;
-    params.cpuparams_batch.n_threads = 4;
-    params.n_parallel = 1;
+    if (!task069_suite_lock::apply_cuda_if_requested(params, /*lock_batch_ubatch=*/false)) {
+        // Metal TASK-066 product KV lock (ubatch pairs set per case).
+        params.n_gpu_layers = 999;
+        params.cache_type_k = GGML_TYPE_Q8_0;
+        params.cache_type_v = GGML_TYPE_TURBO4_0;
+        params.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_ENABLED;
+        params.cache_ram_mib = 0;
+        params.cpuparams.n_threads = 4;
+        params.cpuparams_batch.n_threads = 4;
+        params.n_parallel = 1;
+    }
 
     // Optional KV overrides for localization (not product PASS).
     if (const char * ctk = std::getenv("TASK066_CTK"); ctk && ctk[0]) {

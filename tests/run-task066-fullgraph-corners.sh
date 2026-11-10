@@ -81,21 +81,46 @@ if [[ "${REBUILD:-0}" == "1" ]] || [[ ! -x "${TEST_BIN}" ]]; then
     | tee "${OUT_DIR}/rebuild.log"
 fi
 
-# CLI pins what LLAMA_EXAMPLE_COMMON accepts; binary forces full product lock
-# (incl. cache_ram_mib=4096 — -cram is SERVER/CLI-only in arg.cpp).
-ARGS=(
-  -m "${MODEL}"
-  -ngl 999
-  -c "${CTX}"
-  -b 2048
-  -ub 512
-  -ctk q8_0
-  -ctv turbo4
-  -fa on
-  -t 4
-  -tb 4
-  -np 1
-)
+# CLI pins what LLAMA_EXAMPLE_COMMON accepts; binary forces product lock
+# (Metal: cache_ram_mib=4096; CUDA TASK-069: TASK069_SUITE_PROFILE=cuda + TASK069_*).
+if [[ "${TASK069_SUITE_PROFILE:-}" == "cuda" ]]; then
+  : "${TASK069_BATCH:?FAIL: TASK069_SUITE_PROFILE=cuda requires TASK069_BATCH}"
+  : "${TASK069_UBATCH:?FAIL: TASK069_SUITE_PROFILE=cuda requires TASK069_UBATCH}"
+  : "${TASK069_CTK:?FAIL: TASK069_SUITE_PROFILE=cuda requires TASK069_CTK}"
+  : "${TASK069_CTV:?FAIL: TASK069_SUITE_PROFILE=cuda requires TASK069_CTV}"
+  : "${TASK069_THREADS:?FAIL: TASK069_SUITE_PROFILE=cuda requires TASK069_THREADS}"
+  : "${TASK069_THREADS_BATCH:?FAIL: TASK069_SUITE_PROFILE=cuda requires TASK069_THREADS_BATCH}"
+  : "${TASK069_NGL:?FAIL: TASK069_SUITE_PROFILE=cuda requires TASK069_NGL}"
+  ARGS=(
+    -m "${MODEL}"
+    -ngl "${TASK069_NGL}"
+    -c "${CTX}"
+    -b "${TASK069_BATCH}"
+    -ub "${TASK069_UBATCH}"
+    -ctk "${TASK069_CTK}"
+    -ctv "${TASK069_CTV}"
+    -fa on
+    -t "${TASK069_THREADS}"
+    -tb "${TASK069_THREADS_BATCH}"
+    -np "${TASK069_PARALLEL:-1}"
+    -ts "${TASK069_TENSOR_SPLIT:?FAIL: TASK069_SUITE_PROFILE=cuda requires TASK069_TENSOR_SPLIT}"
+    -mg "${TASK069_MAIN_GPU:?FAIL: TASK069_SUITE_PROFILE=cuda requires TASK069_MAIN_GPU}"
+  )
+else
+  ARGS=(
+    -m "${MODEL}"
+    -ngl 999
+    -c "${CTX}"
+    -b 2048
+    -ub 512
+    -ctk q8_0
+    -ctv turbo4
+    -fa on
+    -t 4
+    -tb 4
+    -np 1
+  )
+fi
 if [[ -n "${TASK066_PROMPT:-}" ]]; then
   if [[ ! -f "${TASK066_PROMPT}" ]]; then
     echo "FAIL: TASK066_PROMPT not a file: ${TASK066_PROMPT}" >&2
@@ -115,7 +140,11 @@ fi
 echo "==> FULLGRAPH-C1 (test-fullgraph-decode-row0-parity) [product-knob lock]"
 echo "    model=${MODEL}"
 echo "    ctx=${CTX} (YAML context_size may be reduced for speed)"
-echo "    pinned: -b 2048 -ub 512 -ctk q8_0 -ctv turbo4 -fa on -ngl 999 -t 4 -tb 4 -np 1 (+ binary cram=4096)"
+if [[ "${TASK069_SUITE_PROFILE:-}" == "cuda" ]]; then
+  echo "    pinned(CUDA suite): -b ${TASK069_BATCH} -ub ${TASK069_UBATCH} -ctk ${TASK069_CTK} -ctv ${TASK069_CTV} -fa on -ngl ${TASK069_NGL} -t ${TASK069_THREADS} -tb ${TASK069_THREADS_BATCH} -ts ${TASK069_TENSOR_SPLIT} -mg ${TASK069_MAIN_GPU}"
+else
+  echo "    pinned(Metal): -b 2048 -ub 512 -ctk q8_0 -ctv turbo4 -fa on -ngl 999 -t 4 -tb 4 -np 1 (+ binary cram=4096)"
+fi
 echo "    prompt=${TASK066_PROMPT:-<synthesized>}"
 set +e
 "${TEST_BIN}" "${ARGS[@]}" 2>&1 | tee "${OUT_DIR}/fullgraph-row0.log"
@@ -129,7 +158,11 @@ echo "fullgraph_row0_exit=${RC}" | tee "${OUT_DIR}/fullgraph-row0.exit"
   echo "build_dir=${BUILD_DIR}"
   echo "model=${MODEL}"
   echo "ctx=${CTX}"
-  echo "product_knobs=b2048,ub512,ctk=q8_0,ctv=turbo4,fa=on,ngl=999,cram=4096(binary),t=4,tb=4,np=1"
+  if [[ "${TASK069_SUITE_PROFILE:-}" == "cuda" ]]; then
+    echo "product_knobs=cuda_suite:b${TASK069_BATCH},ub${TASK069_UBATCH},ctk=${TASK069_CTK},ctv=${TASK069_CTV},fa=on,ngl=${TASK069_NGL},ts=${TASK069_TENSOR_SPLIT},mg=${TASK069_MAIN_GPU}"
+  else
+    echo "product_knobs=b2048,ub512,ctk=q8_0,ctv=turbo4,fa=on,ngl=999,cram=4096(binary),t=4,tb=4,np=1"
+  fi
   echo "prompt=${TASK066_PROMPT:-}"
   echo "fullgraph_row0_exit=${RC}"
   if [[ "${RC}" -eq 0 ]]; then

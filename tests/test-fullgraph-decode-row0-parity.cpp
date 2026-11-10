@@ -20,8 +20,10 @@
 //   optional -f / --file prompt; else synthesize a long ASCII prefix
 //   Metal GPU preferred (-ngl); exit 77 if no GPU backend when TASK066_REQUIRE_GPU=1
 //
-// Product-knob lock (linux_to_mac TASK-066 / gemma4_26b_a4b_mtp_metal.yaml):
-//   Runner pins batch/ubatch/KV/FA/ngl/threads/cache_ram/parallel to that YAML.
+// Product-knob lock:
+//   Default: Metal TASK-066 / gemma4_26b_a4b_mtp_metal.yaml (b=2048 ub=512 ctv=turbo4 …).
+//   CUDA TASK-069: set TASK069_SUITE_PROFILE=cuda + TASK069_* from
+//     tests/fixtures/task069/cuda-mtp.reference.yaml (b=8192 ub=2048 ctv=turbo3 …).
 //   Only context_size (-c / TASK066_CTX) may differ for speed; draft n_max/p_min
 //   N/A (no draft GGUF in this localizer). Do not hand-wave other knobs via EXTRA_ARGS.
 //
@@ -31,6 +33,7 @@
 #include "common.h"
 #include "llama.h"
 #include "log.h"
+#include "task069-suite-lock.h"
 
 #include "ggml-backend.h"
 #include "ggml.h"
@@ -614,26 +617,29 @@ int main(int argc, char ** argv) {
         return 2;
     }
 
-    params.n_gpu_layers = 999;
-    params.n_batch = 2048;
-    params.n_ubatch = 512;
-    params.cache_type_k = GGML_TYPE_Q8_0;
-    params.cache_type_v = GGML_TYPE_TURBO4_0;
-    params.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_ENABLED;
-    params.cache_ram_mib = 4096;
-    params.cpuparams.n_threads = 4;
-    params.cpuparams_batch.n_threads = 4;
-    params.n_parallel = 1;
     if (params.n_ctx < 4) {
         fprintf(stderr, "FAIL: -c / n_ctx must be set (>=4); refusing silent ctx\n");
         return 2;
     }
-    fprintf(stderr,
-            "product_lock: ngl=%d b=%d ub=%d ctk=%s ctv=%s fa=on cram=%d t=%d tb=%d np=%d ctx=%d\n",
-            params.n_gpu_layers, params.n_batch, params.n_ubatch,
-            ggml_type_name(params.cache_type_k), ggml_type_name(params.cache_type_v),
-            params.cache_ram_mib, params.cpuparams.n_threads,
-            params.cpuparams_batch.n_threads, params.n_parallel, (int) params.n_ctx);
+    if (!task069_suite_lock::apply_cuda_if_requested(params, /*lock_batch_ubatch=*/true)) {
+        // Metal TASK-066 product lock (unchanged).
+        params.n_gpu_layers = 999;
+        params.n_batch = 2048;
+        params.n_ubatch = 512;
+        params.cache_type_k = GGML_TYPE_Q8_0;
+        params.cache_type_v = GGML_TYPE_TURBO4_0;
+        params.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_ENABLED;
+        params.cache_ram_mib = 4096;
+        params.cpuparams.n_threads = 4;
+        params.cpuparams_batch.n_threads = 4;
+        params.n_parallel = 1;
+        fprintf(stderr,
+                "product_lock: ngl=%d b=%d ub=%d ctk=%s ctv=%s fa=on cram=%d t=%d tb=%d np=%d ctx=%d\n",
+                params.n_gpu_layers, params.n_batch, params.n_ubatch,
+                ggml_type_name(params.cache_type_k), ggml_type_name(params.cache_type_v),
+                params.cache_ram_mib, params.cpuparams.n_threads,
+                params.cpuparams_batch.n_threads, params.n_parallel, (int) params.n_ctx);
+    }
 
     const bool do_bisect = []() {
         const char * e = std::getenv("TASK066_BISECT");

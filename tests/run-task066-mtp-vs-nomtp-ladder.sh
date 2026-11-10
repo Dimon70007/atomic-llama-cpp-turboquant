@@ -86,8 +86,30 @@ SAMPLE_MODE="${TASK066_SAMPLE_MODE:-product}"
 CELL_MODES="${TASK066_CELL_MODES:-both}"
 REQUIRE_IDENTICAL="${TASK066_REQUIRE_IDENTICAL:-0}"
 STOP_ON_FAIL="${TASK066_STOP_ON_FAIL:-1}"
+NGL="${TASK066_NGL:-99}"
+THREADS="${TASK066_THREADS:-4}"
+THREADS_BATCH="${TASK066_THREADS_BATCH:-4}"
+TENSOR_SPLIT="${TASK069_TENSOR_SPLIT:-}"
+MAIN_GPU="${TASK069_MAIN_GPU:-}"
 
 fail() { echo "FAIL: $*" >&2; exit 2; }
+
+if [[ "${TASK069_SUITE_PROFILE:-}" == "cuda" ]]; then
+  CTK="${TASK069_CTK:?FAIL: TASK069_SUITE_PROFILE=cuda requires TASK069_CTK}"
+  CTV="${TASK069_CTV:?FAIL: TASK069_SUITE_PROFILE=cuda requires TASK069_CTV}"
+  CRAM="${TASK069_CRAM:?FAIL: TASK069_SUITE_PROFILE=cuda requires TASK069_CRAM}"
+  CTXCP="${TASK069_CTXCP:?FAIL: TASK069_SUITE_PROFILE=cuda requires TASK069_CTXCP}"
+  NGL="${TASK069_NGL:?FAIL: TASK069_SUITE_PROFILE=cuda requires TASK069_NGL}"
+  THREADS="${TASK069_THREADS:?FAIL: TASK069_SUITE_PROFILE=cuda requires TASK069_THREADS}"
+  THREADS_BATCH="${TASK069_THREADS_BATCH:?FAIL: TASK069_SUITE_PROFILE=cuda requires TASK069_THREADS_BATCH}"
+  TENSOR_SPLIT="${TASK069_TENSOR_SPLIT:?FAIL: TASK069_SUITE_PROFILE=cuda requires TASK069_TENSOR_SPLIT}"
+  MAIN_GPU="${TASK069_MAIN_GPU:?FAIL: TASK069_SUITE_PROFILE=cuda requires TASK069_MAIN_GPU}"
+  BATCH_MAX="${TASK069_BATCH:?FAIL: TASK069_SUITE_PROFILE=cuda requires TASK069_BATCH}"
+  BATCH_FLOOR="${TASK069_UBATCH:?FAIL: TASK069_SUITE_PROFILE=cuda requires TASK069_UBATCH}"
+  SPEC_N_MAX="${TASK069_SPEC_DRAFT_N_MAX:?FAIL: TASK069_SUITE_PROFILE=cuda requires TASK069_SPEC_DRAFT_N_MAX}"
+  SPEC_P_MIN="${TASK069_SPEC_DRAFT_P_MIN:?FAIL: TASK069_SUITE_PROFILE=cuda requires TASK069_SPEC_DRAFT_P_MIN}"
+  echo "NOTE: TASK069 CUDA suite knobs: ctk=${CTK} ctv=${CTV} b_max=${BATCH_MAX} floor=${BATCH_FLOOR} ts=${TENSOR_SPLIT} mg=${MAIN_GPU}" >&2
+fi
 
 case "${SAMPLE_MODE}" in
   product|greedy) ;;
@@ -256,9 +278,9 @@ run_cell() {
     -m "${MODEL}"
     -f "${PROMPT}"
     -c "${CTX}"
-    -ngl 99
-    -t 4
-    -tb 4
+    -ngl "${NGL}"
+    -t "${THREADS}"
+    -tb "${THREADS_BATCH}"
     -b "${b}"
     -ub "${ub}"
     -fa on
@@ -279,6 +301,12 @@ run_cell() {
     # llama-cli defaults to ERROR (-lv 1); INFO needed to prove draft/MTP engaged.
     -lv 3
   )
+  if [[ -n "${TENSOR_SPLIT}" ]]; then
+    args+=(-ts "${TENSOR_SPLIT}")
+  fi
+  if [[ -n "${MAIN_GPU}" ]]; then
+    args+=(-mg "${MAIN_GPU}")
+  fi
 
   if [[ "${SAMPLE_MODE}" == "product" ]]; then
     # gemma4_26b_a4b_mtp_metal.yaml sampling (Unsloth 1.0/0.95/64).
@@ -292,7 +320,7 @@ run_cell() {
       --mtp-head "${DRAFT}"
       --spec-type mtp
       --spec-draft-n-max "${SPEC_N_MAX}"
-      --spec-draft-ngl 99
+      --spec-draft-ngl "${NGL}"
       -ctkd "${CTK}"
       -ctvd "${CTV}"
     )

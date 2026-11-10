@@ -48,7 +48,9 @@ Latest suite GREEN/RED snapshot: [TASK-066-status-matrix-20261106.md](TASK-066-s
 
 | Doc | Role |
 |-----|------|
-| [TASK-066-ladder-fixture.md](TASK-066-ladder-fixture.md) | Frozen nomtp ladder knobs / cli map |
+| [TASK-066-ladder-fixture.md](TASK-066-ladder-fixture.md) | Frozen nomtp ladder knobs / cli map (Metal) |
+| [TASK-069-cuda-e2e-fixture.md](TASK-069-cuda-e2e-fixture.md) | CUDA e2e knobs / `fixtures/task069/cuda-*.reference.yaml` |
+| [run-task069-cuda-e2e.sh](run-task069-cuda-e2e.sh) | CUDA e2e one-shot entry (`suite` / `mtp-e2e` / ladders) |
 | [TASK-066-mul-mat-batch-inventory.md](TASK-066-mul-mat-batch-inventory.md) | Metal MUL_MAT path inventory (066.7) |
 
 ## Historical / research (read-only)

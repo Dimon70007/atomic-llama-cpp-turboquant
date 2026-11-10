@@ -57,7 +57,8 @@ CTX="${TASK066_CTX:-3072}"
 UBATCH_LIST="${TASK066_UBATCH_LIST:-1 8 16 33 256 512 1024 2048}"
 # Use ${VAR-default} (not :-) so TASK066_REPEAT_LARGE="" disables 2x repeats.
 REPEAT_LARGE="${TASK066_REPEAT_LARGE-1024 2048}"
-# Default floor: -b = max(ubatch, 512). KV locked q8_0/turbo4.
+# Default floor: -b = max(ubatch, 512). KV locked q8_0/turbo4 (Metal).
+# CUDA TASK-069: TASK069_SUITE_PROFILE=cuda + TASK069_* from suite YAML.
 BATCH_MODE="${TASK066_BATCH_MODE:-floor}"
 BATCH_FLOOR="${TASK066_BATCH_FLOOR:-512}"
 BATCH_MAX="${TASK066_BATCH_MAX:-2048}"
@@ -67,14 +68,34 @@ CTV="turbo4"
 CRAM="${TASK066_CRAM:-0}"
 CTXCP="${TASK066_CTXCP:-32}"
 STOP_ON_FAIL="${TASK066_STOP_ON_FAIL:-1}"
+NGL="${TASK066_NGL:-99}"
+THREADS="${TASK066_THREADS:-4}"
+THREADS_BATCH="${TASK066_THREADS_BATCH:-4}"
+TENSOR_SPLIT="${TASK069_TENSOR_SPLIT:-}"
+MAIN_GPU="${TASK069_MAIN_GPU:-}"
 
 fail() { echo "FAIL: $*" >&2; exit 2; }
 
-if [[ -n "${TASK066_CTK:-}" && "${TASK066_CTK}" != "q8_0" ]]; then
-  fail "TASK066_CTK locked to q8_0 (got ${TASK066_CTK})"
-fi
-if [[ -n "${TASK066_CTV:-}" && "${TASK066_CTV}" != "turbo4" ]]; then
-  fail "TASK066_CTV locked to turbo4 (got ${TASK066_CTV})"
+if [[ "${TASK069_SUITE_PROFILE:-}" == "cuda" ]]; then
+  CTK="${TASK069_CTK:?FAIL: TASK069_SUITE_PROFILE=cuda requires TASK069_CTK}"
+  CTV="${TASK069_CTV:?FAIL: TASK069_SUITE_PROFILE=cuda requires TASK069_CTV}"
+  CRAM="${TASK069_CRAM:?FAIL: TASK069_SUITE_PROFILE=cuda requires TASK069_CRAM}"
+  CTXCP="${TASK069_CTXCP:?FAIL: TASK069_SUITE_PROFILE=cuda requires TASK069_CTXCP}"
+  NGL="${TASK069_NGL:?FAIL: TASK069_SUITE_PROFILE=cuda requires TASK069_NGL}"
+  THREADS="${TASK069_THREADS:?FAIL: TASK069_SUITE_PROFILE=cuda requires TASK069_THREADS}"
+  THREADS_BATCH="${TASK069_THREADS_BATCH:?FAIL: TASK069_SUITE_PROFILE=cuda requires TASK069_THREADS_BATCH}"
+  TENSOR_SPLIT="${TASK069_TENSOR_SPLIT:?FAIL: TASK069_SUITE_PROFILE=cuda requires TASK069_TENSOR_SPLIT}"
+  MAIN_GPU="${TASK069_MAIN_GPU:?FAIL: TASK069_SUITE_PROFILE=cuda requires TASK069_MAIN_GPU}"
+  BATCH_MAX="${TASK069_BATCH:?FAIL: TASK069_SUITE_PROFILE=cuda requires TASK069_BATCH}"
+  BATCH_FLOOR="${TASK069_UBATCH:?FAIL: TASK069_SUITE_PROFILE=cuda requires TASK069_UBATCH}"
+  echo "NOTE: TASK069 CUDA suite knobs: ctk=${CTK} ctv=${CTV} b_max=${BATCH_MAX} floor=${BATCH_FLOOR} ts=${TENSOR_SPLIT} mg=${MAIN_GPU}" >&2
+else
+  if [[ -n "${TASK066_CTK:-}" && "${TASK066_CTK}" != "q8_0" ]]; then
+    fail "TASK066_CTK locked to q8_0 (got ${TASK066_CTK})"
+  fi
+  if [[ -n "${TASK066_CTV:-}" && "${TASK066_CTV}" != "turbo4" ]]; then
+    fail "TASK066_CTV locked to turbo4 (got ${TASK066_CTV})"
+  fi
 fi
 
 if [[ ! -f "${MODEL}" ]]; then
@@ -187,9 +208,9 @@ run_cell() {
     -m "${MODEL}"
     -f "${PROMPT}"
     -c "${CTX}"
-    -ngl 99
-    -t 4
-    -tb 4
+    -ngl "${NGL}"
+    -t "${THREADS}"
+    -tb "${THREADS_BATCH}"
     -b "${b}"
     -ub "${ub}"
     -fa on
@@ -209,6 +230,12 @@ run_cell() {
     --no-display-prompt
     --no-warmup
   )
+  if [[ -n "${TENSOR_SPLIT}" ]]; then
+    args+=(-ts "${TENSOR_SPLIT}")
+  fi
+  if [[ -n "${MAIN_GPU}" ]]; then
+    args+=(-mg "${MAIN_GPU}")
+  fi
 
   {
     echo "ubatch=${ub}"
