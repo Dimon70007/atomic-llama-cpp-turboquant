@@ -39,7 +39,7 @@ Self-contained in **this** llama.cpp / ggml fork. Other developers: start here.
 | **066.16** | [TASK-066.16-min1-red-triage.md](TASK-066.16-min1-red-triage.md) | 066.15 full-suite RED | 🟢 R1–R9 **P**; **KEEP DEFAULT=1** (`…062918Z`) |
 | **066.17** | [TASK-066.17-product-ubatch-256-512-1024.md](TASK-066.17-product-ubatch-256-512-1024.md) | 066.14 | 🟢 DONE product C2p/C1p/C1jp (`…225212Z`); stress C1 RED |
 | **066.18** | [TASK-066.18-src-lever-ablation.md](TASK-066.18-src-lever-ablation.md) · [Mode B influence table](TASK-066.18-modeB-influence-table.md) | squash tip vs `0fe16d12d` | 🟢 Mode A+B DONE; size_swa `PAD128(n_batch)` alone-ON `…001626Z` |
-| **066.19** | [TASK-066.19-keep-stack-speed-gates.md](TASK-066.19-keep-stack-speed-gates.md) | 066.17 + 066.18 §5 | ⬜ TODO cumulative KEEP stack + nomtp≥23 / MTP≥30 tg + final report |
+| **066.19** | [TASK-066.19-keep-stack-speed-gates.md](TASK-066.19-keep-stack-speed-gates.md) | 066.17 + 066.18 §5 | ⬜ TODO (orchestrator landed; Terminal stamps pending) NEGATIVE hard-stop |
 
 Overview locks / DoD / out-of-scope: [TASK-066.0-overview.md](TASK-066.0-overview.md).  
 Latest suite GREEN/RED snapshot: [TASK-066-status-matrix-20261106.md](TASK-066-status-matrix-20261106.md).
@@ -80,7 +80,24 @@ TASK066_MODEL=/path/to/gemma-4-26B-A4B-it-UD-IQ4_XS.gguf TASK066_CTX=3072 \
   ./tests/run-task066-src-lever-ablation.sh --dry-run
 # Parent: TASK066_MODEL=… TASK066_CTX=3072 make minillm-task066-src-lever-ablation
 # ABLATION_ARGS='--mode A --levers L_size_swa_ub --rows S_ub_c2pf16'
+
+# 066.19 — cumulative KEEP-stack speed (nomtp≥23 / MTP≥30); NEGATIVE hard-stop
+# Prefer fork cwd; each cell: rebuild → tests/run-task066-decode-speed-probe.sh
+cd atomic-llama-cpp-turboquant
+MODEL_NOMTP=gemma4-26b-a4b-mtp-nomtp MODEL_MTP=gemma4-26b-a4b-mtp \
+  TASK066_MODEL=/path/to/UD-IQ4_XS.gguf TASK066_MODEL_DRAFT=/path/to/mtp-Q8_0.gguf \
+  ./tests/run-task066-keep-stack-speed.sh --dry-run
+# Parent sugar: same env + make minillm-task066-keep-stack-speed
+# KEEP_STACK_ARGS='--from-cell C2_fa_mv' | '--phase-f' (C_final_tip after C0–C4)
+
+# 066.19 Phase F — after C0–C4 GREEN (Metal Terminal):
+STAMP_DIR=logs/task066-19-keep-stack-<UTC> BUILD_DIR=build-task066-cb-ws \
+  MODEL_NOMTP=gemma4-26b-a4b-mtp-nomtp MODEL_MTP=gemma4-26b-a4b-mtp \
+  TASK066_MODEL=/path/to/UD-IQ4_XS.gguf TASK066_MODEL_DRAFT=/path/to/mtp-Q8_0.gguf \
+  PHASE_F_MODE=all ./tests/run-task066-phase-f-battery.sh
+# PHASE_F_MODE=speed|suites|all ; parent: make minillm-task066-phase-f-battery
 ```
+
 
 Configure + build (Metal): see below. Parent product repo may call `make minillm-task066-metal-corners` — that is optional sugar; this fork must stay runnable alone.
 

@@ -12,6 +12,21 @@ Releases before `b10269-1.5.0` predate this file; see the git history.
 
 ## Unreleased
 
+### Added
+
+- **TASK-066.19 KEEP-stack speed orchestrator:** cumulative C0–C4
+  (`tests/task066_keep_stack_speed.py` + `.json` +
+  `tests/run-task066-keep-stack-speed.sh`). After each cell rebuild,
+  calls fork `tests/run-task066-decode-speed-probe.sh` with that
+  `BUILD_DIR`. MTP probe: `-c 2048 -st --simple-io` + timeout (was
+  hanging on `llama-cli` default `-c 0` = n_ctx_train). Floor miss →
+  `NEGATIVE` hard-stop (exit 3). SSOT
+  `tests/TASK-066.19-keep-stack-speed-gates.md`.
+- **TASK-066.19 Phase F battery:** `tests/run-task066-phase-f-battery.sh`
+  (`PHASE_F_MODE=all|speed|suites`) — C_final_tip via `--phase-f` then
+  suites into `stamp/final/` (unit / ubatch / metal-corners-all /
+  mtp-vs-nomtp). Metal Terminal only.
+
 ### Changed
 
 - **TASK-066.17 DONE:** SWA `headroom=PAD128(n_batch)` (⊥ub). Product

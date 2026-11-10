@@ -191,7 +191,7 @@ Pad окна SWA до блока TurboQuant 128. Alone не двигает ubatc
 
 **Коротко:** четыре опоры tip для A1. Float-tile уменьшает «дрожь», size_swa делает ubatch **ноль ошибки**, FA и no_mv_ext чинят свои suite’ы начисто.
 
-**Next (speed gates):** cumulative enable of this stack + nomtp/MTP decode floors + final suite report → [`TASK-066.19-keep-stack-speed-gates.md`](TASK-066.19-keep-stack-speed-gates.md) (floors: nomtp ≥23 tg, MTP ≥30 tg).
+**Next (speed gates):** cumulative enable of this stack + nomtp/MTP decode floors + final suite report → [`TASK-066.19-keep-stack-speed-gates.md`](TASK-066.19-keep-stack-speed-gates.md) (floors: nomtp ≥23 tg, MTP ≥30 tg; floor miss → **NEGATIVE** hard stop, no further pillars / no Phase F; NEGATIVE ≠ KEEP).
 
 ---
 

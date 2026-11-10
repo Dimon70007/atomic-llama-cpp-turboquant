@@ -1,0 +1,82 @@
+{
+  "task": "TASK-066.19",
+  "description": "Cumulative KEEP-stack speed gates (nomtp/MTP floors) + hard-stop NEGATIVE.",
+  "tg_source": "fork_probe_script",
+  "tg_source_note": "After each cell rebuild, call tests/run-task066-decode-speed-probe.sh (cwd=fork root) with BUILD_DIR=cell build. Probe runs llama-bench (nomtp) / llama-cli draft-mtp (MTP) from that BUILD_DIR/bin.",
+  "probe_script": "tests/run-task066-decode-speed-probe.sh",
+  "aliases": {
+    "nomtp": "gemma4-26b-a4b-mtp-nomtp",
+    "mtp": "gemma4-26b-a4b-mtp"
+  },
+  "floors": {
+    "nomtp_tg_min": 23.0,
+    "mtp_tg_min": 30.0,
+    "median_runs": 3
+  },
+  "mm_min_pin": {
+    "note": "Document tip DEFAULT; do not flip between cells.",
+    "env": "GGML_METAL_MUL_MM_MIN",
+    "require_explicit": false
+  },
+  "levers": [
+    {"id": "L_fa_tile", "cmake": "FA_TILE"},
+    {"id": "L_no_mv_ext", "cmake": "NO_MV_EXT"},
+    {"id": "L_float_tile", "cmake": "FLOAT_TILE"},
+    {"id": "L_mm_min", "cmake": "MM_MIN"},
+    {"id": "L_fusion_cb", "cmake": "FUSION_CB"},
+    {"id": "L_moe_view_add", "cmake": "MOE_VIEW_ADD"},
+    {"id": "L_size_swa_ub", "cmake": "SIZE_SWA_UB"},
+    {"id": "L_iswa_pads", "cmake": "ISWA_PADS"},
+    {"id": "L_shared_kv", "cmake": "SHARED_KV"},
+    {"id": "L_swa_hwm_log", "cmake": "SWA_HWM_LOG"}
+  ],
+  "cells": [
+    {
+      "id": "C0_master",
+      "enabled_levers": [],
+      "note": "master-like: all tip levers DISABLED"
+    },
+    {
+      "id": "C1_fa",
+      "enabled_levers": ["L_fa_tile"]
+    },
+    {
+      "id": "C2_fa_mv",
+      "enabled_levers": ["L_fa_tile", "L_no_mv_ext"]
+    },
+    {
+      "id": "C3_fa_mv_float",
+      "enabled_levers": ["L_fa_tile", "L_no_mv_ext", "L_float_tile"]
+    },
+    {
+      "id": "C4_keep4",
+      "enabled_levers": ["L_fa_tile", "L_no_mv_ext", "L_float_tile", "L_size_swa_ub"]
+    },
+    {
+      "id": "C_final_tip",
+      "enabled_levers": "tip_all_on",
+      "note": "Phase F speed re-check: tip product (no ablation disables). Optional via --phase-f."
+    }
+  ],
+  "cmake_base": [
+    "-DCMAKE_BUILD_TYPE=Release",
+    "-DGGML_METAL=ON",
+    "-DLLAMA_BUILD_TESTS=ON"
+  ],
+  "build_targets": [
+    "llama-bench",
+    "llama-cli",
+    "test-iswa-size-swa"
+  ],
+  "bench_mtp": {
+    "repeats": 3
+  },
+  "phase_f": {
+    "note": "Only after C0-C4 all speed GREEN. Suites = fork tests/run-task066-*.sh under BUILD_DIR tip (operator Terminal).",
+    "suites": [
+      "test-iswa-size-swa",
+      "ubatch-s8-s1024",
+      "metal-corners-all"
+    ]
+  }
+}
