@@ -48,9 +48,10 @@ def test_bytes_per_elem_q8_and_f16() -> None:
 def test_calc_size_swa_ideas_headroom_windowed() -> None:
     size_base = _STAMP_SIZE_BASE
     n_swa = 1024
-    assert calc_size_swa(size_base, n_swa, 1, True, False, n_swa_headroom=8) == 1152
+    # Product outer_pad=256 (matches C++ test-iswa-size-swa).
+    assert calc_size_swa(size_base, n_swa, 1, True, False, n_swa_headroom=8) == 1280
     assert calc_size_swa(size_base, n_swa, 1, True, False, n_swa_headroom=512) == 1536
-    assert calc_size_swa(size_base, n_swa, 1, True, False, n_swa_headroom=1344) == 2432
+    assert calc_size_swa(size_base, n_swa, 1, True, False, n_swa_headroom=1344) == 2560
     assert calc_size_swa(size_base, n_swa, 1, True, False, n_swa_headroom=2048) == 3072
 
 
@@ -67,7 +68,7 @@ def test_calc_size_swa_long_ctx_stays_windowed() -> None:
     assert got < _STAMP_SIZE_BASE
 
 
-def test_calc_size_swa_pad128_and_swa_full() -> None:
+def test_calc_size_swa_pad256_and_swa_full() -> None:
     assert (
         calc_size_swa(
             _STAMP_SIZE_BASE, 1024, 1, unified=True, swa_full=True, n_swa_headroom=8
@@ -75,7 +76,15 @@ def test_calc_size_swa_pad128_and_swa_full() -> None:
         == _STAMP_SIZE_BASE
     )
     assert calc_size_swa(512, 1024, 1, unified=True, swa_full=False, n_swa_headroom=8) == 512
-    assert calc_size_swa(3072, 1000, 1, unified=True, swa_full=False, n_swa_headroom=8) == 1152
+    assert calc_size_swa(3072, 1000, 1, unified=True, swa_full=False, n_swa_headroom=8) == 1280
+
+
+def test_calc_block_pad_h_swa1() -> None:
+    from estimate_kv_ctx import calc_block_pad
+
+    assert calc_block_pad(512) == 512
+    assert calc_block_pad(2048) == 2048
+    assert calc_block_pad(1000) == 1024
 
 
 def test_size_swa_scales_with_n_ubatch() -> None:
@@ -97,7 +106,7 @@ def test_size_swa_scales_with_n_ubatch() -> None:
         sizes.append(got.size_swa)
         assert got.n_swa_headroom == ub
         assert got.n_ubatch == ub
-    assert sizes == [1152, 1280, 1536, 2048]
+    assert sizes == [1280, 1280, 1536, 2048]
 
 
 def test_resolve_v_type_uniform_only() -> None:

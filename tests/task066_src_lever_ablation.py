@@ -160,7 +160,6 @@ def _configure_and_build(
         "FLOAT_TILE",
         "MM_MIN",
         "FUSION_CB",
-        "MOE_VIEW_ADD",
         "SIZE_SWA_UB",
         "ISWA_PADS",
         "SHARED_KV",

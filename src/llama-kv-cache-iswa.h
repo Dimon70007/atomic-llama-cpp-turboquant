@@ -24,6 +24,7 @@ public:
                      uint32_t   kv_size,
                      uint32_t   n_seq_max,
                      uint32_t   n_swa_headroom,
+                     uint32_t   size_swa_outer_pad,
                      uint32_t   n_pad,
                llama_memory_t   mem_other,
         const layer_filter_cb & filter,
@@ -45,6 +46,7 @@ public:
                      uint32_t   kv_size,
                      uint32_t   n_seq_max,
                      uint32_t   n_swa_headroom,
+                     uint32_t   size_swa_outer_pad,
                      uint32_t   n_pad,
                llama_memory_t   mem_other,
         const layer_filter_cb & filter,
@@ -171,16 +173,20 @@ private:
 
 // Product SWA headroom (TASK-066.17 — restore 066.13 C2 KEEP):
 //   headroom = PAD128(n_batch)   // ⊥ live -ub; equal -b ⇒ equal size_swa
-// n_ubatch must be > 0 (fail-closed) but does not enter the formula.
-// Product (batch=2048, ub=512) -> PAD128(2048) = 2048 (memory tax vs 066.16 max(ub,b/4)).
-// Pair C2p equal -b=512 ub=256 vs 512 -> headroom 512 both sides.
+// With TASK066_ENABLE_H_SWA_1 (H-SWA-1b): headroom = PAD256(n_ubatch).
+// With TASK066_DISABLE_SIZE_SWA_UB: headroom = n_ubatch.
+// n_ubatch must be > 0 (fail-closed).
 uint32_t llama_kv_cache_iswa_calc_swa_headroom(uint32_t n_batch, uint32_t n_ubatch);
+
+// TASK-069 H-SWA-1/1b: block_pad = PAD256(n_ubatch) (>= ubatch, multiple of 256).
+// Example: ub=512 -> 512; ub=2048 -> 2048; ub=1000 -> 1024. Fail-closed on 0.
+uint32_t llama_kv_cache_iswa_calc_block_pad(uint32_t n_ubatch);
 
 // Pure size_swa helper (TASK-066.5 ideas).
 // Pads n_swa up to TurboQuant KV block (128), then:
-//   size_swa = PAD256(min(size_base, n_swa_eff * (unified ? n_seq_max : 1) + n_swa_headroom))
-// Product callers pass llama_kv_cache_iswa_calc_swa_headroom(n_batch, n_ubatch).
-// Outer pad 256 aligns with FA get_n_kv pad; n_swa_eff still uses TurboQuant 128.
+//   size_swa = PAD(min(size_base, n_swa_eff * (unified ? n_seq_max : 1) + n_swa_headroom), outer_pad)
+// With TASK066_ENABLE_H_BUF_1: PAD(raw + outer_pad, outer_pad) — ring slack vs ring-full@1536.
+// Product default outer_pad = 256 (FA get_n_kv pad). H-SWA-1 passes block_pad instead.
 // Used by ctor + CPU unit test-iswa-size-swa.
 uint32_t llama_kv_cache_iswa_calc_size_swa(
         uint32_t size_base,
@@ -188,4 +194,5 @@ uint32_t llama_kv_cache_iswa_calc_size_swa(
         uint32_t n_seq_max,
         bool     unified,
         bool     swa_full,
-        uint32_t n_swa_headroom);
+        uint32_t n_swa_headroom,
+        uint32_t outer_pad);

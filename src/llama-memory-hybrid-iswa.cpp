@@ -17,6 +17,7 @@ llama_memory_hybrid_iswa::llama_memory_hybrid_iswa(
                      bool   swa_full,
                  uint32_t   kv_size,
                  uint32_t   n_swa_headroom,
+                 uint32_t   size_swa_outer_pad,
                  uint32_t   n_pad,
                             /* recurrent */
                 ggml_type   type_r,
@@ -46,6 +47,7 @@ llama_memory_hybrid_iswa::llama_memory_hybrid_iswa(
         kv_size,
         n_seq_max,
         n_swa_headroom,
+        size_swa_outer_pad,
         n_pad,
         nullptr,
         filter_attn == nullptr ?

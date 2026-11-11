@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Fail-closed KV / n_ctx estimator for this TurboQuant fork (TASK-066.10).
 
-Mirrors llama.cpp ISWA size_swa under TASK-066.5 ideas (product = live n_ubatch):
+Mirrors llama.cpp ISWA size_swa under TASK-066.5 / product outer pad:
   n_swa_eff = ceil(n_swa / 128) * 128
-  size_swa  = PAD128(min(size_base, n_swa_eff * (unified ? n_seq_max : 1) + n_swa_headroom))
-  n_swa_headroom = n_ubatch by default (minimal sufficient; optional override)
+  size_swa  = PAD(outer_pad, min(size_base, n_swa_eff * (unified ? n_seq_max : 1) + n_swa_headroom))
+  product outer_pad = 256 (FA get_n_kv); H-SWA-1 may pass PAD256(n_ubatch)
+  n_swa_headroom = PAD128(n_batch) product (or n_ubatch under SIZE_SWA_UB off)
 """
 
 from __future__ import annotations
@@ -32,8 +33,8 @@ _TYPE_LAYOUT: dict[str, tuple[int, int]] = {
 _CTK_TYPES = frozenset(_TYPE_LAYOUT.keys())
 _CTV_TYPES = _CTK_TYPES
 _TURBO_TYPES = frozenset({"turbo2", "turbo3", "turbo4"})
-# Outer size_swa pad = TurboQuant KV block (not FA get_n_kv pad-256).
-_SIZE_SWA_PAD = 128
+# Product outer size_swa pad = FA get_n_kv pad-256 (C++ llama_kv_cache_iswa_calc_size_swa).
+_SIZE_SWA_PAD = 256
 
 
 def die(msg: str, code: int = 2) -> None:
@@ -78,6 +79,13 @@ def pad128(n: int) -> int:
     return ((n + 127) // 128) * 128
 
 
+def calc_block_pad(n_ubatch: int) -> int:
+    """H-SWA-1: PAD256(n_ubatch). Fail-closed on <= 0."""
+    if n_ubatch <= 0:
+        die("n_ubatch must be > 0 for block_pad")
+    return ggml_pad(n_ubatch, 256)
+
+
 def calc_size_swa(
     size_base: int,
     n_swa: int,
@@ -85,15 +93,18 @@ def calc_size_swa(
     unified: bool,
     swa_full: bool,
     n_swa_headroom: int,
+    outer_pad: int = _SIZE_SWA_PAD,
 ) -> int:
-    """Python port of llama_kv_cache_iswa_calc_size_swa (n_ubatch headroom + pad128)."""
+    """Python port of llama_kv_cache_iswa_calc_size_swa (outer_pad default 256)."""
     if n_swa_headroom < 0:
         die("n_swa_headroom must be >= 0")
+    if outer_pad <= 0:
+        die("outer_pad must be > 0")
     if swa_full:
         return size_base
     n_swa_eff = pad128(n_swa) if n_swa > 0 else 0
     swa_window = n_swa_eff * (n_seq_max if unified else 1)
-    return ggml_pad(min(size_base, swa_window + n_swa_headroom), _SIZE_SWA_PAD)
+    return ggml_pad(min(size_base, swa_window + n_swa_headroom), outer_pad)
 
 
 def embd_gqa_eff(n_head_kv: int, head_dim: int, type_name: str) -> int:

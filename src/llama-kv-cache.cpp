@@ -1668,8 +1668,8 @@ void llama_kv_cache::apply_ubatch(const slot_info & sinfo, const llama_ubatch & 
     }
 
 #ifndef TASK066_DISABLE_SWA_HWM_LOG
-    // SWA occupancy telemetry: allocated size_swa vs peak used_max_p1 / used cells.
-    // Log on high-water growth so operators can verify headroom is minimal-but-sufficient.
+    // H-BUF-1 / TASK-066: SWA alloc-vs-used telemetry (W-KV).
+    // Log on high-water growth; used_max_p1 > size_swa => overrun signal.
     if (n_swa > 0) {
         uint32_t peak_used_max = 0;
         uint32_t peak_used     = 0;
@@ -1679,17 +1679,29 @@ void llama_kv_cache::apply_ubatch(const slot_info & sinfo, const llama_ubatch & 
             peak_used     = std::max(peak_used, cells.get_used());
         }
         if (peak_used_max > swa_used_hwm) {
+            const uint32_t prev_hwm = swa_used_hwm;
             swa_used_hwm = peak_used_max;
             const uint32_t size = get_size();
-            LLAMA_LOG_INFO(
-                    "%s: SWA occupancy hwm: used_max_p1=%u used=%u size_swa=%u n_swa=%u "
-                    "slack=%d (FA n_kv pads used→≥256 independently)\n",
-                    __func__, swa_used_hwm, peak_used, size, n_swa,
-                    (int) size - (int) swa_used_hwm);
-            if (swa_used_hwm >= size) {
+            const int32_t slack = (int32_t) size - (int32_t) swa_used_hwm;
+            // Throttle: first HWM, every +256 growth, or near-full. Avoid per-token WARN flood.
+            const bool log_hwm = (prev_hwm == 0)
+                    || (swa_used_hwm / 256u > prev_hwm / 256u)
+                    || (slack <= (int32_t) 256);
+            if (log_hwm) {
+                LLAMA_LOG_WARN(
+                        "%s: SWA occupancy hwm: used_max_p1=%u used=%u size_swa=%u n_swa=%u "
+                        "slack=%d alloc=%u (H-BUF-1 W-KV)\n",
+                        __func__, swa_used_hwm, peak_used, size, n_swa, slack, size);
+            }
+            if (swa_used_hwm > size) {
+                LLAMA_LOG_ERROR(
+                        "%s: H-BUF-1 OVERRUN used_max_p1=%u > alloc size_swa=%u "
+                        "(silent corruption risk)\n",
+                        __func__, swa_used_hwm, size);
+            } else if (swa_used_hwm >= size) {
                 LLAMA_LOG_WARN(
                         "%s: SWA ring full (used_max_p1=%u size=%u); risk of overwrite / "
-                        "model errors — raise -ub headroom or check pad128 sizing\n",
+                        "model errors - raise -ub headroom or check pad128 sizing\n",
                         __func__, swa_used_hwm, size);
             }
         }

@@ -5,6 +5,8 @@
 #
 # Orchestrator builds per cell with a dedicated BUILD_DIR + these flags.
 # Metal shaders need the same macros via XC_FLAGS (FLOAT_TILE).
+# FA_TILE also gates CUDA ggml-cuda/fattn.cu (TASK-069 B1 kernel pin) via
+# add_compile_definitions below — not Metal-only.
 
 set(_TASK066_LEVER_IDS
     FA_TILE
@@ -12,7 +14,7 @@ set(_TASK066_LEVER_IDS
     FLOAT_TILE
     MM_MIN
     FUSION_CB
-    MOE_VIEW_ADD
+    # MOE_VIEW_ADD retired (TASK-069.3): MOE OFF broke ubatch=1 reference - always view+ADD.
     SIZE_SWA_UB
     ISWA_PADS
     SHARED_KV
@@ -62,6 +64,27 @@ endforeach()
 foreach(_def IN LISTS TASK066_ABLATION_CXX_DEFINES)
     add_compile_definitions(${_def})
 endforeach()
+
+# TASK-069 H-SWA-1c (experimental; OFF by default — not product KEEP until measured).
+# When ON: headroom = PAD256(n_ubatch); outer_pad stays 256 (FA).
+# History: outer-only NO_EFFECT; 1b headroom+outer=block_pad → cross @35 not MATCH.
+option(TASK066_ENABLE_H_SWA_1
+    "TASK-069 H-SWA-1c: headroom=PAD256(n_ubatch), outer_pad=256" OFF)
+if(TASK066_ENABLE_H_SWA_1)
+    add_compile_definitions(TASK066_ENABLE_H_SWA_1=1)
+    message(STATUS "TASK-069: ENABLE H_SWA_1c (headroom=PAD256(n_ubatch), outer=256)")
+endif()
+
+# TASK-069 H-BUF-1 (experimental; OFF by default).
+# When ON: size_swa = PAD(raw + outer_pad, outer_pad) — one FA-pad of ring slack
+# beyond the usual PAD(raw, outer_pad). Targets ring-full@1536 (ub512 SIZE-off/1c).
+# Not a static huge cache (H-REJECT-STATIC); measure before KEEP.
+option(TASK066_ENABLE_H_BUF_1
+    "TASK-069 H-BUF-1: size_swa ring slack = +outer_pad after PAD(raw)" OFF)
+if(TASK066_ENABLE_H_BUF_1)
+    add_compile_definitions(TASK066_ENABLE_H_BUF_1=1)
+    message(STATUS "TASK-069: ENABLE H_BUF_1 (size_swa += outer_pad slack)")
+endif()
 
 # Exported for ggml-metal CMakeLists (Metal shader compile).
 set(TASK066_ABLATION_METAL_FLAGS "${TASK066_ABLATION_METAL_FLAGS}" CACHE INTERNAL

@@ -1173,6 +1173,44 @@ static void launch_fattn_tile_switch_ncols1(ggml_backend_cuda_context & ctx, ggm
 
     constexpr size_t nbytes_shared = 0;
 
+    // TASK-069 B1 / FA_TILE KEEP: do not pick cols_per_block from Q->ne[1].
+    // Legacy cascade (N=1→cols2, N=3→cols4, …) changes the tile template and breaks row0.
+    // Pin the widest available template for this DKQ/ncols2; OOB Q cols are masked in-kernel.
+#ifndef TASK066_DISABLE_FA_TILE
+#ifdef GGML_USE_HIP
+    if constexpr (DKQ <= 128) {
+        constexpr int cols_per_block = 64;
+        const int nwarps    = ggml_cuda_fattn_tile_get_nthreads (DKQ, DV, cols_per_block, cc) / warp_size;
+        const int nbatch_fa = ggml_cuda_fattn_tile_get_nbatch_fa(DKQ, DV, cols_per_block, cc);
+        fattn_kernel_t fattn_kernel = flash_attn_tile<DKQ, DV, cols_per_block/ncols2, ncols2, use_logit_softcap>;
+        launch_fattn<DV, cols_per_block/ncols2, ncols2>
+            (ctx, dst, fattn_kernel, nwarps, nbytes_shared, nbatch_fa, true, true, false, false, warp_size);
+        return;
+    }
+#endif // GGML_USE_HIP
+#ifndef GGML_USE_HIP
+    if constexpr (DKQ <= 256) {
+        constexpr int cols_per_block = 32;
+        const int nwarps    = ggml_cuda_fattn_tile_get_nthreads (DKQ, DV, cols_per_block, cc) / warp_size;
+        const int nbatch_fa = ggml_cuda_fattn_tile_get_nbatch_fa(DKQ, DV, cols_per_block, cc);
+        fattn_kernel_t fattn_kernel = flash_attn_tile<DKQ, DV, cols_per_block/ncols2, ncols2, use_logit_softcap>;
+        launch_fattn<DV, cols_per_block/ncols2, ncols2>
+            (ctx, dst, fattn_kernel, nwarps, nbytes_shared, nbatch_fa, true, true, false, false, warp_size);
+        return;
+    }
+#endif // !GGML_USE_HIP
+    if constexpr (ncols2 <= 16) {
+        constexpr int cols_per_block = 16;
+        const int nwarps    = ggml_cuda_fattn_tile_get_nthreads (DKQ, DV, cols_per_block, cc) / warp_size;
+        const int nbatch_fa = ggml_cuda_fattn_tile_get_nbatch_fa(DKQ, DV, cols_per_block, cc);
+        fattn_kernel_t fattn_kernel = flash_attn_tile<DKQ, DV, cols_per_block/ncols2, ncols2, use_logit_softcap>;
+        launch_fattn<DV, cols_per_block/ncols2, ncols2>
+            (ctx, dst, fattn_kernel, nwarps, nbytes_shared, nbatch_fa, true, true, false, false, warp_size);
+        return;
+    }
+    GGML_ABORT("fatal error: FA_TILE KEEP pin has no cols_per_block for this shape");
+#else // TASK066_DISABLE_FA_TILE — master-like N-gated cascade
+
 #ifdef GGML_USE_HIP
     if constexpr (DKQ <= 128) {
         if (Q->ne[1] > 32/ncols2) {
@@ -1249,6 +1287,7 @@ static void launch_fattn_tile_switch_ncols1(ggml_backend_cuda_context & ctx, ggm
     }
 
     GGML_ABORT("fatal error");
+#endif // TASK066_DISABLE_FA_TILE
 }
 
 template <int DKQ, int DV, bool use_logit_softcap>
@@ -1268,7 +1307,13 @@ static void launch_fattn_tile_switch_ncols2(ggml_backend_cuda_context & ctx, ggm
     // However, for DKQ == 576/640, DV == 512 only the kernel variant with GQA optimizations is implemented.
     const bool nvidia = GGML_CUDA_CC_IS_NVIDIA(ggml_cuda_info().devices[ggml_cuda_get_device()].cc);
     const int gqa_limit = nvidia && gqa_ratio <= 4 && DV <= 256 ? 16 : INT_MAX;
+#ifndef TASK066_DISABLE_FA_TILE
+    // TASK-069 B1: do not drop GQA packing when Q->ne[1] crosses gqa_limit (N-invariant ncols2).
+    const bool use_gqa_opt = mask && max_bias == 0.0f && K->ne[1] % FATTN_KQ_STRIDE == 0;
+    GGML_UNUSED(gqa_limit);
+#else
     const bool use_gqa_opt = mask && max_bias == 0.0f && Q->ne[1] <= gqa_limit && K->ne[1] % FATTN_KQ_STRIDE == 0;
+#endif
 
     if constexpr (DKQ == 320) {
         // This branch is only used for Mistral Small 4 which has a GQA ratio of 32.

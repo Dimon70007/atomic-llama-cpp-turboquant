@@ -28,7 +28,6 @@
 | `L_float_tile` | q8_0/iq4_xs float tiles + smem | `TASK066_DISABLE_FLOAT_TILE` | `mul-mat-residual`, ubatch |
 | `L_mm_min` | MoE id min 8 vs master 32 + env policy | `TASK066_DISABLE_MM_MIN` | `mul-mat-residual` |
 | `L_fusion_cb` | fusion_max CB snap | `TASK066_DISABLE_FUSION_CB` | `cb-fusion` |
-| `L_moe_view_add` | always view+ADD MoE out | `TASK066_DISABLE_MOE_VIEW_ADD` | `moe-out` |
 | `L_size_swa_ub` | tip `PAD128(max(ub,b/4))` vs master `n_ubatch` | `TASK066_DISABLE_SIZE_SWA_UB` | ubatch, `test-iswa-size-swa` |
 | `L_iswa_pads` | n_swa pad128 | `TASK066_DISABLE_ISWA_PADS` | `test-iswa-size-swa` |
 | `L_shared_kv` | `memory_has_shared_cells` | `TASK066_DISABLE_SHARED_KV` | `b1-shared-kv` |
@@ -75,7 +74,6 @@ Env (fail-closed for ubatch):
 
 ### Table A — tip−1 (lever OFF). Cell = verdict (+ numeric when RED / meaningful)
 
-| suite | tip | L_fa_tile OFF | L_no_mv_ext OFF | L_float_tile OFF | L_mm_min | L_fusion_cb | L_moe_view_add | L_size_swa_ub | L_iswa_pads | L_shared_kv | L_swa_hwm_log |
 |-------|-----|---------------|-----------------|------------------|----------|-------------|---------------|--------------|-------------|-------------|--------------|
 | S_fa | GREEN | **RED** mad=0 | GREEN | GREEN | GREEN | GREEN | GREEN | GREEN | GREEN | GREEN | GREEN |
 | S_mul_mat | GREEN | GREEN | **RED** abs≈2.4e-7 ulp=5 | GREEN | GREEN | GREEN | GREEN | GREEN | GREEN | GREEN | GREEN |
@@ -99,7 +97,6 @@ Env (fail-closed for ubatch):
 | `L_float_tile` | **yes (soft)** — no GREEN↔RED flip, but OFF **worsens** residual ulp 8→10729 and ubatch mad | no | do not drop without Mode B |
 | `L_mm_min` | undecided on tip−1 | no | no flip; residual/ubatch still RED same |
 | `L_fusion_cb` | undecided | no | `S_cb_fusion` stays GREEN with OFF (this host) |
-| `L_moe_view_add` | undecided | no | `S_moe_out` stays GREEN with OFF (this host / shapes) |
 | `L_size_swa_ub` | unit only (`S_iswa_unit`) | no | ubatch mad **unchanged** (master `n_ubatch` still ∝ub for 256↔512@b=512) |
 | `L_iswa_pads` | unit only | no | same as size_swa for ubatch |
 | `L_shared_kv` | undecided | no | audit gate always sees API in tree |
@@ -136,7 +133,6 @@ Env (fail-closed for ubatch):
 
 ### Table B — master+1 (lever ON alone). Cell = verdict (+ numeric / Δ vs master when meaningful)
 
-| suite | master | L_fa_tile | L_no_mv_ext | L_float_tile | L_mm_min | L_fusion_cb | L_moe_view_add | L_size_swa_ub | L_iswa_pads | L_shared_kv | L_swa_hwm_log |
 |-------|--------|-----------|-------------|--------------|----------|-------------|----------------|--------------|-------------|-------------|--------------|
 | S_fa | RED | **GREEN** | RED | RED | RED | RED | RED | RED | RED | RED | RED |
 | S_mul_mat | RED abs≈2.4e-7 ulp=5 | RED same | **GREEN** abs=0 | RED same | RED same | RED same | RED same | RED same | RED same | RED same | RED same |
@@ -160,7 +156,6 @@ Env (fail-closed for ubatch):
 | `L_float_tile` | — (still RED) | residual ulp 10735→**8**; c2pf16 4.70→**0.255**; c2pq8/c2p also better | **KEEP (soft)** — severity only |
 | `L_mm_min` | — | no flip / no mad Δ | undecided (no alone value here) |
 | `L_fusion_cb` | — | cb already GREEN on master | no alone need on this host |
-| `L_moe_view_add` | — | moe already GREEN on master | no alone need on this host |
 | `L_size_swa_ub` | — | iswa fails 4→1 still RED; **ubatch mad unchanged** | not sufficient alone for 066.17 |
 | `L_iswa_pads` | — | no alone GREEN; ubatch (=) | not sufficient alone |
 | `L_shared_kv` | — | b1 still MISSING alone | needs tip combo / other deps |

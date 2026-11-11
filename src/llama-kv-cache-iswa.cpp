@@ -44,6 +44,14 @@ static uint32_t task066_resolve_swa_headroom(uint32_t n_swa_headroom) {
     return locked;
 }
 
+uint32_t llama_kv_cache_iswa_calc_block_pad(uint32_t n_ubatch) {
+    if (n_ubatch == 0) {
+        throw std::runtime_error("n_ubatch == 0; SWA block_pad requires n_ubatch > 0");
+    }
+    // H-SWA-1/1b: one module (>= ubatch and multiple of 256).
+    return GGML_PAD(n_ubatch, 256u);
+}
+
 uint32_t llama_kv_cache_iswa_calc_swa_headroom(uint32_t n_batch, uint32_t n_ubatch) {
     if (n_ubatch == 0) {
         throw std::runtime_error("n_ubatch == 0; SWA size_swa headroom requires n_ubatch > 0");
@@ -55,6 +63,11 @@ uint32_t llama_kv_cache_iswa_calc_swa_headroom(uint32_t n_batch, uint32_t n_ubat
     // Ablation master-like: headroom = live n_ubatch only (∝ub; 066.18 lever).
     (void) n_batch;
     return n_ubatch;
+#elif defined(TASK066_ENABLE_H_SWA_1)
+    // TASK-069 H-SWA-1b: headroom = block_pad = PAD256(n_ubatch).
+    // Outer-only H-SWA-1 was NO_EFFECT (…032102Z); Cell C MATCH needs headroom∝ub.
+    (void) n_batch;
+    return llama_kv_cache_iswa_calc_block_pad(n_ubatch);
 #else
     // TASK-066.17 (restore 066.13 C2 KEEP): headroom from -b only.
     // Equal -b + differing -ub ⇒ identical size_swa (ubatch bit-exact).
@@ -71,14 +84,18 @@ uint32_t llama_kv_cache_iswa_calc_size_swa(
         uint32_t n_seq_max,
         bool     unified,
         bool     swa_full,
-        uint32_t n_swa_headroom) {
+        uint32_t n_swa_headroom,
+        uint32_t outer_pad) {
     if (swa_full) {
         return size_base;
+    }
+    if (outer_pad == 0) {
+        throw std::runtime_error("outer_pad == 0; SWA size_swa outer align requires outer_pad > 0");
     }
     // TASK-066.5 (ideas): windowed SWA; n_swa_eff aligned to TurboQuant block (128).
     // Product headroom = PAD128(n_batch) from calc_swa_headroom (066.17 / 066.13 KEEP).
     // Optional TASK066_SIZE_SWA_HEADROOM overrides for R&D only.
-    // Outer pad = 256 (FA get_n_kv / ggml#17037 graph pad).
+    // Outer pad: product 256; H-SWA-1 uses PAD256(n_ubatch) from caller.
     // TASK-066.12 P1: compute window in uint64 to avoid uint32 wrap.
     n_swa_headroom = task066_resolve_swa_headroom(n_swa_headroom);
     uint32_t n_swa_eff = n_swa;
@@ -98,9 +115,16 @@ uint32_t llama_kv_cache_iswa_calc_size_swa(
     }
     const uint32_t swa_window = (uint32_t) swa_window_64;
     const uint32_t raw = std::min(size_base, swa_window + n_swa_headroom);
-    // Outer pad 256: align ring to FA n_kv pad (not TurboQuant 128 alone).
-    constexpr uint32_t k_size_swa_outer_pad = 256;
-    return GGML_PAD(raw, k_size_swa_outer_pad);
+#ifdef TASK066_ENABLE_H_BUF_1
+    // H-BUF-1: one outer_pad of ring slack past PAD(raw). ub512@1536 was slack=0.
+    // Fail-closed if raw+outer_pad would wrap uint32 (should not under product ctx).
+    if (raw > UINT32_MAX - outer_pad) {
+        throw std::runtime_error("size_swa H-BUF-1: raw + outer_pad overflows uint32");
+    }
+    return GGML_PAD(raw + outer_pad, outer_pad);
+#else
+    return GGML_PAD(raw, outer_pad);
+#endif
 }
 
 //
@@ -118,6 +142,7 @@ llama_kv_cache_iswa::llama_kv_cache_iswa(
                  uint32_t   kv_size,
                  uint32_t   n_seq_max,
                  uint32_t   n_swa_headroom,
+                 uint32_t   size_swa_outer_pad,
                  uint32_t   n_pad,
            llama_memory_t   mem_other,
     const layer_filter_cb & filter,
@@ -127,7 +152,7 @@ llama_kv_cache_iswa::llama_kv_cache_iswa(
                      void * kv_stream_phase_arena,
                      size_t kv_stream_maximum_pool_bytes) :
     llama_kv_cache_iswa(model, model.hparams, type_k, type_v, v_trans, offload, swa_full, unified,
-            kv_size, n_seq_max, n_swa_headroom, n_pad, mem_other, filter, reuse, share,
+            kv_size, n_seq_max, n_swa_headroom, size_swa_outer_pad, n_pad, mem_other, filter, reuse, share,
             kv_stream_stage_bytes, kv_stream_phase_arena, kv_stream_maximum_pool_bytes) {
 }
 
@@ -143,6 +168,7 @@ llama_kv_cache_iswa::llama_kv_cache_iswa(
                  uint32_t   kv_size,
                  uint32_t   n_seq_max,
                  uint32_t   n_swa_headroom,
+                 uint32_t   size_swa_outer_pad,
                  uint32_t   n_pad,
            llama_memory_t   mem_other,
     const layer_filter_cb & filter,
@@ -177,13 +203,15 @@ llama_kv_cache_iswa::llama_kv_cache_iswa(
     }
 
     const uint32_t size_swa = llama_kv_cache_iswa_calc_size_swa(
-            size_base, hparams.n_swa, n_seq_max, unified, swa_full, n_swa_headroom);
+            size_base, hparams.n_swa, n_seq_max, unified, swa_full, n_swa_headroom,
+            size_swa_outer_pad);
 
     LLAMA_LOG_INFO("%s: creating non-SWA KV cache, size = %u cells\n", __func__, size_base);
-    LLAMA_LOG_INFO("%s: size_swa calc: n_swa=%u headroom=%u (product=PAD128(n_batch)) "
-                   "unified=%d swa_full=%d → size_swa=%u (n_swa_eff pad %d; outer pad 256)\n",
+    // WARN: product-measure captures verbosity=3; INFO size_swa lines were dropped from stamps.
+    LLAMA_LOG_WARN("%s: size_swa calc: n_swa=%u headroom=%u "
+                   "unified=%d swa_full=%d -> size_swa=%u (n_swa_eff pad %d; outer_pad=%u)\n",
             __func__, hparams.n_swa, n_swa_headroom, (int) unified, (int) swa_full,
-            size_swa, TURBO_KV_BLOCK_SIZE);
+            size_swa, TURBO_KV_BLOCK_SIZE, size_swa_outer_pad);
 
     llama_memory_t mem_other_base = nullptr;
     if (mem_other) {

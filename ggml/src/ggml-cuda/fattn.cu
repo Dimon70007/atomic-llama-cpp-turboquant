@@ -3116,17 +3116,26 @@ static best_fattn_kernel ggml_cuda_get_best_fattn_kernel(const int device, const
 #else
     const bool can_use_vector_kernel = Q->ne[0] <= 256 && Q->ne[0] % 64 == 0 && Q->ne[0] != 192 && K->ne[1] % FATTN_KQ_STRIDE == 0;
 #endif
+#if !defined(TASK066_DISABLE_FA_TILE) && !defined(GGML_USE_HIP)
+    GGML_UNUSED(can_use_vector_kernel); // KEEP pin skips N-gated VEC on CUDA
+#endif
 
 #ifdef GGML_USE_HIP
+#ifdef TASK066_DISABLE_FA_TILE
     // Prefer inline-dequant VEC for small quantized-KV batches. D=512 is limited
     // to the decode-only q8_0 K instances above; larger batches use TILE/MMA.
     if ((ggml_is_quantized(K->type) || ggml_is_quantized(V->type)) && can_use_vector_kernel && Q->ne[1] <= 8) {
         return BEST_FATTN_KERNEL_VEC;
     }
+#endif // TASK066_DISABLE_FA_TILE
 #endif // GGML_USE_HIP
 
     // If Turing tensor cores are available, use them:
     if (turing_mma_available(cc) && Q->ne[0] != 40 && Q->ne[0] != 72) {
+#ifndef TASK066_DISABLE_FA_TILE
+        // TASK-069 B1: pin MMA_F16 across Q->ne[1] (no N-gated VEC).
+        return BEST_FATTN_KERNEL_MMA_F16;
+#else
         if (can_use_vector_kernel) {
             if (!ggml_is_quantized(K->type) && !ggml_is_quantized(V->type)) {
                 if (cc >= GGML_CUDA_CC_ADA_LOVELACE && Q->ne[1] == 1 && Q->ne[3] == 1 && !(gqa_ratio > 4 && K->ne[1] >= 8192)) {
@@ -3148,6 +3157,7 @@ static best_fattn_kernel ggml_cuda_get_best_fattn_kernel(const int device, const
             }
         }
         return BEST_FATTN_KERNEL_MMA_F16;
+#endif // TASK066_DISABLE_FA_TILE
     }
 
     const int ncols2_max = Q->ne[0] == 320 ? 32 : ((Q->ne[0] == 576 || Q->ne[0] == 640 || Q->ne[0] == 192) ? 16 : 8);
@@ -3157,6 +3167,15 @@ static best_fattn_kernel ggml_cuda_get_best_fattn_kernel(const int device, const
     }
 
     if (volta_mma_available(cc) && Q->ne[0] != 40 && Q->ne[0] != 72) {
+#ifndef TASK066_DISABLE_FA_TILE
+        // TASK-069 B1 / Metal always-tile analogue on Volta (V100):
+        // Legacy: N*gqa<=2 → VEC, else ≤16 → TILE → N=1 golden vs N≥3 TILE drift.
+        // Pin TILE for the mid-batch band so all N share one reduction family.
+        if (Q->ne[1] * gqa_ratio_eff <= 16) {
+            return BEST_FATTN_KERNEL_TILE;
+        }
+        return BEST_FATTN_KERNEL_MMA_F16;
+#else
         if (can_use_vector_kernel && Q->ne[1] * gqa_ratio_eff <= 2) {
             return BEST_FATTN_KERNEL_VEC;
         }
@@ -3164,10 +3183,12 @@ static best_fattn_kernel ggml_cuda_get_best_fattn_kernel(const int device, const
             return BEST_FATTN_KERNEL_TILE; // On Volta tensor cores are only faster for sufficiently large matrices.
         }
         return BEST_FATTN_KERNEL_MMA_F16;
+#endif // TASK066_DISABLE_FA_TILE
     }
 
     // TQ: RDNA4 fast path for TurboQuant cache types — prefer VEC for quantized K/V at small q-cols
     if (amd_wmma_available(cc) && GGML_CUDA_CC_IS_RDNA4(cc) && gqa_opt_applies && Q->ne[0] <= 128 && Q->ne[0] != 40 && Q->ne[0] != 72) {
+#ifdef TASK066_DISABLE_FA_TILE
         if (can_use_vector_kernel) {
             if (!ggml_is_quantized(K->type) && !ggml_is_quantized(V->type)) {
                 if (Q->ne[1] == 1) {
@@ -3181,6 +3202,7 @@ static best_fattn_kernel ggml_cuda_get_best_fattn_kernel(const int device, const
                 }
             }
         }
+#endif // TASK066_DISABLE_FA_TILE
         int gqa_ratio_eff_rdna4 = 1;
         const int ncols2_max_rdna4 = (Q->ne[0] == 576 || Q->ne[0] == 640) ? 16 : 8;
         while (gqa_ratio % (2*gqa_ratio_eff_rdna4) == 0 && gqa_ratio_eff_rdna4 < ncols2_max_rdna4) {
@@ -3211,6 +3233,7 @@ static best_fattn_kernel ggml_cuda_get_best_fattn_kernel(const int device, const
     }
 
     // If there are no tensor cores available, use the generic tile kernel:
+#ifdef TASK066_DISABLE_FA_TILE
     if (can_use_vector_kernel) {
         if (!ggml_is_quantized(K->type) && !ggml_is_quantized(V->type)) {
             if (Q->ne[1] == 1) {
@@ -3224,6 +3247,7 @@ static best_fattn_kernel ggml_cuda_get_best_fattn_kernel(const int device, const
             }
         }
     }
+#endif // TASK066_DISABLE_FA_TILE
     return BEST_FATTN_KERNEL_TILE;
 }
 
@@ -3271,6 +3295,9 @@ void ggml_cuda_flash_attn_ext(ggml_backend_cuda_context & ctx, ggml_tensor * dst
     // graph-rotated (src/llama-graph.cpp) and the FA output is inverse-rotated there, so this
     // path does NO inline FWHT and NO src swap. GGML_TURBO_MMA_FUSED=0 falls straight through
     // to the original VEC dispatch (kill-switch).
+    //
+    // TASK-069 B1 (FA_TILE KEEP): skip this N-gated early-out so turbo shapes use the pinned
+    // get_best path (same family for N=1..8). Ablation DISABLE_FA_TILE restores fused gate.
     {
         const ggml_tensor * Q = dst->src[0];
         const ggml_tensor * K = dst->src[1];
@@ -3278,7 +3305,12 @@ void ggml_cuda_flash_attn_ext(ggml_backend_cuda_context & ctx, ggml_tensor * dst
         const int cc = ggml_cuda_info().devices[ggml_cuda_get_device()].cc;
         const bool turbo_matched = (K->type == V->type &&
             (K->type == GGML_TYPE_TURBO4_0 || K->type == GGML_TYPE_TURBO3_0 || K->type == GGML_TYPE_TURBO2_0));
-        if (ggml_cuda_turbo_mma_fused() && turbo_matched
+#ifdef TASK066_DISABLE_FA_TILE
+        const bool allow_turbo_fused = true;
+#else
+        const bool allow_turbo_fused = false;
+#endif
+        if (allow_turbo_fused && ggml_cuda_turbo_mma_fused() && turbo_matched
                 && Q->ne[1] <= 4 && V->ne[0] == Q->ne[0] && turing_mma_available(cc)) {
             if (Q->ne[0] == 128) {
                 switch (K->type) {
@@ -3304,7 +3336,35 @@ void ggml_cuda_flash_attn_ext(ggml_backend_cuda_context & ctx, ggml_tensor * dst
         }
     }
 
-    switch (ggml_cuda_get_best_fattn_kernel(ggml_cuda_get_device(), dst)) {
+    const best_fattn_kernel best = ggml_cuda_get_best_fattn_kernel(ggml_cuda_get_device(), dst);
+    {
+        const char * dispatch_log = getenv("GGML_CUDA_FA_DISPATCH");
+        if (dispatch_log && dispatch_log[0] == '1') {
+            const ggml_tensor * Q = dst->src[0];
+            const ggml_tensor * K = dst->src[1];
+            const ggml_tensor * V = dst->src[2];
+            const char * path = "none";
+            switch (best) {
+                case BEST_FATTN_KERNEL_TILE:    path = "tile"; break;
+                case BEST_FATTN_KERNEL_VEC:     path = "vec"; break;
+                case BEST_FATTN_KERNEL_MMA_F16: path = "mma_f16"; break;
+                case BEST_FATTN_KERNEL_NONE:    path = "none"; break;
+            }
+            fprintf(stderr,
+                    "GGML_CUDA_FA_DISPATCH: path=%s ne00=%lld ne01=%lld K=%s V=%s fa_tile_keep=%d\n",
+                    path,
+                    (long long) Q->ne[0], (long long) Q->ne[1],
+                    ggml_type_name(K->type), ggml_type_name(V->type),
+#ifdef TASK066_DISABLE_FA_TILE
+                    0
+#else
+                    1
+#endif
+            );
+        }
+    }
+
+    switch (best) {
         case BEST_FATTN_KERNEL_NONE:
             GGML_ABORT("fatal error");
         case BEST_FATTN_KERNEL_TILE:

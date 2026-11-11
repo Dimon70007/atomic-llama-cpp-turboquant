@@ -2231,12 +2231,34 @@ ggml_tensor * llama_model::get_rope_factors(const llama_cparams & cparams, int i
 }
 
 // Product SWA headroom = PAD128(n_batch) (066.17 / 066.13 KEEP; ⊥ub under equal -b).
+// With TASK066_ENABLE_H_SWA_1: H-SWA-1b headroom = PAD256(n_ubatch).
 static uint32_t llama_swa_headroom_product(const llama_cparams & cparams) {
     const uint32_t headroom = llama_kv_cache_iswa_calc_swa_headroom(cparams.n_batch, cparams.n_ubatch);
+#ifdef TASK066_ENABLE_H_SWA_1
+    LLAMA_LOG_WARN(
+            "%s: H-SWA-1b SWA n_swa_headroom = %u (block_pad=PAD256(n_ubatch=%u); n_batch=%u)\n",
+            __func__, headroom, cparams.n_ubatch, cparams.n_batch);
+#else
     LLAMA_LOG_INFO(
             "%s: SWA n_swa_headroom = %u (PAD128(n_batch=%u); n_ubatch=%u telemetry only)\n",
             __func__, headroom, cparams.n_batch, cparams.n_ubatch);
+#endif
     return headroom;
+}
+
+// Product size_swa outer pad.
+// H-SWA-1c (TASK066_ENABLE_H_SWA_1): keep FA outer 256; headroom alone uses block_pad.
+// (H-SWA-1b used outer=block_pad → cross @35 not MATCH; Cell C MATCH needs outer 256.)
+static uint32_t llama_swa_outer_pad_product(const llama_cparams & cparams) {
+#ifdef TASK066_ENABLE_H_SWA_1
+    LLAMA_LOG_WARN(
+            "%s: H-SWA-1c size_swa outer_pad = 256 (FA pad; headroom=PAD256(n_ubatch=%u))\n",
+            __func__, cparams.n_ubatch);
+    return 256;
+#else
+    (void) cparams;
+    return 256;
+#endif
 }
 
 llama_memory_i * llama_model::create_memory(const llama_memory_params & params, const llama_cparams & cparams) const {
@@ -2362,6 +2384,7 @@ llama_memory_i * llama_model::create_memory(const llama_memory_params & params, 
                             cparams.n_ctx_seq,
                             cparams.n_seq_max,
                             /* n_swa_headroom */ llama_swa_headroom_product(cparams), // max(ub, b/4)
+                            /* size_swa_outer_pad */ llama_swa_outer_pad_product(cparams),
                             1,
                             nullptr,
                             filter_mtp,
@@ -2405,6 +2428,7 @@ llama_memory_i * llama_model::create_memory(const llama_memory_params & params, 
                             cparams.n_ctx_seq,
                             cparams.n_seq_max,
                             /* n_swa_headroom */ llama_swa_headroom_product(cparams), // max(ub, b/4)
+                            /* size_swa_outer_pad */ llama_swa_outer_pad_product(cparams),
                             1,
                             nullptr,
                             nullptr,
@@ -2483,6 +2507,7 @@ llama_memory_i * llama_model::create_memory(const llama_memory_params & params, 
                             /* attn_swa_full     */ params.swa_full,
                             /* attn_kv_size      */ cparams.n_ctx_seq,
                             /* attn_n_swa_headroom */ llama_swa_headroom_product(cparams), // max(ub, b/4)
+                            /* attn_size_swa_outer_pad */ llama_swa_outer_pad_product(cparams),
                             /* attn_n_pad        */ 1,
                             /* recurrent_type_r  */ GGML_TYPE_F32,
                             /* recurrent_type_s  */ GGML_TYPE_F32,
@@ -2601,6 +2626,7 @@ llama_memory_i * llama_model::create_memory(const llama_memory_params & params, 
                                     cparams.n_ctx_seq,
                                     cparams.n_seq_max,
                                     /* n_swa_headroom */ llama_swa_headroom_product(cparams), // max(ub, b/4)
+                            /* size_swa_outer_pad */ llama_swa_outer_pad_product(cparams),
                                     1,
                                     mem_other,
                                     filter,
@@ -2621,6 +2647,7 @@ llama_memory_i * llama_model::create_memory(const llama_memory_params & params, 
                                     cparams.n_ctx_seq,
                                     cparams.n_seq_max,
                                     /* n_swa_headroom */ llama_swa_headroom_product(cparams), // max(ub, b/4)
+                            /* size_swa_outer_pad */ llama_swa_outer_pad_product(cparams),
                                     1,
                                     nullptr,
                                     filter,
