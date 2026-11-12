@@ -13,7 +13,7 @@ import json
 import os
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, Final
 
 import yaml
 
@@ -43,11 +43,22 @@ MTP_KEYS = (
     "spec_draft_p_min",
 )
 
-ALLOWED_PROFILES = {
-    "gemma4_26b_a4b_mtp_cuda_e2e": "mtp",
-    "gemma4_26b_a4b_mtp_cuda_nomtp_e2e": "nomtp",
-    # legacy alias from parent-repo mis-place (still accepted)
-    "gemma4_26b_a4b_mtp_cuda_task069_suite": "mtp",
+# profile -> (arm, knob_family)
+# metal_parity: ST-069.4 primary fixtures (align with Metal TASK-066 host/KV).
+# v100_product: archived LiteLLM dual-V100 product knobs (explicit TASK069_SUITE_CONFIG).
+ALLOWED_PROFILES: Final[dict[str, tuple[str, str]]] = {
+    "gemma4_26b_a4b_mtp_cuda_e2e": ("mtp", "metal_parity"),
+    "gemma4_26b_a4b_mtp_cuda_nomtp_e2e": ("nomtp", "metal_parity"),
+    "gemma4_26b_a4b_mtp_cuda_v100_product_e2e": ("mtp", "v100_product"),
+    "gemma4_26b_a4b_mtp_cuda_nomtp_v100_product_e2e": ("nomtp", "v100_product"),
+    # legacy alias from parent-repo mis-place (still accepted as metal_parity)
+    "gemma4_26b_a4b_mtp_cuda_task069_suite": ("mtp", "metal_parity"),
+}
+
+# Fail-closed locks per family: quant_v, batch, ubatch.
+FAMILY_LOCKS: Final[dict[str, tuple[str, str, str]]] = {
+    "metal_parity": ("turbo4", "2048", "512"),
+    "v100_product": ("turbo3", "8192", "2048"),
 }
 
 DEFAULT_SUITE_CONFIG = (
@@ -71,25 +82,32 @@ def load_suite_config(path: Path) -> dict[str, str]:
     if not isinstance(raw, dict):
         raise SystemExit(f"FAIL: suite config must be a mapping: {path}")
     profile = str(raw.get("profile") or "").strip()
-    arm = ALLOWED_PROFILES.get(profile)
-    if arm is None:
+    meta = ALLOWED_PROFILES.get(profile)
+    if meta is None:
         raise SystemExit(
             "FAIL: unexpected profile "
             f"{profile!r} (want one of {sorted(ALLOWED_PROFILES)}; refusing silent)"
         )
+    arm, family = meta
     for key in HOST_KEYS:
         _req(raw, key)
     fa = _req(raw, "flash_attn").lower()
     if fa not in ("on", "1", "true"):
         raise SystemExit(f"FAIL: flash_attn must be on for CUDA suite (got {fa!r})")
+
+    want_qv, want_b, want_u = FAMILY_LOCKS[family]
     qv = _req(raw, "quant_v")
-    if qv != "turbo3":
-        raise SystemExit(f"FAIL: quant_v must be turbo3 for CUDA SSOT suite (got {qv!r})")
+    if qv != want_qv:
+        raise SystemExit(
+            f"FAIL: quant_v must be {want_qv} for profile family {family!r} "
+            f"(profile={profile!r}, got {qv!r})"
+        )
     qb = _req(raw, "batch")
     qu = _req(raw, "ubatch")
-    if qb != "8192" or qu != "2048":
+    if qb != want_b or qu != want_u:
         raise SystemExit(
-            f"FAIL: batch/ubatch must be 8192/2048 for CUDA SSOT suite (got {qb}/{qu})"
+            f"FAIL: batch/ubatch must be {want_b}/{want_u} for profile family "
+            f"{family!r} (profile={profile!r}, got {qb}/{qu})"
         )
 
     if arm == "mtp":
@@ -108,6 +126,7 @@ def load_suite_config(path: Path) -> dict[str, str]:
         "TASK069_SUITE_PROFILE": "cuda",
         "TASK069_SUITE_CONFIG": str(path.resolve()),
         "TASK069_SUITE_ARM": arm,
+        "TASK069_SUITE_FAMILY": family,
         "TASK069_BATCH": qb,
         "TASK069_UBATCH": qu,
         "TASK069_CTK": _req(raw, "quant_k"),
@@ -158,7 +177,7 @@ def main() -> int:
     p.add_argument(
         "--config",
         default=str(DEFAULT_SUITE_CONFIG),
-        help="path to tests/fixtures/task069/cuda-mtp.reference.yaml (or nomtp)",
+        help="path to tests/fixtures/task069/cuda-mtp.reference.yaml (or nomtp / v100-product)",
     )
     p.add_argument("--export-shell", action="store_true", help="print export KEY=VAL lines")
     p.add_argument("--print-json", action="store_true", help="print knobs JSON")

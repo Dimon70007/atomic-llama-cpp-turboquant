@@ -1,10 +1,17 @@
-# TASK-066.18 — compile-time ablation levers (tip ON by default).
-# Disable tip behavior (= restore master-like path at that site) via:
-#   -DTASK066_DISABLE_FA_TILE=ON
-#   …or batch: -DTASK066_ABLATION_DISABLE="FA_TILE;NO_MV_EXT;…"
+# TASK-066.18 — compile-time ablation levers.
 #
-# Orchestrator builds per cell with a dedicated BUILD_DIR + these flags.
-# Metal shaders need the same macros via XC_FLAGS (FLOAT_TILE).
+# Default ship policy (all backends: Metal, CUDA, …): only 066.18 KEEP levers ON.
+#   ON:  FA_TILE, NO_MV_EXT, FLOAT_TILE, SIZE_SWA_UB, ISWA_PADS
+#   OFF: MM_MIN, FUSION_CB, MOE_VIEW_ADD, SHARED_KV, SWA_HWM_LOG
+# (Combined verdict TASK-066.18 Mode A+B — not "all 10 tip paths".)
+#
+# Full tip (all 10 ON) for research / suite ON cell:
+#   -DTASK066_ABLATION_DISABLE=   (empty)  or  -DTASK066_TIP_KEEP_ALL=ON
+#
+# A/B OFF / tip−1 (separate BUILD_DIR):
+#   -DTASK066_ABLATION_DISABLE="FA_TILE;NO_MV_EXT;…"
+#
+# Metal shaders get the same macros via XC_FLAGS (FLOAT_TILE).
 
 set(_TASK066_LEVER_IDS
     FA_TILE
@@ -19,16 +26,36 @@ set(_TASK066_LEVER_IDS
     SWA_HWM_LOG
 )
 
-set(TASK066_ABLATION_DISABLE "" CACHE STRING
-    "Semicolon-separated TASK-066.18 lever short ids to disable (FA_TILE,NO_MV_EXT,...)")
+# Non-KEEP ids → DISABLE by default (leaves the 5 KEEP ON).
+set(_TASK066_DEFAULT_DISABLE "MM_MIN;FUSION_CB;MOE_VIEW_ADD;SHARED_KV;SWA_HWM_LOG")
+
+option(TASK066_TIP_KEEP_ALL "TASK-066.18: enable all tip levers (ignore default DISABLE)" OFF)
+
+set(TASK066_ABLATION_DISABLE "${_TASK066_DEFAULT_DISABLE}" CACHE STRING
+    "Semicolon-separated lever ids to disable (default=${_TASK066_DEFAULT_DISABLE}; empty or TIP_KEEP_ALL=ON = all tip ON)")
 
 foreach(_id IN LISTS _TASK066_LEVER_IDS)
     option(TASK066_DISABLE_${_id} "TASK-066.18: disable tip lever ${_id} (master-like)" OFF)
 endforeach()
 
-# Batch string expands into individual options (fail-closed on unknown ids).
-if(TASK066_ABLATION_DISABLE)
-    foreach(_tok IN LISTS TASK066_ABLATION_DISABLE)
+# Resolve effective DISABLE list.
+set(_TASK066_EFFECTIVE_DISABLE "${TASK066_ABLATION_DISABLE}")
+if(TASK066_TIP_KEEP_ALL)
+    set(_TASK066_EFFECTIVE_DISABLE "")
+    message(STATUS "TASK-066.18: TASK066_TIP_KEEP_ALL=ON → all tip levers ON")
+endif()
+
+# Reset per-lever CACHE, then apply DISABLE (avoids stale ablation bits).
+foreach(_id IN LISTS _TASK066_LEVER_IDS)
+    set(TASK066_DISABLE_${_id} OFF CACHE BOOL
+        "TASK-066.18: disable tip lever ${_id} (master-like)" FORCE)
+endforeach()
+
+if(_TASK066_EFFECTIVE_DISABLE STREQUAL "")
+    message(STATUS "TASK-066.18: tip KEEP ALL ON (all 10 levers)")
+else()
+    message(STATUS "TASK-066.18: DISABLE=${_TASK066_EFFECTIVE_DISABLE}")
+    foreach(_tok IN LISTS _TASK066_EFFECTIVE_DISABLE)
         string(STRIP "${_tok}" _tok)
         if(_tok STREQUAL "")
             continue()
@@ -37,16 +64,27 @@ if(TASK066_ABLATION_DISABLE)
         foreach(_id IN LISTS _TASK066_LEVER_IDS)
             if(_tok STREQUAL "${_id}")
                 set(_known TRUE)
-                set(TASK066_DISABLE_${_id} ON CACHE BOOL "TASK-066.18: disable tip lever ${_id}" FORCE)
+                set(TASK066_DISABLE_${_id} ON CACHE BOOL
+                    "TASK-066.18: disable tip lever ${_id}" FORCE)
                 break()
             endif()
         endforeach()
         if(NOT _known)
+            string(REPLACE ";" ", " _TASK066_KNOWN_CSV "${_TASK066_LEVER_IDS}")
             message(FATAL_ERROR
                 "TASK066_ABLATION_DISABLE: unknown lever id '${_tok}' "
-                "(known: ${_TASK066_LEVER_IDS})")
+                "(known: ${_TASK066_KNOWN_CSV})")
         endif()
     endforeach()
+    # Report which levers remain ON after DISABLE apply.
+    set(_TASK066_KEEP_ON "")
+    foreach(_id IN LISTS _TASK066_LEVER_IDS)
+        if(NOT TASK066_DISABLE_${_id})
+            list(APPEND _TASK066_KEEP_ON "${_id}")
+        endif()
+    endforeach()
+    string(REPLACE ";" " " _TASK066_KEEP_ON_MSG "${_TASK066_KEEP_ON}")
+    message(STATUS "TASK-066.18: KEEP ON = ${_TASK066_KEEP_ON_MSG}")
 endif()
 
 set(TASK066_ABLATION_CXX_DEFINES "")

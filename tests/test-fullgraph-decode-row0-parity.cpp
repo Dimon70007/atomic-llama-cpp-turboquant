@@ -23,7 +23,8 @@
 // Product-knob lock:
 //   Default: Metal TASK-066 / gemma4_26b_a4b_mtp_metal.yaml (b=2048 ub=512 ctv=turbo4 …).
 //   CUDA TASK-069: set TASK069_SUITE_PROFILE=cuda + TASK069_* from
-//     tests/fixtures/task069/cuda-mtp.reference.yaml (b=8192 ub=2048 ctv=turbo3 …).
+//     tests/fixtures/task069/cuda-mtp.reference.yaml (Metal-parity b=2048 ub=512 ctv=turbo4 …).
+//     V100 product archive: cuda-mtp-v100-product.reference.yaml (b=8192 ub=2048 ctv=turbo3).
 //   Only context_size (-c / TASK066_CTX) may differ for speed; draft n_max/p_min
 //   N/A (no draft GGUF in this localizer). Do not hand-wave other knobs via EXTRA_ARGS.
 //

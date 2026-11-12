@@ -5,13 +5,15 @@ Metal TASK-066 fixture stays: [TASK-066-ladder-fixture.md](TASK-066-ladder-fixtu
 
 **Reference YAMLs (this fork):**
 
-| Arm | File |
-|-----|------|
-| MTP | [fixtures/task069/cuda-mtp.reference.yaml](fixtures/task069/cuda-mtp.reference.yaml) |
-| nomtp | [fixtures/task069/cuda-nomtp.reference.yaml](fixtures/task069/cuda-nomtp.reference.yaml) |
+| Role | Arm | File | Profile |
+|------|-----|------|---------|
+| **Primary (ST-069.4 Metal-parity)** | MTP | [fixtures/task069/cuda-mtp.reference.yaml](fixtures/task069/cuda-mtp.reference.yaml) | `…_mtp_cuda_e2e` |
+| **Primary** | nomtp | [fixtures/task069/cuda-nomtp.reference.yaml](fixtures/task069/cuda-nomtp.reference.yaml) | `…_nomtp_e2e` |
+| Archive (V100 product knobs) | MTP | [fixtures/task069/cuda-mtp-v100-product.reference.yaml](fixtures/task069/cuda-mtp-v100-product.reference.yaml) | `…_v100_product_e2e` |
+| Archive | nomtp | [fixtures/task069/cuda-nomtp-v100-product.reference.yaml](fixtures/task069/cuda-nomtp-v100-product.reference.yaml) | `…_nomtp_v100_product_e2e` |
 
-**Upstream product (LiteLLM, parent repo):** `configs/gemma4_26b_a4b_mtp_cuda.yaml` / `…_nomtp.yaml`.  
-E2E YAMLs copy those knobs; only `context_size` is reduced for test speed (`230000` → `8192`).
+**Upstream product (LiteLLM, parent repo):** `configs/gemma4_26b_a4b_mtp_cuda.yaml` / `…_nomtp.yaml` — **unchanged** by ST-069.4 (`8192/2048`, `turbo3`).  
+Primary e2e fixtures align with Metal TASK-066 host/KV for apples-to-apples; product ship-check uses archived v100-product YAML via `TASK069_SUITE_CONFIG=…`.
 
 ## Model
 
@@ -31,20 +33,45 @@ Same as TASK-066 ladder ([fixtures/task066/](fixtures/task066/)):
 | In-repo | `tests/fixtures/task069/task066_pierre_dolokhov_duel_2k.prompt.txt` → `../task066/…` |
 | Override | `TASK066_PROMPT=` |
 
-## Host / graph (CUDA product lock)
+## Host / graph — primary Metal-parity (default)
 
 | Knob | Value | Notes |
 |------|-------|-------|
-| `batch` / `ubatch` | **8192 / 2048** | CUDA SSOT (Metal was 2048/512) |
-| `quant_k` / `quant_v` | **q8_0 / turbo3** | CUDA SSOT (Metal turbo4) |
-| `tensor_split` | `1.05,0.95` | dual V100 |
-| `main_gpu` | `1` | |
-| `cache_ram` | `16384` | product; do not silent-default to Metal `0`/`4096` |
-| `ctx_checkpoints` | `128` | |
-| `threads` / `threads_batch` | `16` / `16` | |
+| `batch` / `ubatch` | **2048 / 512** | Metal ladder / product parity |
+| `quant_k` / `quant_v` | **q8_0 / turbo4** | Metal parity (was CUDA product turbo3) |
+| `context_size` (e2e) | **3072** | Metal ladder; ~2k duel + predict |
+| `cache_ram` | **4096** | Metal product (ladder CLI often `0`) |
+| `ctx_checkpoints` | **32** | Metal product |
+| `threads` / `threads_batch` | **4 / 4** | Metal parity |
+| `tensor_split` | `1.05,0.95` | dual V100 (CUDA-only) |
+| `main_gpu` | `1` | CUDA-only |
 | `flash_attn` | `on` | |
-| `context_size` (e2e) | `8192` | product `230000`; raise if FIXTURE_FAIL |
+| sampling | `1.0` / `0.95` / `64` | CUDA product sampling (not Metal ladder greedy) |
 | MTP | `draft-mtp` `n_max=2` `p_min=0.95` | forbidden: MTP-off / `p_min=1` |
+
+## Host / graph — archive V100 product
+
+| Knob | Value |
+|------|-------|
+| `batch` / `ubatch` | **8192 / 2048** |
+| `quant_v` | **turbo3** |
+| `context_size` | **8192** (product `230000` reduced for speed) |
+| `cache_ram` / `ctx_checkpoints` | **16384** / **128** |
+| `threads` | **16 / 16** |
+| `tensor_split` / `main_gpu` | same as primary |
+
+Select via:
+
+```bash
+TASK069_SUITE_CONFIG=tests/fixtures/task069/cuda-mtp-v100-product.reference.yaml \
+  ./tests/run-task069-cuda-e2e.sh suite
+```
+
+Loader fail-closed (`tests/task069_suite_knobs.py`): family `metal_parity` requires turbo4+2048/512; `v100_product` requires turbo3+8192/2048.
+
+## Honest expectation
+
+Knob align helps fullgraph / ubatch / ladders compare Metal vs CUDA. Unit micros (`fa` / `longctx` / `moe` / …) may stay RED on CUDA even after parity if Metal-only FA/mm ports remain inert.
 
 ## Runner (preferred)
 
