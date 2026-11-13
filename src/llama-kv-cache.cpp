@@ -1666,35 +1666,6 @@ void llama_kv_cache::apply_ubatch(const slot_info & sinfo, const llama_ubatch & 
 
         head = sinfo.idxs[s].back() + 1;
     }
-
-#ifndef TASK066_DISABLE_SWA_HWM_LOG
-    // SWA occupancy telemetry: allocated size_swa vs peak used_max_p1 / used cells.
-    // Log on high-water growth so operators can verify headroom is minimal-but-sufficient.
-    if (n_swa > 0) {
-        uint32_t peak_used_max = 0;
-        uint32_t peak_used     = 0;
-        for (uint32_t s = 0; s < sinfo.n_stream(); ++s) {
-            const auto & cells = v_cells[sinfo.strm[s]];
-            peak_used_max = std::max(peak_used_max, cells.used_max_p1());
-            peak_used     = std::max(peak_used, cells.get_used());
-        }
-        if (peak_used_max > swa_used_hwm) {
-            swa_used_hwm = peak_used_max;
-            const uint32_t size = get_size();
-            LLAMA_LOG_INFO(
-                    "%s: SWA occupancy hwm: used_max_p1=%u used=%u size_swa=%u n_swa=%u "
-                    "slack=%d (FA n_kv pads used→≥256 independently)\n",
-                    __func__, swa_used_hwm, peak_used, size, n_swa,
-                    (int) size - (int) swa_used_hwm);
-            if (swa_used_hwm >= size) {
-                LLAMA_LOG_WARN(
-                        "%s: SWA ring full (used_max_p1=%u size=%u); risk of overwrite / "
-                        "model errors — raise -ub headroom or check pad128 sizing\n",
-                        __func__, swa_used_hwm, size);
-            }
-        }
-    }
-#endif
 }
 
 size_t llama_kv_cache::cell_ext_io_size() const {

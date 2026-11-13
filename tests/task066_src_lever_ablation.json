@@ -4,38 +4,118 @@
   "master_sha": "0fe16d12d",
   "tip_sha_note": "tip = working tree / HEAD; product build often build-task066-cb-ws",
   "levers": [
-    {"id": "L_fa_tile", "cmake": "FA_TILE", "kind": "compile", "note": "FA always-tile + nsg pin"},
-    {"id": "L_no_mv_ext", "cmake": "NO_MV_EXT", "kind": "compile", "note": "dead mul_mv_ext gate"},
-    {"id": "L_float_tile", "cmake": "FLOAT_TILE", "kind": "compile", "note": "q8_0/iq4_xs float tiles + smem"},
-    {"id": "L_mm_min", "cmake": "MM_MIN", "kind": "compile", "note": "env policy + MoE id min 8 vs master 32"},
-    {"id": "L_fusion_cb", "cmake": "FUSION_CB", "kind": "compile", "note": "fusion_max CB snap"},
-    {"id": "L_moe_view_add", "cmake": "MOE_VIEW_ADD", "kind": "compile", "note": "always view+ADD MoE out"},
-    {"id": "L_iswa_pads", "cmake": "ISWA_PADS", "kind": "compile", "note": "n_swa pad128"},
-    {"id": "L_shared_kv", "cmake": "SHARED_KV", "kind": "compile", "note": "memory_has_shared_cells"},
-    {"id": "L_swa_hwm_log", "cmake": "SWA_HWM_LOG", "kind": "compile", "note": "occupancy HWM telemetry"}
+    {
+      "id": "L_fa_tile",
+      "cmake": "FA_TILE",
+      "kind": "compile",
+      "note": "FA always-tile + nsg pin"
+    },
+    {
+      "id": "L_no_mv_ext",
+      "cmake": "NO_MV_EXT",
+      "kind": "compile",
+      "note": "dead mul_mv_ext gate"
+    },
+    {
+      "id": "L_float_tile",
+      "cmake": "FLOAT_TILE",
+      "kind": "compile",
+      "note": "q8_0/iq4_xs float tiles + smem"
+    },
+    {
+      "id": "L_iswa_pads",
+      "cmake": "ISWA_PADS",
+      "kind": "compile",
+      "note": "n_swa pad128"
+    }
   ],
   "suites": [
-    {"id": "S_fa", "kind": "suite", "suite": "fa"},
-    {"id": "S_mul_mat", "kind": "suite", "suite": "mul-mat"},
-    {"id": "S_mul_mat_res", "kind": "suite", "suite": "mul-mat-residual"},
-    {"id": "S_cb_fusion", "kind": "suite", "suite": "cb-fusion"},
-    {"id": "S_moe_out", "kind": "suite", "suite": "moe-out"},
-    {"id": "S_iswa_unit", "kind": "bin", "bin": "test-iswa-size-swa"},
-    {"id": "S_ub_c2", "kind": "ubatch", "diag": "", "note": "full corners stop at first RED; prefer diag rows for product"},
-    {"id": "S_ub_c3", "kind": "ubatch", "diag": "", "skip_default": true, "note": "covered by full ubatch when diag unset; skip in default matrix"},
-    {"id": "S_ub_c2pf16", "kind": "ubatch", "diag": "c1p-f16"},
-    {"id": "S_ub_c2pq8", "kind": "ubatch", "diag": "c1p-q8"},
-    {"id": "S_ub_c2p", "kind": "ubatch", "diag": "c1p"},
-    {"id": "S_b1_shared", "kind": "suite", "suite": "b1-shared-kv"}
+    {
+      "id": "S_fa",
+      "kind": "suite",
+      "suite": "fa"
+    },
+    {
+      "id": "S_mul_mat",
+      "kind": "suite",
+      "suite": "mul-mat"
+    },
+    {
+      "id": "S_mul_mat_res",
+      "kind": "suite",
+      "suite": "mul-mat-residual"
+    },
+    {
+      "id": "S_cb_fusion",
+      "kind": "suite",
+      "suite": "cb-fusion"
+    },
+    {
+      "id": "S_moe_out",
+      "kind": "suite",
+      "suite": "moe-out"
+    },
+    {
+      "id": "S_iswa_unit",
+      "kind": "bin",
+      "bin": "test-iswa-size-swa"
+    },
+    {
+      "id": "S_ub_c2",
+      "kind": "ubatch",
+      "diag": "",
+      "note": "full corners stop at first RED; prefer diag rows for product"
+    },
+    {
+      "id": "S_ub_c3",
+      "kind": "ubatch",
+      "diag": "",
+      "skip_default": true,
+      "note": "covered by full ubatch when diag unset; skip in default matrix"
+    },
+    {
+      "id": "S_ub_c2pf16",
+      "kind": "ubatch",
+      "diag": "c1p-f16"
+    },
+    {
+      "id": "S_ub_c2pq8",
+      "kind": "ubatch",
+      "diag": "c1p-q8"
+    },
+    {
+      "id": "S_ub_c2p",
+      "kind": "ubatch",
+      "diag": "c1p"
+    },
+    {
+      "id": "S_b1_shared",
+      "kind": "suite",
+      "suite": "b1-shared-kv"
+    }
   ],
   "modes": {
-    "A": {"name": "tip-1", "baseline": "tip_all_on", "action": "disable_one"},
-    "B": {"name": "master+1", "baseline": "master_all_off", "action": "enable_one"}
+    "A": {
+      "name": "tip-1",
+      "baseline": "tip_all_on",
+      "action": "disable_one"
+    },
+    "B": {
+      "name": "master+1",
+      "baseline": "master_all_off",
+      "action": "enable_one"
+    }
   },
   "default_matrix": {
-    "modes": ["A", "B"],
+    "modes": [
+      "A",
+      "B"
+    ],
     "include_controls": true,
-    "skip_suite_ids": ["S_ub_c2", "S_ub_c3"]
+    "skip_suite_ids": [
+      "S_ub_c2",
+      "S_ub_c3"
+    ]
   },
   "cmake_base": [
     "-DCMAKE_BUILD_TYPE=Release",

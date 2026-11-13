@@ -9,7 +9,6 @@ ggml_add_backend_library(ggml-metal
                          ggml-metal-device.m
                          ggml-metal-device.cpp
                          ggml-metal-common.cpp
-                         ggml-metal-fusion.cpp
                          ggml-metal-context.m
                          ggml-metal-ops.cpp
                          ggml-metal-moe-cache.mm

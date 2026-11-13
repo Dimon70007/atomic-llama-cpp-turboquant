@@ -28,12 +28,7 @@ _ALL_CMAKE_SHORT: Final[tuple[str, ...]] = (
     "FA_TILE",
     "NO_MV_EXT",
     "FLOAT_TILE",
-    "MM_MIN",
-    "FUSION_CB",
-    "MOE_VIEW_ADD",
     "ISWA_PADS",
-    "SHARED_KV",
-    "SWA_HWM_LOG",
 )
 
 _RE_TG: Final[re.Pattern[str]] = re.compile(

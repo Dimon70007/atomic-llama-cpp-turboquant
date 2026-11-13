@@ -5,7 +5,6 @@
 
 #import "ggml-metal-impl.h"
 #import "ggml-metal-common.h"
-#import "ggml-metal-fusion.h"
 #import "ggml-metal-ops.h"
 
 #import <Foundation/Foundation.h>
@@ -467,9 +466,6 @@ enum ggml_status ggml_metal_graph_compute(ggml_metal_t ctx, struct ggml_cgraph *
 
         // main thread encodes [0, cb_start[0]); extra CB i encodes [cb_start[i], cb_start[i+1])
         {
-#ifdef TASK066_DISABLE_FUSION_CB
-            // Master-like: uniform n_nodes_0 / n_nodes_per_cb (no fusion_max snap).
-            // Encode contract: main [0, cb_start[0]); extra i [cb_start[i], cb_start[i+1]).
             const int n_nodes_0 = MIN(n_main, gf->n_nodes);
             const int n_nodes_1 = gf->n_nodes - n_nodes_0;
             const int n_per_cb  = n_cb > 0 ? (n_nodes_1 + n_cb - 1) / n_cb : 0;
@@ -477,20 +473,6 @@ enum ggml_status ggml_metal_graph_compute(ggml_metal_t ctx, struct ggml_cgraph *
                 ctx->cb_start[cb_idx] = n_nodes_0 + MIN(cb_idx * n_per_cb, n_nodes_1);
             }
             ctx->cb_start[n_cb] = gf->n_nodes;
-#else
-            const int n_rest   = gf->n_nodes - MIN(n_main, gf->n_nodes);
-            const int n_per_cb = n_cb > 0 ? (n_rest + n_cb - 1) / n_cb : 0;
-
-            int i = 0;
-            for (int cb_idx = 0; cb_idx < n_cb; ++cb_idx) {
-                const int target = MIN(n_main + cb_idx * n_per_cb, gf->n_nodes);
-                while (i < target) {
-                    i += ggml_metal_fusion_max(gf, i);
-                }
-                ctx->cb_start[cb_idx] = MIN(i, gf->n_nodes);
-            }
-            ctx->cb_start[n_cb] = gf->n_nodes;
-#endif
         }
 
         if (ctx->capture_compute >= 0) {

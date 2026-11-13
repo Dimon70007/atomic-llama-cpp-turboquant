@@ -93,9 +93,6 @@ case "${SUITE}" in
   fullgraph)
     run_one fullgraph "${REPO_ROOT}/tests/run-task066-fullgraph-corners.sh"
     ;;
-  cb-fusion)
-    run_one cb-fusion "${REPO_ROOT}/tests/run-task066-cb-fusion-corners.sh"
-    ;;
   b1-shared-kv)
     run_one b1-shared-kv "${REPO_ROOT}/tests/run-task066-b1-shared-kv-audit.sh"
     ;;

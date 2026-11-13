@@ -1,15 +1,15 @@
 # TASK-066.18 — compile-time ablation levers.
 #
-# Default ship policy (all backends: Metal, CUDA, …): only 066.18 KEEP levers ON.
+# Only the 066.18 KEEP levers remain. The five default-OFF levers (MM_MIN, FUSION_CB,
+# MOE_VIEW_ADD, SHARED_KV, SWA_HWM_LOG) were deleted in TASK-071 along with their fork
+# code, so upstream behaviour is unconditional and there is nothing left to disable.
 #   ON:  FA_TILE, NO_MV_EXT, FLOAT_TILE, ISWA_PADS
-#   OFF: MM_MIN, FUSION_CB, MOE_VIEW_ADD, SHARED_KV, SWA_HWM_LOG
-# (Combined verdict TASK-066.18 Mode A+B — not "all 10 tip paths".)
 #
 # TASK-071: SIZE_SWA_UB lever REMOVED. It selected the TASK-066.17 headroom formula
 # (PAD128(n_batch)) which was rejected: it dropped -ub from size_swa to green ubatch
 # tests and made -b a quality lever. size_swa headroom is now upstream-only (n_ubatch).
 #
-# Full tip (all 9 remaining ON) for research / suite ON cell:
+# All tip levers ON by default (empty DISABLE list):
 #   -DTASK066_ABLATION_DISABLE=   (empty)  or  -DTASK066_TIP_KEEP_ALL=ON
 #
 # A/B OFF / tip−1 (separate BUILD_DIR):
@@ -21,16 +21,10 @@ set(_TASK066_LEVER_IDS
     FA_TILE
     NO_MV_EXT
     FLOAT_TILE
-    MM_MIN
-    FUSION_CB
-    MOE_VIEW_ADD
     ISWA_PADS
-    SHARED_KV
-    SWA_HWM_LOG
 )
 
-# Non-KEEP ids → DISABLE by default (leaves the 5 KEEP ON).
-set(_TASK066_DEFAULT_DISABLE "MM_MIN;FUSION_CB;MOE_VIEW_ADD;SHARED_KV;SWA_HWM_LOG")
+set(_TASK066_DEFAULT_DISABLE "")
 
 option(TASK066_TIP_KEEP_ALL "TASK-066.18: enable all tip levers (ignore default DISABLE)" OFF)
 
@@ -55,7 +49,7 @@ foreach(_id IN LISTS _TASK066_LEVER_IDS)
 endforeach()
 
 if(_TASK066_EFFECTIVE_DISABLE STREQUAL "")
-    message(STATUS "TASK-066.18: tip KEEP ALL ON (9 levers; SIZE_SWA_UB removed in TASK-071)")
+    message(STATUS "TASK-066.18: tip KEEP ALL ON (4 levers; five default-OFF levers deleted in TASK-071)")
 else()
     message(STATUS "TASK-066.18: DISABLE=${_TASK066_EFFECTIVE_DISABLE}")
     foreach(_tok IN LISTS _TASK066_EFFECTIVE_DISABLE)

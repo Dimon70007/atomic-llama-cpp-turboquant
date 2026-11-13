@@ -158,12 +158,7 @@ def _configure_and_build(
         "FA_TILE",
         "NO_MV_EXT",
         "FLOAT_TILE",
-        "MM_MIN",
-        "FUSION_CB",
-        "MOE_VIEW_ADD",
         "ISWA_PADS",
-        "SHARED_KV",
-        "SWA_HWM_LOG",
     ):
         if short not in disabled:
             cmake_cmd.append(f"-DTASK066_DISABLE_{short}=OFF")

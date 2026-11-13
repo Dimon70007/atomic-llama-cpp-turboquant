@@ -71,8 +71,6 @@ public:
 
     bool get_can_shift() const override;
 
-    bool get_has_shared_cells() const override;
-
     void clear(bool data) override;
 
     bool seq_rm  (llama_seq_id seq_id,                              llama_pos p0, llama_pos p1) override;
@@ -187,7 +185,10 @@ uint32_t llama_kv_cache_iswa_calc_swa_headroom(uint32_t n_ubatch);
 //
 //   n_swa_eff = ceil(n_swa / n_swa_align) * n_swa_align
 //   needed    = n_swa_eff * (unified ? n_seq_max : 1) + n_swa_headroom
-//   size_swa  = min(PAD512(min(size_base, needed)), size_base)
+//   size_swa  = min(PAD512(min(size_base, needed)), size_base)   <- 512 is fork-only
+//
+// The 512 outer pad deviates from upstream PAD256 on purpose: it collapses -ub 256
+// and 512 onto the same ring. Above -ub 512 both agree.
 //
 // swa_full gives size_base directly. n_swa_align is the KV block size from
 // llama_kv_cache_iswa_kv_block_size(). Used by the ctor and test-iswa-size-swa.

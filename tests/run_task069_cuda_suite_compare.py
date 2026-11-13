@@ -102,14 +102,6 @@ SUITE_INVENTORY: list[dict[str, Any]] = [
         "needs_model": False,
     },
     {
-        "id": "cb-fusion",
-        "suite": "cb-fusion",
-        "kind": "script",
-        "script": "run-task066-cb-fusion-corners.sh",
-        "metal_hardcoded": True,  # target only with GGML_METAL=ON
-        "needs_model": False,
-    },
-    {
         "id": "mul-mat-residual",
         "suite": "mul-mat-residual",
         "kind": "script",

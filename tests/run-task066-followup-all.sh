@@ -89,8 +89,7 @@ run_part() {
   return 0
 }
 
-# Track A
-run_part cb-fusion "${REPO_ROOT}/tests/run-task066-cb-fusion-corners.sh"
+# Track A — cb-fusion runner deleted with the fusion module (TASK-071)
 
 # Track B
 run_part b1-shared-kv "${REPO_ROOT}/tests/run-task066-b1-shared-kv-audit.sh"

@@ -13,21 +13,23 @@
     "mtp_tg_min": 30.0,
     "median_runs": 3
   },
-  "mm_min_pin": {
-    "note": "Document tip DEFAULT; do not flip between cells.",
-    "env": "GGML_METAL_MUL_MM_MIN",
-    "require_explicit": false
-  },
   "levers": [
-    {"id": "L_fa_tile", "cmake": "FA_TILE"},
-    {"id": "L_no_mv_ext", "cmake": "NO_MV_EXT"},
-    {"id": "L_float_tile", "cmake": "FLOAT_TILE"},
-    {"id": "L_mm_min", "cmake": "MM_MIN"},
-    {"id": "L_fusion_cb", "cmake": "FUSION_CB"},
-    {"id": "L_moe_view_add", "cmake": "MOE_VIEW_ADD"},
-    {"id": "L_iswa_pads", "cmake": "ISWA_PADS"},
-    {"id": "L_shared_kv", "cmake": "SHARED_KV"},
-    {"id": "L_swa_hwm_log", "cmake": "SWA_HWM_LOG"}
+    {
+      "id": "L_fa_tile",
+      "cmake": "FA_TILE"
+    },
+    {
+      "id": "L_no_mv_ext",
+      "cmake": "NO_MV_EXT"
+    },
+    {
+      "id": "L_float_tile",
+      "cmake": "FLOAT_TILE"
+    },
+    {
+      "id": "L_iswa_pads",
+      "cmake": "ISWA_PADS"
+    }
   ],
   "cells": [
     {
@@ -37,19 +39,33 @@
     },
     {
       "id": "C1_fa",
-      "enabled_levers": ["L_fa_tile"]
+      "enabled_levers": [
+        "L_fa_tile"
+      ]
     },
     {
       "id": "C2_fa_mv",
-      "enabled_levers": ["L_fa_tile", "L_no_mv_ext"]
+      "enabled_levers": [
+        "L_fa_tile",
+        "L_no_mv_ext"
+      ]
     },
     {
       "id": "C3_fa_mv_float",
-      "enabled_levers": ["L_fa_tile", "L_no_mv_ext", "L_float_tile"]
+      "enabled_levers": [
+        "L_fa_tile",
+        "L_no_mv_ext",
+        "L_float_tile"
+      ]
     },
     {
       "id": "C4_keep4",
-      "enabled_levers": ["L_fa_tile", "L_no_mv_ext", "L_float_tile", "L_size_swa_ub"]
+      "enabled_levers": [
+        "L_fa_tile",
+        "L_no_mv_ext",
+        "L_float_tile",
+        "L_size_swa_ub"
+      ]
     },
     {
       "id": "C_final_tip",

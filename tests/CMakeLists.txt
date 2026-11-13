@@ -443,22 +443,7 @@ llama_build(test-fullgraph-decode-row0-parity.cpp)
 # Runner: tests/run-task066-ubatch-s8-s1024-corners.sh (requires TASK066_MODEL+CTX; not in SUITE=all)
 llama_build(test-ubatch-s8-s1024-row0-parity.cpp)
 
-# TASK-066.9 A2 — CPU unit for mul_mm vs mul_mv policy / rem cross-kernel hazard (no GPU).
-# Header-only: ggml/src/ggml-metal/ggml-metal-mul-mm-policy.h
-# Runner: SUITE=mul-mat-residual (runs first) or bin alone.
-add_executable(test-metal-mul-mm-policy test-metal-mul-mm-policy.cpp)
-add_test(NAME test-metal-mul-mm-policy COMMAND test-metal-mul-mm-policy)
 
-# TASK-066 follow-up / #31688 — Metal CB split vs ADD fusion (CPU unit; no GPU).
-# Needs ggml_metal_fusion_max from static ggml-metal. Expected RED until
-# ../../tasks/task066-hist/TASK-066-cb-fusion-followup.md High/Medium. Runner: SUITE=cb-fusion.
-if (GGML_METAL AND NOT GGML_BACKEND_DL)
-    add_executable(test-metal-cb-fusion test-metal-cb-fusion.cpp)
-    target_link_libraries(test-metal-cb-fusion PRIVATE ggml)
-    # ggml-metal-fusion.h includes ggml-impl.h
-    target_include_directories(test-metal-cb-fusion PRIVATE ${CMAKE_SOURCE_DIR}/ggml/src)
-    add_test(NAME test-metal-cb-fusion COMMAND test-metal-cb-fusion)
-endif()
 
 llama_build_and_test(test-model-load-cancel.cpp LABEL "model")
 llama_build_and_test(test-autorelease.cpp       LABEL "model")

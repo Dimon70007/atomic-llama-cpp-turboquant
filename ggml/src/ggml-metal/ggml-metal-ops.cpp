@@ -7,33 +7,11 @@
 #include "ggml-metal-impl.h"
 #include "ggml-metal-common.h"
 #include "ggml-metal-device.h"
-#include "ggml-metal-mul-mm-policy.h"
 
 #include <cassert>
 #include <algorithm>
 #include <limits>
 #include <cmath>
-#include <cstdio>
-#include <cstdlib>
-
-// TASK-066.7 / 066.9 A2 / 066.15→revert: env-gated break-even around
-// GGML_METAL_MUL_MM_MIN_DEFAULT (DEFAULT=8 upstream-like: N<=8 on mul_mv).
-// Policy helpers: ggml-metal-mul-mm-policy.h (unit-tested). TQ / special cases stay below.
-static int ggml_metal_mul_mm_batch_min(void) {
-    static int cached = -1;
-    if (cached >= 0) {
-        return cached;
-    }
-    cached = GGML_METAL_MUL_MM_MIN_DEFAULT;
-    const char * env = getenv("GGML_METAL_MUL_MM_MIN");
-    if (env && env[0] != '\0') {
-        const int v = atoi(env);
-        if (v >= 0) {
-            cached = v;
-        }
-    }
-    return cached;
-}
 
 static ggml_metal_buffer_id ggml_metal_get_buffer_id(const ggml_tensor * t) {
     if (!t) {
@@ -2462,16 +2440,7 @@ int ggml_metal_op_mul_mat(ggml_metal_op_t ctx, int idx) {
 
     // find the break-even point where the matrix-matrix kernel becomes more efficient compared
     // to the matrix-vector kernel
-    // TASK-066.7 float-tile; product DEFAULT=8 (upstream). N<=8 → mul_mv so jinja
-    // ub=8 rem+full share a kernel (A2 hole was min=7, not 8). MTP verify N<=4
-    // also stays on mul_mv (no N=1 vs {2,3,4} cross-kernel). Override via env:
-    // GGML_METAL_MUL_MM_MIN=0 → all-mm (Phase B); =1 → A2-style rem close + MTP hazard.
-#ifdef TASK066_DISABLE_MM_MIN
     const int ne11_mm_min = 8;
-#else
-    const int ne11_mm_min = ggml_metal_mul_mm_batch_min();
-#endif
-
 
     // first try to use small-batch mat-mv kernels
     // these should be efficient for BS [2, ~8]
@@ -2589,7 +2558,7 @@ int ggml_metal_op_mul_mat(ggml_metal_op_t ctx, int idx) {
         // for now the matrix-matrix multiplication kernel only works on A14+/M1+ SoCs
         // AMD GPU and older A-chips will reuse matrix-vector multiplication kernel
         props_dev->has_simdgroup_mm && ne00 >= 64 &&
-        (ggml_metal_mul_mm_ne11_uses_mm(ne11, ne11_mm_min) ||
+        (ne11 > ne11_mm_min ||
          op->src[0]->type == GGML_TYPE_TQ3_1S || op->src[0]->type == GGML_TYPE_TQ4_1S)) {
         // Route all TQ weights through the rotated mul_mm path.
         // Gemma4 decode still degrades on the fused mul_mv kernel even after the broader
@@ -2806,20 +2775,9 @@ int ggml_metal_op_mul_mat_id(ggml_metal_op_t ctx, int idx) {
     // to the matrix-vector kernel
     // ne20 = n_used_experts
     // ne21 = n_rows (batch size)
-    // TASK-066.7/B: MoE shares GGML_METAL_MUL_MM_MIN. TQ still forces mul_mm_id (min=1).
-    // Ablation OFF: master MoE id threshold 32 (non-TQ).
-#ifdef TASK066_DISABLE_MM_MIN
     const int ne21_mm_id_min = is_tq_weight ? 1 : 32;
-#else
-    const int ne21_mm_id_min = is_tq_weight ? 1 : ggml_metal_mul_mm_batch_min();
-#endif
 
-    if (props_dev->has_simdgroup_mm && ne00 >= 64 &&
-#ifdef TASK066_DISABLE_MM_MIN
-        (ne21 >= ne21_mm_id_min)) {
-#else
-        ggml_metal_mul_mm_ne11_uses_mm(ne21, ne21_mm_id_min)) {
-#endif
+    if (props_dev->has_simdgroup_mm && ne00 >= 64 && (ne21 >= ne21_mm_id_min)) {
 
         // some Metal matrix data types require aligned pointers
         // ref: https://developer.apple.com/metal/Metal-Shading-Language-Specification.pdf (Table 2.5)
