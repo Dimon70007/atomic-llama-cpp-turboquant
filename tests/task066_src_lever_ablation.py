@@ -161,7 +161,6 @@ def _configure_and_build(
         "MM_MIN",
         "FUSION_CB",
         "MOE_VIEW_ADD",
-        "SIZE_SWA_UB",
         "ISWA_PADS",
         "SHARED_KV",
         "SWA_HWM_LOG",

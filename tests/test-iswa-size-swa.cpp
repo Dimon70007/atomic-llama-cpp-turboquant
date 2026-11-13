@@ -38,26 +38,27 @@ void expect_u32(const char * name, uint32_t got, uint32_t want) {
 int main() {
     printf("ISWA size_swa unit (CPU; no model) — PAD128(n_batch) + pad256\n");
 
-    // --- headroom helper (066.17: from -b only) ---
-    // Product YAML batch=2048 ub=512 -> PAD128(2048)=2048.
+    // --- headroom helper (upstream: from -ub) ---
+    // TASK-071: the -b-based variant (PAD128(n_batch)) was removed as a failed idea.
+    // headroom is now the live n_ubatch: exactly the room one ubatch needs to write.
     expect_u32(
             "headroom_product_2048_512",
             llama_kv_cache_iswa_calc_swa_headroom(2048, 512),
-            2048);
-    // Same -b, different -ub -> identical headroom (C2p class).
+            512);
+    // Same -b, different -ub -> headroom follows -ub (upstream semantics).
     expect_u32(
             "headroom_c2p_b512_ub256",
             llama_kv_cache_iswa_calc_swa_headroom(512, 256),
-            512);
+            256);
     expect_u32(
             "headroom_c2p_b512_ub512",
             llama_kv_cache_iswa_calc_swa_headroom(512, 512),
             512);
-    // Idiot / C3: headroom tracks -b (not ub).
+    // -b is irrelevant to sizing; only -ub matters.
     expect_u32(
             "headroom_idiot_1536_8",
             llama_kv_cache_iswa_calc_swa_headroom(1536, 8),
-            1536);
+            8);
     expect_u32(
             "headroom_idiot_1536_1536",
             llama_kv_cache_iswa_calc_swa_headroom(1536, 1536),
@@ -65,12 +66,12 @@ int main() {
     expect_u32(
             "headroom_c3_1280_8",
             llama_kv_cache_iswa_calc_swa_headroom(1280, 8),
-            1280);
-    // ub=8 b=8 -> PAD128(8)=128.
+            8);
+    // No PAD128 on headroom any more: ub=8 -> 8, not 128.
     expect_u32(
             "headroom_tiny_8_8",
             llama_kv_cache_iswa_calc_swa_headroom(8, 8),
-            128);
+            8);
 
     // Gemma4-shaped: n_swa=1024 (already multiple of 128).
     const uint32_t n_swa = 1024;

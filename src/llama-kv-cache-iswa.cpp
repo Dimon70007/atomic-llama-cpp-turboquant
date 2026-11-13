@@ -51,18 +51,19 @@ uint32_t llama_kv_cache_iswa_calc_swa_headroom(uint32_t n_batch, uint32_t n_ubat
     if (n_batch == 0) {
         throw std::runtime_error("n_batch == 0; SWA size_swa headroom requires n_batch > 0");
     }
-#ifdef TASK066_DISABLE_SIZE_SWA_UB
-    // Ablation master-like: headroom = live n_ubatch only (∝ub; 066.18 lever).
+    // Upstream (llama.cpp master / fork dev): headroom is the live n_ubatch, i.e. exactly
+    // the room one ubatch needs to write.
+    //
+    // TASK-071: the TASK-066.17 variant (headroom = PAD128(n_batch)) was removed. It made
+    // size_swa independent of -ub by dropping -ub from the formula, which greened the
+    // ubatch-invariance tests without addressing why different ubatches differed, and in
+    // exchange turned -b into a quality lever (measured: raising -b shifted pre-sampling
+    // logprobs by ~0.09 and flipped greedy argmax). The idea was rejected, not defaulted.
+    //
+    // n_batch stays in the signature (and is validated) because callers and the unit test
+    // pass it; it is deliberately not used for sizing.
     (void) n_batch;
     return n_ubatch;
-#else
-    // TASK-066.17 (restore 066.13 C2 KEEP): headroom from -b only.
-    // Equal -b + differing -ub ⇒ identical size_swa (ubatch bit-exact).
-    // Safe: llama guarantees n_ubatch <= n_batch, so one-write room holds.
-    // PAD128 = TurboQuant KV block. n_ubatch only fail-closed above (⊥ub sizing).
-    (void) n_ubatch;
-    return GGML_PAD(n_batch, (uint32_t) TURBO_KV_BLOCK_SIZE);
-#endif
 }
 
 uint32_t llama_kv_cache_iswa_calc_size_swa(
@@ -98,19 +99,14 @@ uint32_t llama_kv_cache_iswa_calc_size_swa(
     }
     const uint32_t swa_window = (uint32_t) swa_window_64;
     const uint32_t raw = std::min(size_base, swa_window + n_swa_headroom);
-    // TASK-071 ST-4 step 2: outer pad 256 -> 1024.
+    // Upstream outer pad: align the ring to the FA n_kv pad (ggml#17037). 256 is a graph
+    // stability / performance choice, not a kernel correctness requirement.
     //
-    // Rationale: with pad 256 the ring size tracks n_ubatch (1280/1536/2048/3072/5120),
-    // so changing -ub changes how many SWA cells stay resident, which shifts attention
-    // inputs and flips greedy argmax. Padding to 1024 makes the ring -ub-invariant over
-    // the product range (256..1024 -> 2048) so the ring no longer depends on a knob that
-    // is supposed to be throughput-only.
-    //
-    // Cost (must be measured, not assumed): a larger ring holds more cells -> more KV RAM,
-    // and possibly different accuracy. 256 was chosen upstream for graph stability /
-    // performance (ggml#17037), not for a documented FA correctness requirement, so 1024
-    // is not required by any kernel contract found in this tree.
-    constexpr uint32_t k_size_swa_outer_pad = 1024;
+    // TASK-071: pads 512 and 1024 were tried and reverted. Measured values at product arms
+    // are already multiples of 512/1024 (1024+PAD128(n_batch) = 3072, 5120), so the larger
+    // pad was a no-op there; with the upstream headroom (n_ubatch) it only collapsed
+    // adjacent sizes (1280 -> 1536) without evidence of a quality benefit. Back to upstream.
+    constexpr uint32_t k_size_swa_outer_pad = 256;
     return GGML_PAD(raw, k_size_swa_outer_pad);
 }
 
