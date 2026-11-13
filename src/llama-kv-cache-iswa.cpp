@@ -98,8 +98,19 @@ uint32_t llama_kv_cache_iswa_calc_size_swa(
     }
     const uint32_t swa_window = (uint32_t) swa_window_64;
     const uint32_t raw = std::min(size_base, swa_window + n_swa_headroom);
-    // Outer pad 256: align ring to FA n_kv pad (not TurboQuant 128 alone).
-    constexpr uint32_t k_size_swa_outer_pad = 256;
+    // TASK-071 ST-4 step 2: outer pad 256 -> 1024.
+    //
+    // Rationale: with pad 256 the ring size tracks n_ubatch (1280/1536/2048/3072/5120),
+    // so changing -ub changes how many SWA cells stay resident, which shifts attention
+    // inputs and flips greedy argmax. Padding to 1024 makes the ring -ub-invariant over
+    // the product range (256..1024 -> 2048) so the ring no longer depends on a knob that
+    // is supposed to be throughput-only.
+    //
+    // Cost (must be measured, not assumed): a larger ring holds more cells -> more KV RAM,
+    // and possibly different accuracy. 256 was chosen upstream for graph stability /
+    // performance (ggml#17037), not for a documented FA correctness requirement, so 1024
+    // is not required by any kernel contract found in this tree.
+    constexpr uint32_t k_size_swa_outer_pad = 1024;
     return GGML_PAD(raw, k_size_swa_outer_pad);
 }
 

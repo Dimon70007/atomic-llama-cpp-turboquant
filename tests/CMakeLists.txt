@@ -155,6 +155,8 @@ llama_build_and_test(test-gdn-ingredient-replay.cpp LABEL "turbo")
 if (NOT WIN32 OR NOT BUILD_SHARED_LIBS)
     # these tests are disabled on Windows because they use internal functions not exported with LLAMA_API (when building with shared libraries)
     llama_build_and_test(test-sampling.cpp)
+    # TASK-071.1: probe-parity sampler semantics (temp=0 + top_p + top_k + seed).
+    llama_build_and_test(test-task071-probe-parity.cpp LABEL "turbo")
     llama_build_and_test(test-reasoning-budget.cpp)
     llama_build_and_test(test-grammar-parser.cpp)
     llama_build_and_test(test-grammar-integration.cpp)
@@ -521,6 +523,9 @@ llama_build_and_test(test-turbo-quant.c LABEL "turbo")
 
 # ISWA size_swa: ideas formula (pad128 + n_ubatch windowed)
 llama_build_and_test(test-iswa-size-swa.cpp)
+# TASK-071 H7: SWA visibility vs ring capacity (CPU; no model).
+llama_build_and_test(test-task071-h7-swa-visibility.cpp LABEL "turbo")
+target_include_directories(test-task071-h7-swa-visibility PRIVATE ${PROJECT_SOURCE_DIR}/src)
 
 if (NOT LLAMA_USE_SYSTEM_GGML)
     # Needs non-public ggml-impl.h
