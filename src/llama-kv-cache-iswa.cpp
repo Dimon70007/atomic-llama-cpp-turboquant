@@ -5,52 +5,27 @@
 #include "llama-model.h"
 
 #include <algorithm>
+#include <cassert>
 #include <cstdint>
-#include <cstdlib>
 #include <stdexcept>
+#include <string>
 
-// TurboQuant KV block size (turbo2/3/4). SWA window must be a multiple so
-// quantized blocks align with cache rotation (ideas/llamacpp_swa_size_calculate.md).
-#ifndef TURBO_KV_BLOCK_SIZE
-#define TURBO_KV_BLOCK_SIZE 128
-#endif
+uint32_t llama_kv_cache_iswa_kv_block_size(ggml_type type_k, ggml_type type_v) {
+    // A rotated block must never straddle the ring eviction boundary, so the ring length
+    // has to be a multiple of the KV block size. Take the coarser of the two types: the
+    // auto-asymmetric rewrite in llama_kv_cache only ever downgrades turbo K to q8_0
+    // (block 32), which is still covered by the turbo block.
+    const uint32_t block_k = (uint32_t) ggml_blck_size(type_k);
+    const uint32_t block_v = (uint32_t) ggml_blck_size(type_v);
 
-// TASK-066.14 R&D override: requires BOTH env vars (avoids poisoning unit tests /
-// leftover shell exports). Unset = product headroom from caller (MAX_UBATCH KEEP).
-static uint32_t task066_resolve_swa_headroom(uint32_t n_swa_headroom) {
-    const char * allow = std::getenv("TASK066_ALLOW_SIZE_SWA_HEADROOM");
-    const char * e = std::getenv("TASK066_SIZE_SWA_HEADROOM");
-    if (!allow || allow[0] != '1') {
-        return n_swa_headroom;
-    }
-    if (!e || !e[0]) {
-        LLAMA_LOG_ERROR("%s: FAIL TASK066_ALLOW_SIZE_SWA_HEADROOM=1 but "
-                        "TASK066_SIZE_SWA_HEADROOM unset\n",
-                        __func__);
-        GGML_ABORT("TASK066_SIZE_SWA_HEADROOM required when ALLOW=1");
-    }
-    char * end = nullptr;
-    const long v = std::strtol(e, &end, 10);
-    if (end == e || *end != '\0' || v < 1 || v > (long) UINT32_MAX) {
-        LLAMA_LOG_ERROR("%s: FAIL TASK066_SIZE_SWA_HEADROOM=%s (need positive int); "
-                        "refusing silent headroom fallback (caller had %u)\n",
-                        __func__, e, n_swa_headroom);
-        GGML_ABORT("invalid TASK066_SIZE_SWA_HEADROOM");
-    }
-    const uint32_t locked = (uint32_t) v;
-    LLAMA_LOG_WARN("%s: DIAG_ONLY TASK066_SIZE_SWA_HEADROOM=%u (caller had %u) — "
-                   "R&D override; unset ALLOW for product KEEP\n",
-                   __func__, locked, n_swa_headroom);
-    return locked;
+    return std::max(block_k, block_v);
 }
 
-uint32_t llama_kv_cache_iswa_calc_swa_headroom(uint32_t n_batch, uint32_t n_ubatch) {
+uint32_t llama_kv_cache_iswa_calc_swa_headroom(uint32_t n_ubatch) {
     if (n_ubatch == 0) {
         throw std::runtime_error("n_ubatch == 0; SWA size_swa headroom requires n_ubatch > 0");
     }
-    if (n_batch == 0) {
-        throw std::runtime_error("n_batch == 0; SWA size_swa headroom requires n_batch > 0");
-    }
+
     // Upstream (llama.cpp master / fork dev): headroom is the live n_ubatch, i.e. exactly
     // the room one ubatch needs to write.
     //
@@ -59,10 +34,6 @@ uint32_t llama_kv_cache_iswa_calc_swa_headroom(uint32_t n_batch, uint32_t n_ubat
     // ubatch-invariance tests without addressing why different ubatches differed, and in
     // exchange turned -b into a quality lever (measured: raising -b shifted pre-sampling
     // logprobs by ~0.09 and flipped greedy argmax). The idea was rejected, not defaulted.
-    //
-    // n_batch stays in the signature (and is validated) because callers and the unit test
-    // pass it; it is deliberately not used for sizing.
-    (void) n_batch;
     return n_ubatch;
 }
 
@@ -72,33 +43,39 @@ uint32_t llama_kv_cache_iswa_calc_size_swa(
         uint32_t n_seq_max,
         bool     unified,
         bool     swa_full,
-        uint32_t n_swa_headroom) {
+        uint32_t n_swa_headroom,
+        uint32_t n_swa_align) {
+    if (n_swa_align == 0) {
+        throw std::runtime_error("n_swa_align == 0; SWA ring alignment requires a positive block size");
+    }
     if (swa_full) {
         return size_base;
     }
-    // TASK-066.5 (ideas): windowed SWA; n_swa_eff aligned to TurboQuant block (128).
-    // Product headroom = PAD128(n_batch) from calc_swa_headroom (066.17 / 066.13 KEEP).
-    // Optional TASK066_SIZE_SWA_HEADROOM overrides for R&D only.
-    // Outer pad = 256 (FA get_n_kv / ggml#17037 graph pad).
-    // TASK-066.12 P1: compute window in uint64 to avoid uint32 wrap.
-    n_swa_headroom = task066_resolve_swa_headroom(n_swa_headroom);
+
     uint32_t n_swa_eff = n_swa;
 #ifndef TASK066_DISABLE_ISWA_PADS
-    if (n_swa % TURBO_KV_BLOCK_SIZE != 0) {
-        n_swa_eff = ((n_swa + TURBO_KV_BLOCK_SIZE - 1) / TURBO_KV_BLOCK_SIZE) * TURBO_KV_BLOCK_SIZE;
-        LLAMA_LOG_WARN("%s: n_swa (%u) is not a multiple of TurboQuant block size (%d), "
+    if (n_swa % n_swa_align != 0) {
+        n_swa_eff = ((n_swa + n_swa_align - 1) / n_swa_align) * n_swa_align;
+        LLAMA_LOG_WARN("%s: n_swa (%u) is not a multiple of the KV block size (%u), "
                        "padding effective SWA size to %u to prevent context drift\n",
-                       __func__, n_swa, TURBO_KV_BLOCK_SIZE, n_swa_eff);
+                       __func__, n_swa, n_swa_align, n_swa_eff);
     }
+#else
+    GGML_UNUSED(n_swa_align);
 #endif
 
+    // TASK-066.12 P1: compute the window in uint64 to avoid uint32 wrap.
     const uint64_t swa_window_64 = (uint64_t) n_swa_eff * (unified ? n_seq_max : 1);
-    if (swa_window_64 + (uint64_t) n_swa_headroom > (uint64_t) UINT32_MAX) {
+    const uint64_t needed_64     = swa_window_64 + (uint64_t) n_swa_headroom;
+    if (needed_64 > (uint64_t) UINT32_MAX) {
+        // Upstream parity: upstream clamps here too. Only reachable with a nonsensical
+        // n_swa / n_seq_max; the result is a full-context SWA cache.
         LLAMA_LOG_WARN("%s: SWA window calculation overflow, clamping to base size\n", __func__);
         return size_base;
     }
-    const uint32_t swa_window = (uint32_t) swa_window_64;
-    const uint32_t raw = std::min(size_base, swa_window + n_swa_headroom);
+
+    const uint32_t raw = (uint32_t) std::min<uint64_t>(size_base, needed_64);
+
     // TASK-071: outer pad 256 -> 512.
     //
     // Upstream pads to 256 for FA graph stability / reuse (ggml#17037), not because a kernel
@@ -108,8 +85,18 @@ uint32_t llama_kv_cache_iswa_calc_size_swa(
     // between those values keeps size_swa identical. TASK-066.14 Exp A/H6 established that
     // an equal size_swa gives GREEN even with unequal decode chunks; unequal size_swa is the
     // causal factor. Cost: 256 cells more at -ub 256, none at 512+.
+    //
+    // Invariance is per band, not global: 512 vs 1024 still give different rings.
     constexpr uint32_t k_size_swa_outer_pad = 512;
-    return GGML_PAD(raw, k_size_swa_outer_pad);
+    static_assert((k_size_swa_outer_pad & (k_size_swa_outer_pad - 1)) == 0,
+            "outer pad must be a power of two: GGML_PAD is a bit mask");
+
+    // Padded in uint64: raw can sit near UINT32_MAX and the +pad-1 would wrap.
+    const uint64_t padded_64 = GGML_PAD((uint64_t) raw, (uint64_t) k_size_swa_outer_pad);
+
+    // size_base is only padded to 256, so PAD512 can overshoot it. The ring cannot hold
+    // more positions than the context provides - clamp instead of allocating dead cells.
+    return (uint32_t) std::min<uint64_t>(padded_64, size_base);
 }
 
 //
@@ -185,14 +172,14 @@ llama_kv_cache_iswa::llama_kv_cache_iswa(
                 __func__, "https://github.com/ggml-org/llama.cpp/pull/13194#issuecomment-2868343055");
     }
 
+    const uint32_t n_swa_align = llama_kv_cache_iswa_kv_block_size(type_k, type_v);
+
     const uint32_t size_swa = llama_kv_cache_iswa_calc_size_swa(
-            size_base, hparams.n_swa, n_seq_max, unified, swa_full, n_swa_headroom);
+            size_base, hparams.n_swa, n_seq_max, unified, swa_full, n_swa_headroom, n_swa_align);
 
     LLAMA_LOG_INFO("%s: creating non-SWA KV cache, size = %u cells\n", __func__, size_base);
-    LLAMA_LOG_INFO("%s: size_swa calc: n_swa=%u headroom=%u (product=PAD128(n_batch)) "
-                   "unified=%d swa_full=%d → size_swa=%u (n_swa_eff pad %d; outer pad 256)\n",
-            __func__, hparams.n_swa, n_swa_headroom, (int) unified, (int) swa_full,
-            size_swa, TURBO_KV_BLOCK_SIZE);
+    LLAMA_LOG_INFO("%s: creating     SWA KV cache, size = %u cells (n_swa = %u, headroom = %u, align = %u)\n",
+            __func__, size_swa, hparams.n_swa, n_swa_headroom, n_swa_align);
 
     llama_memory_t mem_other_base = nullptr;
     if (mem_other) {
@@ -206,21 +193,20 @@ llama_kv_cache_iswa::llama_kv_cache_iswa(
 
     // Block KV streaming: the base cache scales with context length and is
     // the one worth streaming; the SWA cache is window-bounded (small by
-    // construction) and stays always-resident, UNLESS swa_full makes it
-    // full-context-length too (size_swa == size_base), in which case it
-    // needs streaming just as much as the base cache does. Concurrently
-    // streaming both requires the phase arena to support more than one
-    // lease at once, which it doesn't yet (see get_kv_stream_targets() and
-    // the multi-cache streaming plan) - forwarding the same
-    // kv_stream_phase_arena to both here is safe today only because no
-    // caller reaches the swa_full branch with streaming enabled yet.
+    // construction) and stays always-resident. When the ring ends up as long
+    // as the base cache (swa_full, or a context fully covered by the window)
+    // it is full-context-length too and needs streaming just as much.
+    // Concurrently streaming both requires the phase arena to support more
+    // than one lease at once, which it doesn't yet - see get_kv_stream_targets()
+    // and the multi-cache streaming plan. The swa_full case is rejected up
+    // front by llama_kv_stream_config_validate() (swa_full_conflict); the
+    // covered-context case is not reachable in practice because streaming
+    // requires a context far larger than any SWA window.
     kv_base = std::make_unique<llama_kv_cache>(
             model, hparams, type_k, type_v,
             v_trans, offload, unified, size_base, n_seq_max, n_pad,
             0, LLAMA_SWA_TYPE_NONE, mem_other_base, filter_base, reuse, share,
             "", kv_stream_stage_bytes, kv_stream_phase_arena, kv_stream_maximum_pool_bytes);
-
-    LLAMA_LOG_INFO("%s: creating     SWA KV cache, size = %u cells\n", __func__, size_swa);
 
     const bool swa_is_full_length = size_swa == size_base;
     kv_swa = std::make_unique<llama_kv_cache>(
@@ -241,14 +227,13 @@ bool llama_kv_cache_iswa::seq_rm(llama_seq_id seq_id, llama_pos p0, llama_pos p1
     // TASK-066.12 P0: if the trim starts before the SWA window, SWA already
     // rotated those rows away and cannot mirror the base trim. Fail closed
     // before mutating either cache (upstream iSWA semantics).
-    if (seq_id >= 0 && p0 >= 0) {
-        const llama_pos swa_min = kv_swa->seq_pos_min(seq_id);
-        if (swa_min >= 0 && swa_min > p0) {
-            LLAMA_LOG_WARN("%s: cannot remove from pos %d for seq %d: "
-                           "SWA cache starts at %d (window already rotated)\n",
-                           __func__, (int) p0, (int) seq_id, (int) swa_min);
-            return false;
-        }
+    //
+    // This makes seq_rm a two-phase operation for every caller that also owns
+    // another cache: check can_seq_rm() first, mutate second. A caller that
+    // mutates a second cache before calling this one would leave the two
+    // caches disagreeing.
+    if (!can_seq_rm(seq_id, p0, p1)) {
+        return false;
     }
 
     bool res = true;
@@ -257,6 +242,25 @@ bool llama_kv_cache_iswa::seq_rm(llama_seq_id seq_id, llama_pos p0, llama_pos p1
     res = res & kv_swa ->seq_rm(seq_id, p0, p1);
 
     return res;
+}
+
+bool llama_kv_cache_iswa::can_seq_rm(llama_seq_id seq_id, llama_pos p0, llama_pos p1) const {
+    GGML_UNUSED(p1);
+
+    if (seq_id < 0 || p0 < 0) {
+        // "any sequence" or "from the start": removes whole sequences, always removable
+        return true;
+    }
+
+    const llama_pos swa_min = kv_swa->seq_pos_min(seq_id);
+    if (swa_min >= 0 && swa_min > p0) {
+        LLAMA_LOG_WARN("%s: cannot remove from pos %d for seq %d: "
+                       "SWA cache starts at %d (window already rotated)\n",
+                       __func__, (int) p0, (int) seq_id, (int) swa_min);
+        return false;
+    }
+
+    return true;
 }
 
 void llama_kv_cache_iswa::seq_cp(llama_seq_id seq_id_src, llama_seq_id seq_id_dst, llama_pos p0, llama_pos p1) {
@@ -311,18 +315,15 @@ std::vector<llama_kv_stream_target> llama_kv_cache_iswa::get_kv_stream_targets()
 llama_memory_context_ptr llama_kv_cache_iswa::init_batch(llama_batch_allocr & balloc, uint32_t n_ubatch, bool embd_all) {
     GGML_UNUSED(embd_all);
 
-    // first try simple split
-    do {
-        if (!unified) {
-            // requires equal splits, so we skip the simple split
-            break;
-        }
-
+    // Both sub-caches must agree on the split: the context holds one sinfo list
+    // per cache and drives them in lockstep, so unequal sizes are unusable.
+    auto try_split = [&](bool equal, const char * what) -> llama_memory_context_ptr {
         balloc.split_reset();
 
         std::vector<llama_ubatch> ubatches;
         while (true) {
-            auto ubatch = balloc.split_simple(n_ubatch);
+            auto ubatch = equal ? balloc.split_equal(n_ubatch, !unified, 0)
+                                : balloc.split_simple(n_ubatch);
 
             if (ubatch.n_tokens == 0) {
                 break;
@@ -333,71 +334,40 @@ llama_memory_context_ptr llama_kv_cache_iswa::init_batch(llama_batch_allocr & ba
 
         if (balloc.get_n_used() < balloc.get_n_tokens()) {
             // failed to find a suitable split
-            break;
+            return nullptr;
         }
 
         auto sinfos_base = kv_base->prepare(ubatches);
         if (sinfos_base.empty()) {
-            break;
+            return nullptr;
         }
 
         auto sinfos_swa = kv_swa->prepare(ubatches);
         if (sinfos_swa.empty()) {
-            break;
+            return nullptr;
         }
 
         // TASK-066.12 P2: assert is stripped under NDEBUG; mismatch must not
         // build a context with unequal slot infos.
         if (sinfos_base.size() != sinfos_swa.size()) {
-            LLAMA_LOG_WARN("%s: base/swa sinfos size mismatch (%zu vs %zu), "
-                           "retrying with equal split\n",
-                           __func__, sinfos_base.size(), sinfos_swa.size());
-            break;
+            LLAMA_LOG_WARN("%s: base/swa sinfos size mismatch (%zu vs %zu) on %s\n",
+                           __func__, sinfos_base.size(), sinfos_swa.size(), what);
+            return nullptr;
         }
 
         return std::make_unique<llama_kv_cache_iswa_context>(
                 this, std::move(sinfos_base), std::move(sinfos_swa), std::move(ubatches));
-    } while (false);
+    };
 
-    // if it fails, try equal split
-    do {
-        balloc.split_reset();
-
-        std::vector<llama_ubatch> ubatches;
-        while (true) {
-            auto ubatch = balloc.split_equal(n_ubatch, !unified, 0);
-
-            if (ubatch.n_tokens == 0) {
-                break;
-            }
-
-            ubatches.push_back(std::move(ubatch)); // NOLINT
+    // simple split first; it requires equal splits, so non-unified starts at equal
+    if (unified) {
+        if (auto res = try_split(/*equal*/ false, "simple split")) {
+            return res;
         }
-
-        if (balloc.get_n_used() < balloc.get_n_tokens()) {
-            // failed to find a suitable split
-            break;
-        }
-
-        auto sinfos_base = kv_base->prepare(ubatches);
-        if (sinfos_base.empty()) {
-            break;
-        }
-
-        auto sinfos_swa = kv_swa->prepare(ubatches);
-        if (sinfos_swa.empty()) {
-            break;
-        }
-
-        if (sinfos_base.size() != sinfos_swa.size()) {
-            LLAMA_LOG_WARN("%s: base/swa sinfos size mismatch (%zu vs %zu) on equal split\n",
-                           __func__, sinfos_base.size(), sinfos_swa.size());
-            break;
-        }
-
-        return std::make_unique<llama_kv_cache_iswa_context>(
-                this, std::move(sinfos_base), std::move(sinfos_swa), std::move(ubatches));
-    } while (false);
+    }
+    if (auto res = try_split(/*equal*/ true, "equal split")) {
+        return res;
+    }
 
     // TODO: if we fail again, we should attempt different splitting strategies
     //       but to do that properly, we first have to refactor the batches to be more flexible
@@ -422,7 +392,7 @@ bool llama_kv_cache_iswa::get_can_shift() const {
 }
 
 bool llama_kv_cache_iswa::get_has_shared_cells() const {
-    return (kv_base && kv_base->get_has_shared_cells()) || (kv_swa && kv_swa->get_has_shared_cells());
+    return kv_base->get_has_shared_cells() || kv_swa->get_has_shared_cells();
 }
 
 void llama_kv_cache_iswa::state_write(llama_io_write_i & io, llama_seq_id seq_id, llama_state_seq_flags flags) const {

@@ -154,6 +154,15 @@ void llama_memory_hybrid_iswa::clear(bool data) {
 }
 
 bool llama_memory_hybrid_iswa::seq_rm(llama_seq_id seq_id, llama_pos p0, llama_pos p1) {
+    // llama_kv_cache_iswa refuses trims that start before the rotated SWA window.
+    // Ask it first: if the attention cache refuses and the recurrent cache has
+    // already been trimmed, the two disagree about which positions still exist
+    // and the sequence is corrupt. The recurrent cache has no read-only probe,
+    // so it stays first among the two mutations (upstream order).
+    if (!mem_attn->can_seq_rm(seq_id, p0, p1)) {
+        return false;
+    }
+
     // Try removing from the recurrent cache first since it may fail. If it does
     // fail, the cache will not have been mutated.
     if (!mem_recr->seq_rm(seq_id, p0, p1)) {

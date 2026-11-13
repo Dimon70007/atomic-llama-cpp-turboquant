@@ -521,8 +521,9 @@ target_link_libraries(${TEST_TARGET} PRIVATE llama)
 # TurboQuant WHT round-trip test (links ggml turbo codec symbols via llama)
 llama_build_and_test(test-turbo-quant.c LABEL "turbo")
 
-# ISWA size_swa: ideas formula (pad128 + n_ubatch windowed)
+# ISWA size_swa: headroom = n_ubatch, pad512, clamp to size_base
 llama_build_and_test(test-iswa-size-swa.cpp)
+target_include_directories(test-iswa-size-swa PRIVATE ${PROJECT_SOURCE_DIR}/src)
 # TASK-071 H7: SWA visibility vs ring capacity (CPU; no model).
 llama_build_and_test(test-task071-h7-swa-visibility.cpp LABEL "turbo")
 target_include_directories(test-task071-h7-swa-visibility PRIVATE ${PROJECT_SOURCE_DIR}/src)

@@ -29,6 +29,35 @@ Releases before `b10269-1.5.0` predate this file; see the git history.
 
 ### Changed
 
+- **ISWA code review follow-up (formula SSOT + hardening):** `size_swa` sizing was
+  documented as `headroom = PAD128(n_batch)` / outer pad 256 in the header and the
+  create-time log while the code used `headroom = n_ubatch` / pad 512. Comments and
+  log now match the code, and the log reports the values actually used.
+  - `llama_kv_cache_iswa_calc_swa_headroom()` takes `n_ubatch` only; the dead
+    `n_batch` argument and its unreachable validation are gone.
+  - `llama_kv_cache_iswa_calc_size_swa()` is pure again: the
+    `TASK066_ALLOW_SIZE_SWA_HEADROOM` / `TASK066_SIZE_SWA_HEADROOM` override moved to
+    `llama_swa_headroom_product()` in `llama-model.cpp`, so the unit test no longer
+    depends on the caller's shell. The override now rejects a value below `n_ubatch`
+    (a ring shorter than one split corrupts silently) and parses with `strtoull`
+    instead of `strtol` (on MSVC `long` is 32-bit, so every value aborted).
+  - Ring alignment is derived from the cache types via
+    `llama_kv_cache_iswa_kv_block_size()` (max of `ggml_blck_size(type_k)`,
+    `ggml_blck_size(type_v)`) instead of a local `TURBO_KV_BLOCK_SIZE` 128 constant,
+    so q8_0/f16 KV no longer pads to the turbo block.
+  - `size_swa` is clamped to `size_base`: `PAD512` used to overshoot a base that is
+    only padded to 256, allocating cells beyond the context.
+  - SWA window overflow keeps the upstream behaviour of clamping to `size_base`
+    (upstream parity over fail-closed here); the branch is documented in code and
+    covered by `overflow_clamps_to_size_base`.
+  - `seq_rm()` validation extracted into the read-only `can_seq_rm()`;
+    `llama_memory_hybrid_iswa::seq_rm()` asks it before mutating the recurrent cache,
+    so a refusal can no longer leave the two sub-caches disagreeing.
+  - `init_batch()` split handling deduplicated; `<cassert>` restored; non-ASCII
+    removed from comments and log strings.
+  - `tests/estimate_kv_ctx.py` mirrors the same formula (pad 512, clamp, alignment
+    from the KV types).
+
 - **TASK-066.17 DONE:** SWA `headroom=PAD128(n_batch)` (⊥ub). Product
   C2pf16/C2pq8/C2p/C1p/C1jp **GREEN** (stamps `…215457Z-c1p-f16`,
   `…225117Z-c1p-q8`, full `…225212Z`). Stress C1 16↔1024 still RED

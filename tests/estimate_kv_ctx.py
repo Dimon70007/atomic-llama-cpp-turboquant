@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Fail-closed KV / n_ctx estimator for this TurboQuant fork (TASK-066.10).
 
-Mirrors llama.cpp ISWA size_swa under TASK-066.5 ideas (product = live n_ubatch):
-  n_swa_eff = ceil(n_swa / 128) * 128
-  size_swa  = PAD128(min(size_base, n_swa_eff * (unified ? n_seq_max : 1) + n_swa_headroom))
+Mirrors llama.cpp ISWA size_swa under TASK-071:
+  n_swa_eff = ceil(n_swa / n_swa_align) * n_swa_align   # n_swa_align = KV block size
+  size_swa  = min(PAD512(min(size_base, n_swa_eff * (unified ? n_seq_max : 1) + headroom)), size_base)
   n_swa_headroom = n_ubatch by default (minimal sufficient; optional override)
 """
 
@@ -32,8 +32,13 @@ _TYPE_LAYOUT: dict[str, tuple[int, int]] = {
 _CTK_TYPES = frozenset(_TYPE_LAYOUT.keys())
 _CTV_TYPES = _CTK_TYPES
 _TURBO_TYPES = frozenset({"turbo2", "turbo3", "turbo4"})
-# Outer size_swa pad = TurboQuant KV block (not FA get_n_kv pad-256).
-_SIZE_SWA_PAD = 128
+# Outer size_swa pad (TASK-071: 256 -> 512). Distinct from the ring alignment,
+# which is the KV block size of the cache types.
+_SIZE_SWA_PAD = 512
+# Turbo KV block; the ring alignment is max over both cache types (see
+# llama_kv_cache_iswa_kv_block_size).
+_SIZE_SWA_ALIGN = 128
+_UINT32_MAX = 0xFFFFFFFF
 
 
 def die(msg: str, code: int = 2) -> None:
@@ -85,15 +90,23 @@ def calc_size_swa(
     unified: bool,
     swa_full: bool,
     n_swa_headroom: int,
+    n_swa_align: int = _SIZE_SWA_ALIGN,
 ) -> int:
-    """Python port of llama_kv_cache_iswa_calc_size_swa (n_ubatch headroom + pad128)."""
+    """Python port of llama_kv_cache_iswa_calc_size_swa (n_ubatch headroom, pad512, clamp)."""
     if n_swa_headroom < 0:
         die("n_swa_headroom must be >= 0")
+    if n_swa_align <= 0:
+        die("n_swa_align must be > 0")
     if swa_full:
         return size_base
-    n_swa_eff = pad128(n_swa) if n_swa > 0 else 0
+    n_swa_eff = ggml_pad(n_swa, n_swa_align) if n_swa > 0 else 0
     swa_window = n_swa_eff * (n_seq_max if unified else 1)
-    return ggml_pad(min(size_base, swa_window + n_swa_headroom), _SIZE_SWA_PAD)
+    needed = swa_window + n_swa_headroom
+    if needed > _UINT32_MAX:
+        # Upstream parity: clamp to size_base (full-context SWA cache).
+        return size_base
+    # pad512 can overshoot size_base, which is only padded to 256
+    return min(ggml_pad(min(size_base, needed), _SIZE_SWA_PAD), size_base)
 
 
 def embd_gqa_eff(n_head_kv: int, head_dim: int, type_name: str) -> int:
@@ -346,6 +359,10 @@ def compute_kv_from_meta(
         die(f"--ctv must be one of {sorted(_CTV_TYPES)}")
 
     size_base = ggml_pad(n_ctx, 256)
+    # Ring alignment = coarser KV block of the two cache types, same as
+    # llama_kv_cache_iswa_kv_block_size(): a rotated block must not straddle
+    # the eviction boundary.
+    n_swa_align = max(_TYPE_LAYOUT[ctk_l][1], _TYPE_LAYOUT[ctv_l][1])
     # Product: headroom = n_ubatch; optional override for R&D.
     size_swa = calc_size_swa(
         size_base,
@@ -354,6 +371,7 @@ def compute_kv_from_meta(
         unified,
         swa_full,
         n_swa_headroom=headroom,
+        n_swa_align=n_swa_align,
     )
     n_stream = 1 if unified else n_seq_max
     n_layer = int(meta["n_layer"])
@@ -454,7 +472,7 @@ def estimate(
 
 def build_arg_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
-        description="TASK-066.10 fail-closed KV / n_ctx estimator (ideas size_swa formula)"
+        description="TASK-066.10 fail-closed KV / n_ctx estimator (TASK-071 size_swa formula)"
     )
     p.add_argument("--model", required=True, help="Path to GGUF (required)")
     p.add_argument("--n-ctx", required=True, type=int, help="Context length (required)")

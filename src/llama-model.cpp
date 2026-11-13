@@ -26,6 +26,7 @@
 
 #include <algorithm>
 #include <cassert>
+#include <cerrno>
 #include <cfloat>
 #include <cstdint>
 #include <cstring>
@@ -2230,13 +2231,44 @@ ggml_tensor * llama_model::get_rope_factors(const llama_cparams & cparams, int i
     return layers[il].rope_short;
 }
 
-// Product SWA headroom = PAD128(n_batch) (066.17 / 066.13 KEEP; ⊥ub under equal -b).
+// Product SWA headroom. The R&D override lives here, on the product policy
+// layer, so that llama_kv_cache_iswa_calc_size_swa() stays a pure function and
+// the size_swa unit test stays deterministic regardless of the caller's shell.
 static uint32_t llama_swa_headroom_product(const llama_cparams & cparams) {
-    const uint32_t headroom = llama_kv_cache_iswa_calc_swa_headroom(cparams.n_batch, cparams.n_ubatch);
-    LLAMA_LOG_INFO(
-            "%s: SWA n_swa_headroom = %u (PAD128(n_batch=%u); n_ubatch=%u telemetry only)\n",
-            __func__, headroom, cparams.n_batch, cparams.n_ubatch);
-    return headroom;
+    uint32_t headroom = llama_kv_cache_iswa_calc_swa_headroom(cparams.n_ubatch);
+
+    // TASK-066.14 R&D override. Requires BOTH env vars so a stale export cannot
+    // silently poison a normal run.
+    const char * allow = std::getenv("TASK066_ALLOW_SIZE_SWA_HEADROOM");
+    if (allow == nullptr || allow[0] != '1') {
+        return headroom;
+    }
+
+    const char * e = std::getenv("TASK066_SIZE_SWA_HEADROOM");
+    if (e == nullptr || e[0] == '\0') {
+        throw std::runtime_error(
+                "TASK066_ALLOW_SIZE_SWA_HEADROOM=1 requires TASK066_SIZE_SWA_HEADROOM");
+    }
+
+    char * end = nullptr;
+    errno = 0;
+    const unsigned long long v = std::strtoull(e, &end, 10);
+    if (end == e || *end != '\0' || errno != 0 || v < 1 || v > (unsigned long long) UINT32_MAX) {
+        throw std::runtime_error(
+                std::string("invalid TASK066_SIZE_SWA_HEADROOM=") + e + " (need a positive 32-bit integer)");
+    }
+    if (v < cparams.n_ubatch) {
+        // A ring shorter than one ubatch makes a single split write past the
+        // ring: silent corruption, not a sizing preference.
+        throw std::runtime_error(
+                std::string("TASK066_SIZE_SWA_HEADROOM=") + e + " is below n_ubatch=" +
+                std::to_string(cparams.n_ubatch) + "; the SWA ring would be too short for one ubatch");
+    }
+
+    LLAMA_LOG_WARN("%s: R&D override TASK066_SIZE_SWA_HEADROOM=%llu replaces n_ubatch headroom %u\n",
+            __func__, v, headroom);
+
+    return (uint32_t) v;
 }
 
 llama_memory_i * llama_model::create_memory(const llama_memory_params & params, const llama_cparams & cparams) const {

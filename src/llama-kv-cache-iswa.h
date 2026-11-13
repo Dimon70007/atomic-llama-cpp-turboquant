@@ -98,6 +98,11 @@ public:
     // llama_kv_cache_iswa specific API
     //
 
+    // Read-only check for seq_rm(): false when the trim would start before the
+    // SWA window, which the ring has already rotated away. Callers that own
+    // another cache alongside this one must call this before mutating it.
+    bool can_seq_rm(llama_seq_id seq_id, llama_pos p0, llama_pos p1) const;
+
     llama_kv_cache * get_base() const;
     llama_kv_cache * get_swa () const;
 
@@ -169,23 +174,28 @@ private:
     const llama_memory_status status;
 };
 
-// Product SWA headroom (TASK-066.17 — restore 066.13 C2 KEEP):
-//   headroom = PAD128(n_batch)   // ⊥ live -ub; equal -b ⇒ equal size_swa
-// n_ubatch must be > 0 (fail-closed) but does not enter the formula.
-// Product (batch=2048, ub=512) -> PAD128(2048) = 2048 (memory tax vs 066.16 max(ub,b/4)).
-// Pair C2p equal -b=512 ub=256 vs 512 -> headroom 512 both sides.
-uint32_t llama_kv_cache_iswa_calc_swa_headroom(uint32_t n_batch, uint32_t n_ubatch);
+// Ring alignment for the SWA cache: the coarse KV block size of the two cache
+// types. A rotated block must not straddle the eviction boundary.
+uint32_t llama_kv_cache_iswa_kv_block_size(ggml_type type_k, ggml_type type_v);
 
-// Pure size_swa helper (TASK-066.5 ideas).
-// Pads n_swa up to TurboQuant KV block (128), then:
-//   size_swa = PAD256(min(size_base, n_swa_eff * (unified ? n_seq_max : 1) + n_swa_headroom))
-// Product callers pass llama_kv_cache_iswa_calc_swa_headroom(n_batch, n_ubatch).
-// Outer pad 256 aligns with FA get_n_kv pad; n_swa_eff still uses TurboQuant 128.
-// Used by ctor + CPU unit test-iswa-size-swa.
+// SWA headroom: the room one ubatch needs to write. It is exactly n_ubatch, so
+// size_swa follows -ub and -b does not enter sizing (it is rejected as a
+// quality lever, TASK-071).
+uint32_t llama_kv_cache_iswa_calc_swa_headroom(uint32_t n_ubatch);
+
+// Pure size_swa helper (no env, no globals).
+//
+//   n_swa_eff = ceil(n_swa / n_swa_align) * n_swa_align
+//   needed    = n_swa_eff * (unified ? n_seq_max : 1) + n_swa_headroom
+//   size_swa  = min(PAD512(min(size_base, needed)), size_base)
+//
+// swa_full gives size_base directly. n_swa_align is the KV block size from
+// llama_kv_cache_iswa_kv_block_size(). Used by the ctor and test-iswa-size-swa.
 uint32_t llama_kv_cache_iswa_calc_size_swa(
         uint32_t size_base,
         uint32_t n_swa,
         uint32_t n_seq_max,
         bool     unified,
         bool     swa_full,
-        uint32_t n_swa_headroom);
+        uint32_t n_swa_headroom,
+        uint32_t n_swa_align);
