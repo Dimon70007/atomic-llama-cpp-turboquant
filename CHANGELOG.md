@@ -12,6 +12,21 @@ Releases before `b10269-1.5.0` predate this file; see the git history.
 
 ## Unreleased
 
+### Changed
+
+- **TASK-071: `test-iswa-size-swa` joined the `turbo` gate.** The test had no
+  `LABEL "turbo"`, so `ctest -L turbo` never ran it while TASK-071 claimed
+  `4/4 pass (size-swa, ...)`. Gate is 5 tests now. The `size_swa` outer pad stays
+  **512** (fork-only deviation: `-ub 256` and `-ub 512` collapse to the same 1536
+  ring; +256 cells vs upstream below `-ub 512`).
+- **TASK-071: retired product-ubatch gates that asserted a rejected invariant.**
+  `test-ubatch-s8-s1024-row0-parity` no longer compares `-ub 256` vs `-ub 1024`:
+  under `headroom = n_ubatch` those rings are 1536 and 2048, so equal logits are
+  unreachable. That pair was green only under the deleted `n_batch` headroom. The
+  `C1p` / `C1jp` gates and the `c1jp` diag selector went with it - they re-checked
+  greedy decode over the same pairs that `C2p` already covers, plus stress `C1`/`C1j`.
+  `256v512` stays (both sides 1536); `c1p`, `c1p-q8`, `c1p-f16` stay as `C2p`-only.
+
 ### Added
 
 - **TASK-066.19 KEEP-stack speed orchestrator:** cumulative C0–C4

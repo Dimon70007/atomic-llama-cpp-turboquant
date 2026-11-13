@@ -144,11 +144,9 @@ classify_ubatch_verdict() {
     echo "RED"
     return
   fi
-  if grep -q 'C2p PASS — both product pairs bit-exact' "${logf}" \
-    && grep -q 'RESULT PASS (GREEN) — C1p both product pairs' "${logf}" \
-    && grep -q 'RESULT PASS (GREEN) — C1jp both product pairs' "${logf}" \
+  if grep -q 'C2p PASS — every product pair bit-exact' "${logf}" \
     && grep -q 'RESULT FAIL (RED) — greedy token stream not bit-exact S16 vs S1024' "${logf}" \
-    && ! grep -q 'RESULT FAIL (RED) — C2p\|RESULT FAIL (RED) — C1p\|RESULT FAIL (RED) — C1jp\|RESULT FAIL (REGRESS)' "${logf}"; then
+    && ! grep -q 'RESULT FAIL (RED) — C2p\|RESULT FAIL (REGRESS)' "${logf}"; then
     echo "ALLOWLISTED_STRESS_C1"
     return
   fi
