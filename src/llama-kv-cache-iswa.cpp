@@ -99,14 +99,16 @@ uint32_t llama_kv_cache_iswa_calc_size_swa(
     }
     const uint32_t swa_window = (uint32_t) swa_window_64;
     const uint32_t raw = std::min(size_base, swa_window + n_swa_headroom);
-    // Upstream outer pad: align the ring to the FA n_kv pad (ggml#17037). 256 is a graph
-    // stability / performance choice, not a kernel correctness requirement.
+    // TASK-071: outer pad 256 -> 512.
     //
-    // TASK-071: pads 512 and 1024 were tried and reverted. Measured values at product arms
-    // are already multiples of 512/1024 (1024+PAD128(n_batch) = 3072, 5120), so the larger
-    // pad was a no-op there; with the upstream headroom (n_ubatch) it only collapsed
-    // adjacent sizes (1280 -> 1536) without evidence of a quality benefit. Back to upstream.
-    constexpr uint32_t k_size_swa_outer_pad = 256;
+    // Upstream pads to 256 for FA graph stability / reuse (ggml#17037), not because a kernel
+    // requires it. With headroom = n_ubatch the raw values are
+    //   n_ubatch 256 -> 1280, 512 -> 1536, 1024 -> 2048, 2048 -> 3072.
+    // Padding to 512 makes 256 and 512 collapse to the same ring (1536), so changing -ub
+    // between those values keeps size_swa identical. TASK-066.14 Exp A/H6 established that
+    // an equal size_swa gives GREEN even with unequal decode chunks; unequal size_swa is the
+    // causal factor. Cost: 256 cells more at -ub 256, none at 512+.
+    constexpr uint32_t k_size_swa_outer_pad = 512;
     return GGML_PAD(raw, k_size_swa_outer_pad);
 }
 

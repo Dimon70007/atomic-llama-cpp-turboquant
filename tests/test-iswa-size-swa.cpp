@@ -77,11 +77,11 @@ int main() {
     const uint32_t n_swa = 1024;
     const uint32_t ctx   = 3072;
 
-    // headroom=8  -> PAD256(1024+8) = 1280  (direct headroom arg)
+    // headroom=8  -> PAD512(1024+8) = 1536  (direct headroom arg; TASK-071 pad 512)
     expect_u32(
             "gemma4_headroom8",
             llama_kv_cache_iswa_calc_size_swa(ctx, n_swa, /*n_seq_max*/ 1, true, false, /*headroom*/ 8),
-            1280);
+            1536);
     expect_u32(
             "gemma4_headroom384_idiot_c3",
             llama_kv_cache_iswa_calc_size_swa(ctx, n_swa, 1, true, false, 384),
@@ -121,20 +121,23 @@ int main() {
             llama_kv_cache_iswa_calc_size_swa(/*size_base*/ 512, n_swa, 1, true, false, 8),
             512);
 
+    // n_swa_eff pad128: 1000 -> 1024; +8 headroom = 1032 -> PAD512 = 1536
     expect_u32(
-            "pad256_n_swa_1000_ub8",
+            "pad128_n_swa_1000_ub8",
             llama_kv_cache_iswa_calc_size_swa(ctx, /*n_swa*/ 1000, 1, true, false, 8),
-            1280);
+            1536);
 
+    // unified n_seq_max=2: 1024*2 + 8 = 2056 -> PAD512 = 2560
     expect_u32(
             "unified_n_seq_max_2_ub8",
             llama_kv_cache_iswa_calc_size_swa(ctx, n_swa, /*n_seq_max*/ 2, true, false, 8),
-            2304);
+            2560);
 
+    // non-unified ignores n_seq_max: 1024 + 8 -> PAD512 = 1536
     expect_u32(
             "non_unified_ub8",
             llama_kv_cache_iswa_calc_size_swa(ctx, n_swa, /*n_seq_max*/ 4, false, false, 8),
-            1280);
+            1536);
 
     {
         const uint32_t n_swa_huge = 1u << 31;
