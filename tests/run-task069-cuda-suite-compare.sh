@@ -17,7 +17,7 @@ fi
 SUITE_CONFIG="${TASK069_SUITE_CONFIG:-${DEFAULT_SUITE_CONFIG}}"
 if [[ ! -f "${SUITE_CONFIG}" ]]; then
   echo "FAIL: TASK069_SUITE_CONFIG not a file: ${SUITE_CONFIG}" >&2
-  echo "hint: tests/fixtures/task069/cuda-mtp.reference.yaml (see tests/TASK-069-cuda-e2e-fixture.md)" >&2
+  echo "hint: tests/fixtures/task069/cuda-mtp.reference.yaml (see ../../tasks/TASK-069-cuda-e2e-fixture.md)" >&2
   exit 2
 fi
 

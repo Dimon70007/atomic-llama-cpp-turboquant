@@ -451,7 +451,7 @@ add_test(NAME test-metal-mul-mm-policy COMMAND test-metal-mul-mm-policy)
 
 # TASK-066 follow-up / #31688 — Metal CB split vs ADD fusion (CPU unit; no GPU).
 # Needs ggml_metal_fusion_max from static ggml-metal. Expected RED until
-# tests/TASK-066-cb-fusion-followup.md High/Medium. Runner: SUITE=cb-fusion.
+# ../../tasks/task066-hist/TASK-066-cb-fusion-followup.md High/Medium. Runner: SUITE=cb-fusion.
 if (GGML_METAL AND NOT GGML_BACKEND_DL)
     add_executable(test-metal-cb-fusion test-metal-cb-fusion.cpp)
     target_link_libraries(test-metal-cb-fusion PRIVATE ggml)

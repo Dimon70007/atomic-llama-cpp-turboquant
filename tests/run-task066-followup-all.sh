@@ -18,7 +18,7 @@
 # Runs every gate even if earlier ones fail; final exit is non-zero if any FAIL
 # (host-skip exit 77 counts as SKIP, not FAIL).
 #
-# See: tests/TASK-066-cb-fusion-followup.md
+# See: ../../tasks/task066-hist/TASK-066-cb-fusion-followup.md
 
 set -euo pipefail
 
@@ -40,7 +40,7 @@ RESULTS="${OUT_DIR}/results.tsv"
   echo "repo_root=${REPO_ROOT}"
   echo "build_dir=${BUILD_DIR}"
   echo "suite=followup"
-  echo "ref=tests/TASK-066-cb-fusion-followup.md"
+  echo "ref=../../tasks/task066-hist/TASK-066-cb-fusion-followup.md"
 } | tee "${SUMMARY}"
 
 should_skip() {

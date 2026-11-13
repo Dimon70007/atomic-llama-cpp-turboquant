@@ -1,6 +1,6 @@
 // TASK-066.2 / ggml-org/llama.cpp#31688 + #28164 — Metal CB split vs fuse table.
 //
-// Invariants (see tests/TASK-066.1-audit-notes.md + TASK-066.2-compose-autotests.md):
+// Invariants (see ../../tasks/TASK-066.1-audit-notes.md + TASK-066.2-compose-autotests.md):
 //   I1  fusion_max spans encoder-relevant fuse groups (ADD / RMS_NORM+MUL+ADD / SNAKE).
 //   I2  CB align walk never lands inside such a group (same loop as ggml-metal-context.m).
 //   I3  Empty-ne tensors: fusion_max matches upstream pr28164 (ggml_is_empty => pack alone).

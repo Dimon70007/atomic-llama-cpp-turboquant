@@ -400,7 +400,7 @@ run_cell() {
 {
   echo "TASK-066 MTP vs nomtp ladder (P3 / Phase B e2e)"
   echo "stamp=${STAMP}"
-  echo "fixture=tests/TASK-066-ladder-fixture.md"
+  echo "fixture=../../tasks/TASK-066-ladder-fixture.md"
   echo "gate=quality+evidence (product); DIFF vs nomtp is telemetry unless REQUIRE_IDENTICAL=1"
   echo "model=${MODEL}"
   echo "draft=${DRAFT}"

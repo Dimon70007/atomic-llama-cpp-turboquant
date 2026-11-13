@@ -21,7 +21,7 @@ Releases before `b10269-1.5.0` predate this file; see the git history.
   `BUILD_DIR`. MTP probe: `-c 2048 -st --simple-io` + timeout (was
   hanging on `llama-cli` default `-c 0` = n_ctx_train). Floor miss →
   `NEGATIVE` hard-stop (exit 3). SSOT
-  `tests/TASK-066.19-keep-stack-speed-gates.md`.
+  `../tasks/TASK-066.19-keep-stack-speed-gates.md`.
 - **TASK-066.19 Phase F battery:** `tests/run-task066-phase-f-battery.sh`
   (`PHASE_F_MODE=all|speed|suites`) — C_final_tip via `--phase-f` then
   suites into `stamp/final/` (unit / ubatch / metal-corners-all /
@@ -68,8 +68,8 @@ Releases before `b10269-1.5.0` predate this file; see the git history.
   `PAD128(n_batch)` `…001626Z-modeB-size-swa`: ubatch RED→GREEN mad=0
   (iswa/residual still RED (=)); log
   `logs/run-06618-modeB-size-swa-alone.log`. SSOT
-  `tests/TASK-066.17-product-ubatch-256-512-1024.md` /
-  `tests/TASK-066.18-src-lever-ablation.md`.
+  `../tasks/TASK-066.17-product-ubatch-256-512-1024.md` /
+  `../tasks/TASK-066.18-src-lever-ablation.md`.
 
 ### Added
 
@@ -79,8 +79,8 @@ Releases before `b10269-1.5.0` predate this file; see the git history.
   improves residual ulp 10735→8 and c2pf16 mad 4.70→0.255 (still RED — soft
   KEEP). Product `PAD128(n_batch)` alone-ON `…001626Z`: ubatch mad→0 GREEN.
   No alone-harms. Plain-language influence table:
-  `tests/TASK-066.18-modeB-influence-table.md`. SSOT
-  `tests/TASK-066.18-src-lever-ablation.md`.
+  `../tasks/TASK-066.18-modeB-influence-table.md`. SSOT
+  `../tasks/TASK-066.18-src-lever-ablation.md`.
 
 - **TASK-066.17 (impl; OPEN/RED):** product ubatch gates C2p/C1p/C1jp —
   pairs `256↔512` and `256↔1024` only (no `512↔1024`); equal `-b=max(ub)`
@@ -92,7 +92,7 @@ Releases before `b10269-1.5.0` predate this file; see the git history.
   shrinks mad but does not clear bit-exact. **Root locked in SSOT:** not
   KV-quant; `size_swa∝ub` under equal `-b` — fix to GREEN (no KEEP).
   Binary `test-ubatch-s8-s1024-row0-parity`. SSOT
-  `tests/TASK-066.17-product-ubatch-256-512-1024.md`.
+  `../tasks/TASK-066.17-product-ubatch-256-512-1024.md`.
 
 ### Changed
 
@@ -128,7 +128,7 @@ Releases before `b10269-1.5.0` predate this file; see the git history.
   does not argue revert DEFAULT→0.
 - **TASK-066.16 (spec):** RED triage after `MUL_MM_MIN_DEFAULT=1` — rubric T/P/Q/S/F;
   checklist R1–R9 from stamp `logs/task066-15-full-suite-20261109T042939Z`.
-  SSOT `tests/TASK-066.16-min1-red-triage.md`.
+  SSOT `../tasks/TASK-066.16-min1-red-triage.md`.
 - **TASK-066.15 MUL_MM_MIN DEFAULT 0→1 (speed probe):** N=1 decode back on `mul_mv`;
   A2 rem lock retained; MTP verify cross-kernel accepted. Quality stamp
   `logs/task066-15-min1-mtp-quality-20261109T041653Z` — mtp-vs-nomtp min=0 vs min=1:
@@ -144,7 +144,7 @@ Releases before `b10269-1.5.0` predate this file; see the git history.
   `MUL_MM_MIN=0` (A2/B tax); R&D speed `GGML_METAL_MUL_MM_MIN=1`.
 - **TASK-066.15 (spec):** Metal perf-knobs R&D since `d60d01875` — suspects
   FA always-tile / `MUL_MM_MIN` / float-tile smem / fusion CB; env matrix + invariance
-  constraints. SSOT `tests/TASK-066.15-metal-perf-knobs-rd.md`.
+  constraints. SSOT `../tasks/TASK-066.15-metal-perf-knobs-rd.md`.
 - **TASK-066.14 pivot evidence:** stamp `logs/task066-14-pivot-evidence-20261109T022827Z`
   — live `size_swa calc` / occupancy hwm need `-lv 4` (INFO→TRACE map); pivot
   `size_swa=1536` / fixed-2048 `3072`; filled-ring nomtp decode 8.61 vs 8.08 tok/s
@@ -195,7 +195,7 @@ Releases before `b10269-1.5.0` predate this file; see the git history.
   `logs/task066-triple-ubatch-256-512-1024-20261108T203714Z` — cross-ub KLD != 0 + ladder
   S512/S1024 DIFF. **066.5 remains TODO (not Done)** while gates RED/FAIL.
 - **TASK-066.11 (spec only):** R&D subtask
-  `tests/TASK-066.11-small-ctx-q8-turbo3-cross-ub-rd.md` — investigate small-CTX logit
+  `../tasks/TASK-066.11-small-ctx-q8-turbo3-cross-ub-rd.md` — investigate small-CTX logit
   divergence under `-ctk q8_0 -ctv turbo3` across ub 256/512/1024. Status TODO / not started;
   not a product fix KEEP.
 - **TASK-066.9 Phase C MTP knobs matrix:** `tests/task066_mtp_knob_matrix.json` +
@@ -258,9 +258,9 @@ Releases before `b10269-1.5.0` predate this file; see the git history.
 
 - **TASK-066.9 Phase B started / matmul KEEP:** FA geometry for MTP widths already GREEN under
   always-tile; Phase B closes post-A2 mul_mm/mv hole (`MUL_MM_MIN` default **0**). Spec:
-  `tests/TASK-066.9-fa-batch-invariance.md`. Turbo4 × speculative e2e still follow-up.
+  `../tasks/TASK-066.9-fa-batch-invariance.md`. Turbo4 × speculative e2e still follow-up.
 - **TASK-066.9 Phase A2 DONE:** ordered **A1 → A2 → B (MTP)**; MTP gated on A2 DoD ✅ + explicit
-  start. Spec: `tests/TASK-066.9-fa-batch-invariance.md`.
+  start. Spec: `../tasks/TASK-066.9-fa-batch-invariance.md`.
 - **TASK-066 docs:** PR audit registry + frozen findings (ladder/C2/FA ablation); baseline suites
   `cb-fusion`/`mul-mat-residual`/`fa` GREEN, C2 RED (`logs/task066-pr-audit-baseline-20261106T230631Z`).
 

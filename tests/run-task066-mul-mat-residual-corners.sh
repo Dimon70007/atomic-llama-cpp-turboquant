@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # TASK-066 — Metal MUL_MAT residual: ne11 in {9,16,32,256,512,1024} row0 vs golden N=8.
-# See tests/TASK-066-mul-mat-batch-inventory.md / TASK-066.6.
+# See ../../tasks/TASK-066-mul-mat-batch-inventory.md / TASK-066.6.
 #
 # Usage:
 #   ./tests/run-task066-mul-mat-residual-corners.sh [OUT_DIR]
@@ -22,7 +22,7 @@ POLICY_BIN="${BUILD_DIR}/bin/test-metal-mul-mm-policy"
 if [[ -n "${GGML_METAL_MUL_MM_MIN:-}" && "${GGML_METAL_MUL_MM_MIN}" != "8" ]]; then
   {
     echo "track=B5+066.7+upstream-min8"
-    echo "inventory=tests/TASK-066-mul-mat-batch-inventory.md"
+    echo "inventory=../../tasks/TASK-066-mul-mat-batch-inventory.md"
     echo "GGML_METAL_MUL_MM_MIN=${GGML_METAL_MUL_MM_MIN}"
     echo "VERDICT=SKIP (residual suite gates on default MUL_MM_MIN=8; unset env or set 8)"
   } | tee "${OUT_DIR}/summary.txt"
@@ -91,7 +91,7 @@ echo "mtp_verify_exit=${MTP_RC}" | tee "${OUT_DIR}/mtp-verify.exit"
 
 {
   echo "track=B5+ladder-band+066.9A2-policy+upstream-min8"
-  echo "inventory=tests/TASK-066-mul-mat-batch-inventory.md"
+  echo "inventory=../../tasks/TASK-066-mul-mat-batch-inventory.md"
   echo "golden_n=8"
   echo "widths=9,16,32,256,512,1024"
   echo "mtp_verify_widths=2,3,4"

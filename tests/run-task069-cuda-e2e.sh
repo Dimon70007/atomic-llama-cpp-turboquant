@@ -19,7 +19,7 @@
 #   OFF_BUILD / ON_BUILD / STAMP_DIR / ONLY / CELL / SKIP_HEAVY
 #   TASK066_UBATCH_LIST / TASK066_REPEAT_LARGE / TASK066_CTX_OVERRIDE
 #
-# Docs: tests/TASK-069-cuda-e2e-fixture.md
+# Docs: ../../tasks/TASK-069-cuda-e2e-fixture.md
 
 set -euo pipefail
 

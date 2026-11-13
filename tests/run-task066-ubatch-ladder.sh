@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # TASK-066 Stage 0 — nomtp ubatch ladder (product gate; NOT in SUITE=followup).
-# See tests/TASK-066-ladder-fixture.md and tests/README-TASK066.md (TASK-066.4).
+# See ../../tasks/TASK-066-ladder-fixture.md and ../../tasks/README-TASK066.md (TASK-066.4).
 #
 # Model resolution matches scripts/run-gemma4-mtp-server.sh (MAIN_GGUF / .scratch):
 #   1) MAIN_GGUF or TASK066_MODEL
@@ -377,7 +377,7 @@ PY
 {
   echo "TASK-066 ubatch ladder"
   echo "stamp=${STAMP}"
-  echo "fixture=tests/TASK-066-ladder-fixture.md"
+  echo "fixture=../../tasks/TASK-066-ladder-fixture.md"
   echo "model=${MODEL}"
   echo "prompt=${PROMPT}"
   echo "n_predict=${N_PREDICT}"

@@ -15,7 +15,7 @@
 #   PHASE_F_MODE=suites  # F2 only (requires C_final_tip GREEN already)
 #   PHASE_F_MODE=all     # F1 then F2 (default)
 #
-# SSOT: tests/TASK-066.19-keep-stack-speed-gates.md § Phase F
+# SSOT: ../../tasks/TASK-066.19-keep-stack-speed-gates.md § Phase F
 
 set -euo pipefail
 
