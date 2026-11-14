@@ -187,6 +187,25 @@ bool llama_kv_cache_q8_brackets_dense_mode(void) {
     return env != nullptr && env[0] != '\0' && env[0] != '0';
 }
 
+// Convert a percentage of the stack into a layer count for this model.
+//
+// The operator default is a share of the model, not a fixed layer count: 6% head
+// and 25% tail reproduce HEAD=2/TAIL=8 exactly on a 30-layer model (1.8 -> 2,
+// 7.5 -> 8) and scale with depth instead of collapsing on small models.
+//
+// Rounds to nearest, so a non-zero percentage still selects at least one layer.
+uint32_t llama_kv_cache_q8_brackets_percent_to_layers(uint32_t n_layer, uint32_t percent) {
+    if (n_layer == 0 || percent == 0) {
+        return 0;
+    }
+    const uint64_t scaled = (uint64_t) n_layer * percent;
+    uint32_t count = (uint32_t) ((scaled + 50) / 100);  // nearest, not floor
+    if (count == 0) {
+        count = 1;  // a non-zero share must select something
+    }
+    return count;
+}
+
 // Plan which layers get q8_0 V for the bracket schedule.
 //
 // Pure function: everything it needs is passed in, so the unit test exercises the
@@ -449,16 +468,58 @@ llama_kv_cache::llama_kv_cache(
     // The schedule is planned from the model, never assumed: has_kv() decides which
     // layers own a cache, is_swa() which ones span the full context.
     std::vector<uint8_t> kv_q8_want;
+    uint32_t head_eff = 0;
+    uint32_t tail_eff = 0;
+    uint32_t head_pct = 0;
+    uint32_t tail_pct = 0;
     if (kv_q8_brackets) {
         const bool dense = llama_kv_cache_q8_brackets_dense_mode();
-        const char * head_env = getenv("TURBO_LAYER_HEAD");
-        const char * tail_env = getenv("TURBO_LAYER_TAIL");
-        const uint32_t head_req = (head_env && head_env[0] != '\0')
-            ? (uint32_t) std::strtol(head_env, nullptr, 10) : 2u;
-        const uint32_t tail_req = (tail_env && tail_env[0] != '\0')
-            ? (uint32_t) std::strtol(tail_env, nullptr, 10) : 8u;
 
-        kv_q8_want = llama_kv_cache_q8_brackets_plan(hparams, dense, head_req, tail_req);
+        // Percentages are the contract: the same default applies to any depth.
+        // 6/25 reproduce the historical HEAD=2/TAIL=8 on a 30-layer model.
+        auto env_u32 = [](const char * name, uint32_t def) -> uint32_t {
+            const char * e = getenv(name);
+            if (!e || e[0] == '\0') {
+                return def;
+            }
+            char * end = nullptr;
+            const long v = std::strtol(e, &end, 10);
+            if (end == e || v < 0 || v > 100) {
+                throw std::runtime_error(std::string(name) + " must be 0..100 (percent)");
+            }
+            return (uint32_t) v;
+        };
+
+        // Backward compatibility: an absolute HEAD/TAIL (pre-10.20 knob) is converted
+        // to the equivalent percentage of this model, so old scripts keep working.
+        const char * head_abs = getenv("TURBO_LAYER_HEAD");
+        const char * tail_abs = getenv("TURBO_LAYER_TAIL");
+        const uint32_t n_layer = hparams.n_layer();
+
+        if (head_abs && head_abs[0] != '\0') {
+            const uint32_t abs_head = (uint32_t) std::strtol(head_abs, nullptr, 10);
+            head_eff = abs_head;
+            head_pct = n_layer ? (uint32_t) ((uint64_t) abs_head * 100 / n_layer) : 0;
+            LLAMA_LOG_WARN(
+                "llama_kv_cache: TURBO_LAYER_HEAD is deprecated, use TURBO_LAYER_HEAD_PERCENT "
+                "(using %u layers of %u = %u%%)\n", head_eff, n_layer, head_pct);
+        } else {
+            head_pct = env_u32("TURBO_LAYER_HEAD_PERCENT", 6);
+            head_eff = llama_kv_cache_q8_brackets_percent_to_layers(n_layer, head_pct);
+        }
+        if (tail_abs && tail_abs[0] != '\0') {
+            const uint32_t abs_tail = (uint32_t) std::strtol(tail_abs, nullptr, 10);
+            tail_eff = abs_tail;
+            tail_pct = n_layer ? (uint32_t) ((uint64_t) abs_tail * 100 / n_layer) : 0;
+            LLAMA_LOG_WARN(
+                "llama_kv_cache: TURBO_LAYER_TAIL is deprecated, use TURBO_LAYER_TAIL_PERCENT "
+                "(using %u layers of %u = %u%%)\n", tail_eff, n_layer, tail_pct);
+        } else {
+            tail_pct = env_u32("TURBO_LAYER_TAIL_PERCENT", 25);
+            tail_eff = llama_kv_cache_q8_brackets_percent_to_layers(n_layer, tail_pct);
+        }
+
+        kv_q8_want = llama_kv_cache_q8_brackets_plan(hparams, dense, head_eff, tail_eff);
 
         uint32_t planned   = 0;
         uint32_t dead      = 0;
@@ -482,14 +543,14 @@ llama_kv_cache::llama_kv_cache(
             LLAMA_LOG_INFO(
                 "llama_kv_cache: q8 brackets DENSE mode: %u x q8_0 (head %u + all non-SWA"
                 " with KV), mid %u x %s; layers q8 = [%s]\n",
-                effective, head_req, hparams.n_layer() - planned, ggml_type_name(type_v),
+                effective, head_eff, hparams.n_layer() - planned, ggml_type_name(type_v),
                 layers.c_str());
         } else {
             LLAMA_LOG_INFO(
-                "llama_kv_cache: q8 brackets positional: front %u x q8_0, mid %u x %s, "
-                "tail %u x q8_0; layers q8 = [%s]\n",
-                head_req, hparams.n_layer() - planned, ggml_type_name(type_v), tail_req,
-                layers.c_str());
+                "llama_kv_cache: q8 brackets positional: front %u x q8_0 (%u%%), mid %u x %s, "
+                "tail %u x q8_0 (%u%%); layers q8 = [%s]\n",
+                head_eff, head_pct, hparams.n_layer() - planned, ggml_type_name(type_v),
+                tail_eff, tail_pct, layers.c_str());
         }
         if (dead > 0) {
             LLAMA_LOG_WARN(
