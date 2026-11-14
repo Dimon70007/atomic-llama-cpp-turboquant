@@ -27,6 +27,13 @@
 bool llama_kv_cache_q8_brackets_active(void);
 bool llama_kv_cache_q8_brackets_dense_mode(void);
 uint32_t llama_kv_cache_q8_brackets_percent_to_layers(uint32_t n_layer, uint32_t percent);
+struct llama_kv_cache_q8_widths {
+    uint32_t head = 0;
+    uint32_t tail = 0;
+    uint32_t head_pct = 0;
+    uint32_t tail_pct = 0;
+};
+llama_kv_cache_q8_widths llama_kv_cache_q8_brackets_resolve_widths(uint32_t n_layer);
 std::vector<uint8_t> llama_kv_cache_q8_brackets_plan_layers(
         uint32_t n_layer,
         const std::vector<bool> & has_kv,
@@ -412,6 +419,65 @@ int main() {
             // 6+25 = 31%; allow a couple of points for rounding at small n.
             expect_true(label, share > 27.0 && share < 37.0);
         }
+    }
+
+    // ---- percent vs absolute knobs are mutually exclusive (ST-10.21) ------
+    {
+        auto clear_all = [] {
+            unsetenv("TURBO_LAYER_HEAD");
+            unsetenv("TURBO_LAYER_TAIL");
+            unsetenv("TURBO_LAYER_HEAD_PERCENT");
+            unsetenv("TURBO_LAYER_TAIL_PERCENT");
+        };
+        auto throws_now = [](const char * name) {
+            bool threw = false;
+            try {
+                (void) llama_kv_cache_q8_brackets_resolve_widths(30);
+            } catch (const std::runtime_error &) {
+                threw = true;
+            }
+            expect_true(name, threw);
+        };
+
+        clear_all();
+        setenv("TURBO_LAYER_HEAD", "2", 1);
+        setenv("TURBO_LAYER_HEAD_PERCENT", "6", 1);
+        throws_now("conflict_head_abs_and_pct");
+
+        clear_all();
+        setenv("TURBO_LAYER_TAIL", "8", 1);
+        setenv("TURBO_LAYER_TAIL_PERCENT", "25", 1);
+        throws_now("conflict_tail_abs_and_pct");
+
+        // Percent alone resolves to the historical 2/8 on 30 layers.
+        clear_all();
+        {
+            const auto w = llama_kv_cache_q8_brackets_resolve_widths(30);
+            expect_true("defaults_head_is_2_of_30", w.head == 2);
+            expect_true("defaults_tail_is_8_of_30", w.tail == 8);
+            expect_true("defaults_pct_is_6_25", w.head_pct == 6 && w.tail_pct == 25);
+        }
+
+        // Absolute alone still works (deprecated path) and reports a percentage.
+        clear_all();
+        setenv("TURBO_LAYER_HEAD", "2", 1);
+        setenv("TURBO_LAYER_TAIL", "8", 1);
+        {
+            const auto w = llama_kv_cache_q8_brackets_resolve_widths(30);
+            expect_true("abs_head_still_works", w.head == 2 && w.tail == 8);
+            expect_true("abs_reports_pct", w.head_pct == 6 && w.tail_pct == 26);
+        }
+
+        // Out-of-range percentages abort.
+        clear_all();
+        setenv("TURBO_LAYER_HEAD_PERCENT", "101", 1);
+        throws_now("percent_above_100_throws");
+
+        clear_all();
+        setenv("TURBO_LAYER_TAIL_PERCENT", "abc", 1);
+        throws_now("percent_not_a_number_throws");
+
+        clear_all();
     }
 
     if (g_fails == 0) {

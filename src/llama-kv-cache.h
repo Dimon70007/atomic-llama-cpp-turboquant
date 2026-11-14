@@ -41,13 +41,28 @@ ggml_type llama_kv_cache_turbo_layer_adaptive_type_v(
         int mode, ggml_type type_k, ggml_type type_v, uint32_t il, uint32_t n_layer);
 
 // q8 head/tail brackets from -ctv turbo3.8|turbo4.8 (TURBO_LAYER_Q8_BRACKETS).
-// HEAD/TAIL via TURBO_LAYER_HEAD / TURBO_LAYER_TAIL (defaults 2/8).
+// HEAD/TAIL_PERCENT via TURBO_LAYER_HEAD_PERCENT / TURBO_LAYER_TAIL_PERCENT
+// (defaults 6 / 25 = the historical 2/8 on a 30-layer model).
 // Returns true when the schedule is active (mixed per-layer V types).
 bool llama_kv_cache_q8_brackets_active(void);
 
 // True when TURBO_LAYER_PROTECT_DENSE is set: protect head layers plus every
 // full-context (non-SWA) layer, ignoring the positional tail.
 bool llama_kv_cache_q8_brackets_dense_mode(void);
+
+// Convert a percentage of the stack into a layer count for this model.
+uint32_t llama_kv_cache_q8_brackets_percent_to_layers(uint32_t n_layer, uint32_t percent);
+
+// Resolved head/tail widths for this model, from the percent knobs (or the
+// deprecated absolute ones). Throws when a pair is set simultaneously.
+struct llama_kv_cache_q8_widths {
+    uint32_t head = 0;
+    uint32_t tail = 0;
+    uint32_t head_pct = 0;
+    uint32_t tail_pct = 0;
+};
+
+llama_kv_cache_q8_widths llama_kv_cache_q8_brackets_resolve_widths(uint32_t n_layer);
 
 // Plan which layers get q8_0 V for the bracket schedule.
 //

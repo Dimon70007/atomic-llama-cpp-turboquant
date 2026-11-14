@@ -46,8 +46,6 @@ Any combination of `f16`/`q8_0`/`turbo2`/`turbo3`/`turbo4` for K and V is suppor
 | `TURBO_LAYER_ADAPTIVE`      | `0`     | Layer-adaptive KV precision on plain turbo*; `7` = Boundary V. Abort if set with `-ctv turbo3.8\|turbo4.8` |
 | `TURBO_LAYER_HEAD_PERCENT`  | `6`     | q8 brackets: share of layers with V=`q8_0` at the front (rounded to nearest; 6% = 2 layers on a 30-layer model) |
 | `TURBO_LAYER_TAIL_PERCENT`  | `25`    | q8 brackets: share of layers with V=`q8_0` at the back (25% = 8 layers on 30) |
-| `TURBO_LAYER_HEAD`          | unset   | **Deprecated** absolute head count; overrides the percent, warns |
-| `TURBO_LAYER_TAIL`          | unset   | **Deprecated** absolute tail count; overrides the percent, warns |
 | `TURBO_LAYER_Q8_BRACKETS`   | unset   | Armed by `-ctv turbo3.8\|turbo4.8` (operator should not set) |
 | `TURBO_AUTO_ASYMMETRIC`     | `1`     | Auto-select asymmetric K/V types for large-GQA models |
 | `TURBO_SPARSE_V`            | `1`     | Sparse-V dequant skip in flash attention |

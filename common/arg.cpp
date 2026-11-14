@@ -2456,7 +2456,7 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
             "KV cache data type for V\n"
             "allowed values: %s\n"
             "turbo3.8 / turbo4.8 = q8 head+tail brackets, mid turbo3/turbo4 "
-            "(TURBO_LAYER_HEAD/TAIL defaults 2/8; incompatible with TURBO_LAYER_ADAPTIVE)\n"
+            "(TURBO_LAYER_HEAD_PERCENT/TAIL_PERCENT defaults 6/25; incompatible with TURBO_LAYER_ADAPTIVE)\n"
             "(default: %s)",
             get_all_kv_cache_types().c_str(),
             ggml_type_name(params.cache_type_v)

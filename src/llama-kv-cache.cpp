@@ -206,6 +206,72 @@ uint32_t llama_kv_cache_q8_brackets_percent_to_layers(uint32_t n_layer, uint32_t
     return count;
 }
 
+// Resolve the requested head/tail widths from the environment.
+//
+// Percent knobs are the contract; the absolute knobs are deprecated but still
+// honoured so existing scripts keep working. Setting both members of a pair is a
+// contradiction and aborts instead of silently picking one.
+//
+// Returned counts are already converted to layers for this model.
+llama_kv_cache_q8_widths llama_kv_cache_q8_brackets_resolve_widths(uint32_t n_layer) {
+    auto env_u32 = [](const char * name, uint32_t def) -> uint32_t {
+        const char * e = getenv(name);
+        if (!e || e[0] == '\0') {
+            return def;
+        }
+        char * end = nullptr;
+        const long v = std::strtol(e, &end, 10);
+        if (end == e || v < 0 || v > 100) {
+            throw std::runtime_error(std::string(name) + " must be 0..100 (percent)");
+        }
+        return (uint32_t) v;
+    };
+
+    const char * head_abs = getenv("TURBO_LAYER_HEAD");
+    const char * tail_abs = getenv("TURBO_LAYER_TAIL");
+    const char * head_pct = getenv("TURBO_LAYER_HEAD_PERCENT");
+    const char * tail_pct = getenv("TURBO_LAYER_TAIL_PERCENT");
+
+    const bool head_abs_set = head_abs && head_abs[0] != '\0';
+    const bool tail_abs_set = tail_abs && tail_abs[0] != '\0';
+    const bool head_pct_set = head_pct && head_pct[0] != '\0';
+    const bool tail_pct_set = tail_pct && tail_pct[0] != '\0';
+
+    if (head_abs_set && head_pct_set) {
+        throw std::runtime_error(
+            "TURBO_LAYER_HEAD and TURBO_LAYER_HEAD_PERCENT are mutually exclusive; "
+            "set only TURBO_LAYER_HEAD_PERCENT (TURBO_LAYER_HEAD is deprecated)");
+    }
+    if (tail_abs_set && tail_pct_set) {
+        throw std::runtime_error(
+            "TURBO_LAYER_TAIL and TURBO_LAYER_TAIL_PERCENT are mutually exclusive; "
+            "set only TURBO_LAYER_TAIL_PERCENT (TURBO_LAYER_TAIL is deprecated)");
+    }
+
+    llama_kv_cache_q8_widths w;
+    if (head_abs_set) {
+        w.head = (uint32_t) std::strtol(head_abs, nullptr, 10);
+        w.head_pct = n_layer ? (uint32_t) ((uint64_t) w.head * 100 / n_layer) : 0;
+        LLAMA_LOG_WARN(
+            "llama_kv_cache: TURBO_LAYER_HEAD is deprecated, use TURBO_LAYER_HEAD_PERCENT "
+            "(using %u layers of %u = %u%%)\n", w.head, n_layer, w.head_pct);
+    } else {
+        w.head_pct = env_u32("TURBO_LAYER_HEAD_PERCENT", 6);
+        w.head = llama_kv_cache_q8_brackets_percent_to_layers(n_layer, w.head_pct);
+    }
+    if (tail_abs_set) {
+        w.tail = (uint32_t) std::strtol(tail_abs, nullptr, 10);
+        w.tail_pct = n_layer ? (uint32_t) ((uint64_t) w.tail * 100 / n_layer) : 0;
+        LLAMA_LOG_WARN(
+            "llama_kv_cache: TURBO_LAYER_TAIL is deprecated, use TURBO_LAYER_TAIL_PERCENT "
+            "(using %u layers of %u = %u%%)\n", w.tail, n_layer, w.tail_pct);
+    } else {
+        w.tail_pct = env_u32("TURBO_LAYER_TAIL_PERCENT", 25);
+        w.tail = llama_kv_cache_q8_brackets_percent_to_layers(n_layer, w.tail_pct);
+    }
+    return w;
+}
+
 // Plan which layers get q8_0 V for the bracket schedule.
 //
 // Pure function: everything it needs is passed in, so the unit test exercises the
@@ -475,49 +541,11 @@ llama_kv_cache::llama_kv_cache(
     if (kv_q8_brackets) {
         const bool dense = llama_kv_cache_q8_brackets_dense_mode();
 
-        // Percentages are the contract: the same default applies to any depth.
-        // 6/25 reproduce the historical HEAD=2/TAIL=8 on a 30-layer model.
-        auto env_u32 = [](const char * name, uint32_t def) -> uint32_t {
-            const char * e = getenv(name);
-            if (!e || e[0] == '\0') {
-                return def;
-            }
-            char * end = nullptr;
-            const long v = std::strtol(e, &end, 10);
-            if (end == e || v < 0 || v > 100) {
-                throw std::runtime_error(std::string(name) + " must be 0..100 (percent)");
-            }
-            return (uint32_t) v;
-        };
-
-        // Backward compatibility: an absolute HEAD/TAIL (pre-10.20 knob) is converted
-        // to the equivalent percentage of this model, so old scripts keep working.
-        const char * head_abs = getenv("TURBO_LAYER_HEAD");
-        const char * tail_abs = getenv("TURBO_LAYER_TAIL");
-        const uint32_t n_layer = hparams.n_layer();
-
-        if (head_abs && head_abs[0] != '\0') {
-            const uint32_t abs_head = (uint32_t) std::strtol(head_abs, nullptr, 10);
-            head_eff = abs_head;
-            head_pct = n_layer ? (uint32_t) ((uint64_t) abs_head * 100 / n_layer) : 0;
-            LLAMA_LOG_WARN(
-                "llama_kv_cache: TURBO_LAYER_HEAD is deprecated, use TURBO_LAYER_HEAD_PERCENT "
-                "(using %u layers of %u = %u%%)\n", head_eff, n_layer, head_pct);
-        } else {
-            head_pct = env_u32("TURBO_LAYER_HEAD_PERCENT", 6);
-            head_eff = llama_kv_cache_q8_brackets_percent_to_layers(n_layer, head_pct);
-        }
-        if (tail_abs && tail_abs[0] != '\0') {
-            const uint32_t abs_tail = (uint32_t) std::strtol(tail_abs, nullptr, 10);
-            tail_eff = abs_tail;
-            tail_pct = n_layer ? (uint32_t) ((uint64_t) abs_tail * 100 / n_layer) : 0;
-            LLAMA_LOG_WARN(
-                "llama_kv_cache: TURBO_LAYER_TAIL is deprecated, use TURBO_LAYER_TAIL_PERCENT "
-                "(using %u layers of %u = %u%%)\n", tail_eff, n_layer, tail_pct);
-        } else {
-            tail_pct = env_u32("TURBO_LAYER_TAIL_PERCENT", 25);
-            tail_eff = llama_kv_cache_q8_brackets_percent_to_layers(n_layer, tail_pct);
-        }
+        const llama_kv_cache_q8_widths w = llama_kv_cache_q8_brackets_resolve_widths(hparams.n_layer());
+        head_eff = w.head;
+        tail_eff = w.tail;
+        head_pct = w.head_pct;
+        tail_pct = w.tail_pct;
 
         kv_q8_want = llama_kv_cache_q8_brackets_plan(hparams, dense, head_eff, tail_eff);
 
