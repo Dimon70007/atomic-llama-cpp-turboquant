@@ -54,6 +54,8 @@ K), so V rotation and padding are skipped for them.
 | `TURBO_LAYER_ADAPTIVE`          | `0`     | Layer-adaptive KV precision on plain `turbo*`; `7` = Boundary V (first/last layers in `q8_0`, middle in turbo2). **Not** supported with `-ctv turbo3.8\|turbo4.8` (abort) |
 | `TURBO_LAYER_HEAD_PERCENT`      | `6`     | With q8 brackets: share of front layers with V=`q8_0` (6% = 2 on a 30-layer model) |
 | `TURBO_LAYER_TAIL_PERCENT`      | `25`    | With q8 brackets: share of back layers with V=`q8_0` (25% = 8 on a 30-layer model) |
+| `TURBO_LAYER_HEAD`              | unset   | **Deprecated escape hatch:** absolute front layer count, overrides the percent. Aborts if the percent is also set |
+| `TURBO_LAYER_TAIL`              | unset   | **Deprecated escape hatch:** absolute back layer count, overrides the percent. Aborts if the percent is also set |
 | `TURBO_LAYER_Q8_BRACKETS`       | unset   | Set by `-ctv turbo3.8\|turbo4.8` (do not set by hand)           |
 | `TURBO_AUTO_ASYMMETRIC`         | `1`     | Auto-select asymmetric K/V types for large-GQA models (`0` disables) |
 | `TURBO_SPARSE_V`                | `1`     | Sparse-V dequant skip in flash attention (`0` disables)        |
@@ -99,6 +101,9 @@ only). Block KV streaming refuses mixed per-layer types (same as
 llama-server -m model.gguf -c 8192 -ngl 99 -ctk q8_0 -ctv turbo4.8
 # optional width override (no rebuild), as a share of this model's layers:
 # TURBO_LAYER_HEAD_PERCENT=6 TURBO_LAYER_TAIL_PERCENT=25
+# escape hatch if the percentage math is wrong for a model - absolute counts:
+# TURBO_LAYER_HEAD=2 TURBO_LAYER_TAIL=8
+#   (do not combine an absolute count with its percent: that aborts)
 # FORBIDDEN with aliases: TURBO_LAYER_ADAPTIVE=...
 ```
 
