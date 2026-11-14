@@ -109,12 +109,18 @@ def main(argv: list[str]) -> int:
     notes: list[str] = []
     pass_count = 0
     arm_count = 0
+    single_point = len(ctx_list) < 2
     for arm in sorted(by_arm):
         series = by_arm[arm]
         arm_count += 1
         joined = " ".join(f"{m:.6f}" for m in series.means)
         if series.missing or len(series.means) != len(ctx_list):
             notes.append(f"{arm} series incomplete ({series.points}/{len(ctx_list)} points)")
+            continue
+        if single_point:
+            # One CTX point has no trend: report the value, do not claim a direction.
+            pass_count += 1
+            notes.append(f"{arm} single point, no trend ({joined})")
             continue
         if walks_up(series, args.eps_abs, args.eps_rel):
             notes.append(f"{arm} KLD walks up ({joined})")
