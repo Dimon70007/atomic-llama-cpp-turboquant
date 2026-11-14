@@ -49,10 +49,25 @@ bool llama_kv_cache_q8_brackets_active(void);
 // full-context (non-SWA) layer, ignoring the positional tail.
 bool llama_kv_cache_q8_brackets_dense_mode(void);
 
-// Resolve effective V type for layer il under q8 brackets. If brackets are
-// inactive, returns type_v unchanged. Throws on ADAPTIVE conflict / bad widths.
-ggml_type llama_kv_cache_q8_brackets_type_v(
-        ggml_type type_v, uint32_t il, uint32_t n_layer);
+// Plan which layers get q8_0 V for the bracket schedule.
+//
+// Pure: the caller supplies the model facts, so the unit test runs exactly the
+// same code the loader does. A model-free duplicate is how the shared-KV bug
+// (a positional tail naming layers with no cache) stayed hidden.
+//
+//   dense_mode = false: head first layers + tail last layers, both counting
+//                       only layers that own a KV cache.
+//   dense_mode = true : head first layers + every non-SWA layer that owns KV;
+//                       tail_req is ignored.
+//
+// Throws when the plan selects no layer or would exceed half of n_layer.
+std::vector<uint8_t> llama_kv_cache_q8_brackets_plan_layers(
+        uint32_t n_layer,
+        const std::vector<bool> & has_kv,
+        const std::vector<bool> & is_swa,
+        bool dense_mode,
+        uint32_t head_req,
+        uint32_t tail_req);
 
 //
 // llama_kv_cache
