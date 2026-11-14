@@ -13,6 +13,7 @@
 !decision/bench/
 !clef/
 !clef/golden/
+!lib/
 *.o
 ggml-common.h
 **/*.swp
