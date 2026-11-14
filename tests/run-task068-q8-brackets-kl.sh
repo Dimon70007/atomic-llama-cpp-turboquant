@@ -57,6 +57,36 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WORKDIR="${TASK068_WORKDIR:-${REPO_ROOT}/logs/task068-kl-$$}"
 mkdir -p "${WORKDIR}"
 
+# Cost preflight: --save-all-logits writes ~0.5 MiB per token at n_vocab=262144,
+# so CTX=16384 already needs ~8.6 GB. Refuse a point that cannot fit the disk.
+PLAN_PY="${REPO_ROOT}/tests/lib/kld_ladder_plan.py"
+if [[ ! -f "${PLAN_PY}" ]]; then
+  echo "fail-closed: missing ${PLAN_PY}" >&2
+  exit 1
+fi
+MAX_GB="${TASK068_PAYLOAD_MAX_GB:-40}"
+CHUNKS="${TASK068_CHUNKS:-}"
+PLAN_ARGS=(--model "${MODEL}" --ctx-list "${CTX}" --out-dir "${WORKDIR}" --max-gb "${MAX_GB}" --allow-single-ctx)
+if [[ -n "${CHUNKS}" ]]; then
+  # Pin the chunk count exactly: budget = CTX * CHUNKS.
+  PLAN_ARGS+=(--token-budget "$(( CTX * CHUNKS ))" --chunks-floor 1 --allow-few-chunks)
+else
+  # Whole prompt: one chunk covering CTX.
+  PLAN_ARGS+=(--token-budget "${CTX}" --chunks-floor 1 --allow-few-chunks)
+fi
+if ! PLAN_OUT="$(python3 "${PLAN_PY}" plan "${PLAN_ARGS[@]}" 2>&1)"; then
+  echo "${PLAN_OUT}" >&2
+  echo "fail-closed: KLD payload refused (see above); nothing was run" >&2
+  exit 1
+fi
+echo "${PLAN_OUT}" | tee "${WORKDIR}/plan.txt"
+# No --chunks flag means the whole prompt is one chunk; keep it explicit below.
+PLAN_CHUNKS="$(echo "${PLAN_OUT}" | awk -F'\t' 'NR > 2 { print $2; exit }')"
+if [[ -z "${PLAN_CHUNKS}" ]]; then
+  echo "fail-closed: could not read chunk count from the plan" >&2
+  exit 1
+fi
+
 PROMPT_SRC="${TASK068_PROMPT:-}"
 PROMPT_FILE="${WORKDIR}/prompt.txt"
 if [[ -n "${PROMPT_SRC}" ]]; then
@@ -77,8 +107,10 @@ fi
 
 BASE_LOGITS="${WORKDIR}/base-q8.logits"
 LOG_BASE="${WORKDIR}/run-base.log"
-LOG_UNI="${WORKDIR}/run-turbo4.log"
-LOG_BR="${WORKDIR}/run-turbo38.log"
+LOG_T3="${WORKDIR}/run-turbo3.log"
+LOG_T4="${WORKDIR}/run-turbo4.log"
+LOG_T38="${WORKDIR}/run-turbo38.log"
+LOG_T48="${WORKDIR}/run-turbo48.log"
 
 unset TURBO_LAYER_ADAPTIVE || true
 unset TURBO_LAYER_HEAD || true
@@ -132,8 +164,10 @@ run_kl() {
     }
 }
 
-run_kl "uniform_turbo4" "turbo4" "${LOG_UNI}"
-run_kl "brackets_turbo3.8" "turbo3.8" "${LOG_BR}"
+run_kl "uniform_turbo3"   "turbo3"   "${LOG_T3}"
+run_kl "uniform_turbo4"   "turbo4"   "${LOG_T4}"
+run_kl "brackets_turbo3.8" "turbo3.8" "${LOG_T38}"
+run_kl "brackets_turbo4.8" "turbo4.8" "${LOG_T48}"
 
 parse_mean_kld() {
   local log="$1"
@@ -148,24 +182,41 @@ parse_mean_kld() {
   echo "${line}" | awk -F: '{print $2}' | awk '{print $1}'
 }
 
-KLD_UNI="$(parse_mean_kld "${LOG_UNI}")"
-KLD_BR="$(parse_mean_kld "${LOG_BR}")"
+KLD_T3="$(parse_mean_kld "${LOG_T3}")"
+KLD_T4="$(parse_mean_kld "${LOG_T4}")"
+KLD_T38="$(parse_mean_kld "${LOG_T38}")"
+KLD_T48="$(parse_mean_kld "${LOG_T48}")"
 
-if [[ -z "${KLD_UNI}" || -z "${KLD_BR}" ]]; then
+if [[ -z "${KLD_T3}" || -z "${KLD_T4}" || -z "${KLD_T38}" || -z "${KLD_T48}" ]]; then
   echo "fail: could not parse Mean KLD from logs" >&2
-  echo "  uni=${LOG_UNI} br=${LOG_BR}" >&2
+  echo "  t3=${LOG_T3} t4=${LOG_T4} t38=${LOG_T38} t48=${LOG_T48}" >&2
   exit 1
 fi
 
-echo "Mean KLD turbo4   = ${KLD_UNI}"
-echo "Mean KLD turbo3.8 = ${KLD_BR}"
+echo "Mean KLD turbo3    = ${KLD_T3}"
+echo "Mean KLD turbo4    = ${KLD_T4}"
+echo "Mean KLD turbo3.8  = ${KLD_T38}"
+echo "Mean KLD turbo4.8  = ${KLD_T48}"
 
-# awk compare: pass if brackets < uniform
-PASS="$(awk -v a="${KLD_BR}" -v b="${KLD_UNI}" 'BEGIN { print (a+0 < b+0) ? "yes" : "no" }')"
-if [[ "${PASS}" != "yes" ]]; then
-  echo "FAIL: expected Mean KLD(turbo3.8) < Mean KLD(turbo4) (got ${KLD_BR} vs ${KLD_UNI})" >&2
-  exit 1
+# Same-mid gates (TASK-068 DoD 8): brackets must beat uniform of the same mid,
+# i.e. KL(turbo3.8) < KL(turbo3) and KL(turbo4.8) < KL(turbo4) vs the q8_V base.
+RC=0
+cmp_lt() {
+  local label="$1"
+  local a="$2"
+  local b="$3"
+  if [[ "$(awk -v x="${a}" -v y="${b}" 'BEGIN { print (x+0 < y+0) ? "yes" : "no" }')" == "yes" ]]; then
+    echo "PASS: ${label} (${a} < ${b})"
+  else
+    echo "FAIL: ${label} (got ${a} vs ${b})" >&2
+    RC=1
+  fi
+}
+
+cmp_lt "KL(turbo3.8) < KL(turbo3)" "${KLD_T38}" "${KLD_T3}"
+cmp_lt "KL(turbo4.8) < KL(turbo4)" "${KLD_T48}" "${KLD_T4}"
+
+if [[ "${RC}" -eq 0 ]]; then
+  echo "PASS: brackets beat uniform mid vs q8_V base (ctx=${CTX} chunks=${PLAN_CHUNKS})"
 fi
-
-echo "PASS: KL(turbo3.8) < KL(turbo4) vs q8_V base"
-exit 0
+exit "${RC}"

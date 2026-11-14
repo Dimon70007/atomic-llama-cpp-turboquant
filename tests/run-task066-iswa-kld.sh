@@ -11,10 +11,20 @@
 #   CTX_LIST="4096 16384 65536"
 #   CAND_LIST="turbo3 turbo4"   # each implies -ctk q8_0 -ctv <cand>
 #   NGL=99  N_BATCH=2048 (product gemma4 batch; required unless BATCH_EQ_CTX=1)
-#   CHUNKS=6                    # wikitext chunks per CTX. Minimum 6: with 1 chunk the
-#                               # +-unc of Mean PPL(Q)/PPL(base) is wider than the effect
-#                               # between turbo3 and turbo4, so ppl_ratio becomes noise.
-#                               # Raise for tighter intervals; lower only for smoke runs.
+#   CHUNKS=6                    # wikitext chunks per CTX when KLD_TOKEN_BUDGET is unset.
+#                               # Minimum 6: with 1 chunk the +-unc of Mean PPL(Q)/PPL(base)
+#                               # is wider than the effect between turbo3 and turbo4, so
+#                               # ppl_ratio becomes noise.
+#   KLD_TOKEN_BUDGET=<n>        # Set this for a multi-CTX ladder: chunk count per CTX
+#                               # becomes budget/CTX, so every point costs the same
+#                               # tokens and the same logits GB. A fixed CHUNKS=6 across
+#                               # 4096..32768 grows the base logits 8x (~103 GB at 32768)
+#                               # and is refused by the preflight guard.
+#   KLD_CHUNKS_FLOOR=6          # Minimum chunks per CTX under the budget. A CTX whose
+#                               # budget/CTX falls below this is clamped up (and may then
+#                               # trip the payload cap) or refused without
+#                               # KLD_ALLOW_FEW_CHUNKS=1.
+#   KLD_PAYLOAD_MAX_GB=40       # Refuse a CTX point whose base logits exceed this.
 #   KEEP_LOGITS=0               # delete per-CTX base logits after candidates
 #   FA_MODE=on                  # required; for CTX>=8000 refuse anything else
 #   BATCH_EQ_CTX=0|1            # -b=CTX; ONLY allowed when every CTX <= 2000 (diag/smoke)
@@ -35,6 +45,9 @@ CTX_LIST="${CTX_LIST:-4096 16384 65536}"
 CAND_LIST="${CAND_LIST:-turbo3 turbo4}"
 NGL="${NGL:-99}"
 CHUNKS="${CHUNKS:-6}"
+KLD_TOKEN_BUDGET="${KLD_TOKEN_BUDGET:-}"
+KLD_CHUNKS_FLOOR="${KLD_CHUNKS_FLOOR:-6}"
+KLD_PAYLOAD_MAX_GB="${KLD_PAYLOAD_MAX_GB:-40}"
 KEEP_LOGITS="${KEEP_LOGITS:-0}"
 # KLD rise threshold for walks_up: a step must exceed the noise floor to count as a
 # rise, where floor = max(KLD_EPS_ABS, KLD_EPS_REL * a, unc_a, unc_b).
@@ -101,6 +114,34 @@ fi
 [[ -x "${PPL_BIN}" ]] || die "missing ${PPL_BIN}"
 
 mkdir -p "${OUT_DIR}"
+
+# Cost preflight: --save-all-logits cost scales with CTX * CHUNKS, so plan the
+# chunk count per CTX from a token budget and refuse a point that cannot fit.
+PLAN_PY="${REPO_ROOT}/tests/lib/kld_ladder_plan.py"
+[[ -f "${PLAN_PY}" ]] || die "missing ${PLAN_PY}"
+if [[ -n "${KLD_TOKEN_BUDGET}" ]]; then
+  [[ "${KLD_TOKEN_BUDGET}" =~ ^[0-9]+$ ]] || die "KLD_TOKEN_BUDGET must be a positive integer (got '${KLD_TOKEN_BUDGET}')"
+  PLAN_ARGS=(--allow-few-chunks)
+  if [[ "${ALLOW_FEW_CHUNKS:-0}" != "1" ]]; then
+    PLAN_ARGS=()
+  fi
+  PLAN_OUT="$(python3 "${PLAN_PY}" plan \
+      --model "${MODEL}" \
+      --ctx-list "${CTX_LIST}" \
+      --token-budget "${KLD_TOKEN_BUDGET}" \
+      --chunks-floor "${KLD_CHUNKS_FLOOR}" \
+      --out-dir "${OUT_DIR}" \
+      --max-gb "${KLD_PAYLOAD_MAX_GB}" \
+      "${PLAN_ARGS[@]+"${PLAN_ARGS[@]}"}" 2>&1)" || {
+    echo "${PLAN_OUT}" >&2
+    die "KLD ladder plan refused (see above); nothing was run"
+  }
+  echo "${PLAN_OUT}" | tee "${OUT_DIR}/plan.txt"
+  CHUNKS_BY_CTX=1
+else
+  CHUNKS_BY_CTX=0
+fi
+
 SUMMARY="${OUT_DIR}/summary.txt"
 TABLE="${OUT_DIR}/kld_table.tsv"
 VERDICT_FILE="${OUT_DIR}/verdict.txt"
@@ -117,6 +158,9 @@ VERDICT_FILE="${OUT_DIR}/verdict.txt"
   echo "batch_eq_ctx_max=${BATCH_EQ_CTX_MAX}"
   echo "ngl=${NGL}"
   echo "chunks=${CHUNKS}"
+  echo "kld_token_budget=${KLD_TOKEN_BUDGET:-<unset: fixed CHUNKS>}"
+  echo "kld_chunks_floor=${KLD_CHUNKS_FLOOR}"
+  echo "kld_payload_max_gb=${KLD_PAYLOAD_MAX_GB}"
   echo "fa=${FA_MODE}"
   echo "fa_required_ctx_min=${FA_REQUIRED_CTX_MIN}"
   echo "ctx_list=${CTX_LIST}"
@@ -166,10 +210,6 @@ run_ppl() {
 }
 
 ANY_FAIL=0
-declare -a SERIES_TURBO3=()
-declare -a SERIES_TURBO4=()
-declare -a UNC_TURBO3=()
-declare -a UNC_TURBO4=()
 
 for CTX in ${CTX_LIST}; do
   if [[ "${BATCH_EQ_CTX}" == "1" ]]; then
@@ -177,18 +217,30 @@ for CTX in ${CTX_LIST}; do
   else
     RUN_BATCH="${N_BATCH}"
   fi
+  # Chunk count for this point: budget/CTX when a budget is set, else CHUNKS.
+  if [[ "${CHUNKS_BY_CTX}" == "1" ]]; then
+    CTX_CHUNKS=$(( KLD_TOKEN_BUDGET / CTX ))
+    if [[ "${CTX_CHUNKS}" -lt 1 ]]; then
+      CTX_CHUNKS=1
+    fi
+    if [[ "${CTX_CHUNKS}" -lt "${KLD_CHUNKS_FLOOR}" && "${ALLOW_FEW_CHUNKS:-0}" != "1" ]]; then
+      CTX_CHUNKS="${KLD_CHUNKS_FLOOR}"
+    fi
+  else
+    CTX_CHUNKS="${CHUNKS}"
+  fi
   # Belt-and-braces: refuse -b=CTX for large windows even if N_BATCH was set equal to CTX.
   if [[ "${RUN_BATCH}" -eq "${CTX}" && "${CTX}" -gt "${BATCH_EQ_CTX_MAX}" ]]; then
     die "refusing -b=${RUN_BATCH} (==CTX) for CTX=${CTX} > ${BATCH_EQ_CTX_MAX} (logits footprint); use N_BATCH=2048"
   fi
   BASE_LOGITS="${OUT_DIR}/base-f16-c${CTX}.kld"
   BASE_TAG="base-f16-c${CTX}"
-  echo "==> CTX=${CTX} n_batch=${RUN_BATCH} n_ubatch=${N_UBATCH} fa=${FA_MODE} save FP16 logits -> ${BASE_LOGITS}"
+  echo "==> CTX=${CTX} chunks=${CTX_CHUNKS} n_batch=${RUN_BATCH} n_ubatch=${N_UBATCH} fa=${FA_MODE} save FP16 logits -> ${BASE_LOGITS}"
   if ! run_ppl "${BASE_TAG}" \
       -m "${MODEL}" -f "${TEXT}" -c "${CTX}" -ngl "${NGL}" \
       -b "${RUN_BATCH}" -ub "${N_UBATCH}" \
       -ctk f16 -ctv f16 -fa "${FA_MODE}" \
-      --chunks "${CHUNKS}" \
+      --chunks "${CTX_CHUNKS}" \
       --save-all-logits "${BASE_LOGITS}"; then
     echo "FAIL: base logits save CTX=${CTX}" | tee -a "${SUMMARY}"
     ANY_FAIL=1
@@ -198,12 +250,12 @@ for CTX in ${CTX_LIST}; do
 
   for CAND in ${CAND_LIST}; do
     TAG="cand-q8_${CAND}-c${CTX}"
-    echo "==> CTX=${CTX} n_batch=${RUN_BATCH} fa=${FA_MODE} cand=q8_0/${CAND}"
+    echo "==> CTX=${CTX} chunks=${CTX_CHUNKS} n_batch=${RUN_BATCH} fa=${FA_MODE} cand=q8_0/${CAND}"
     if ! run_ppl "${TAG}" \
         -m "${MODEL}" -f "${TEXT}" -c "${CTX}" -ngl "${NGL}" \
         -b "${RUN_BATCH}" -ub "${N_UBATCH}" \
         -ctk q8_0 -ctv "${CAND}" -fa "${FA_MODE}" \
-        --chunks "${CHUNKS}" \
+        --chunks "${CTX_CHUNKS}" \
         --kl-divergence-base "${BASE_LOGITS}" \
         --kl-divergence; then
       echo "FAIL: KLD run ${TAG}" | tee -a "${SUMMARY}"
@@ -215,14 +267,7 @@ for CTX in ${CTX_LIST}; do
     PPL_RATIO="$(grep -E 'Mean PPL\(Q\)/PPL\(base\)' "${OUT_DIR}/${TAG}.log" | tail -1 | awk '{print $(NF-2)}' || echo NA)"
     printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
       "${CAND}" "${CTX}" "${KLD_MEAN}" "${KLD_UNC}" "${PPL_RATIO}" "${OUT_DIR}/${TAG}.log" >> "${TABLE}"
-    echo "KLD ${CAND}@${CTX} mean=${KLD_MEAN} unc=${KLD_UNC}" | tee -a "${SUMMARY}"
-    if [[ "${CAND}" == "turbo3" ]]; then
-      SERIES_TURBO3+=("${KLD_MEAN}")
-      UNC_TURBO3+=("${KLD_UNC}")
-    elif [[ "${CAND}" == "turbo4" ]]; then
-      SERIES_TURBO4+=("${KLD_MEAN}")
-      UNC_TURBO4+=("${KLD_UNC}")
-    fi
+    echo "KLD ${CAND}@${CTX} (chunks=${CTX_CHUNKS}) mean=${KLD_MEAN} unc=${KLD_UNC}" | tee -a "${SUMMARY}"
   done
 
   if [[ "${KEEP_LOGITS}" != "1" ]]; then
@@ -230,98 +275,35 @@ for CTX in ${CTX_LIST}; do
   fi
 done
 
-# Return 0 if the KLD series walks up with context, i.e. any step rises beyond the
-# noise floor. Return 1 if it is flat-or-down.
-#
-# The old rule demanded strict monotonic increase, so a series that dipped and then
-# jumped (0.169537 0.168799 0.218236, +29% at the last step) was reported as
-# "flat-or-down" and PASSED. A step counts as a rise when
-#   b - a > max(KLD_EPS_ABS, KLD_EPS_REL * a, unc_a, unc_b)
-# so a rise inside the reported +-unc stays within noise (flat), while any rise
-# larger than the noise fails.
-#
-# argv: means... -- uncs... (uncs optional; missing entries treated as 0)
-walks_up() {
-  local -a vals=()
-  local -a uncs=()
-  local seen_sep=0
-  local arg
-  for arg in "$@"; do
-    if [[ "${arg}" == "--" ]]; then
-      seen_sep=1
-      continue
-    fi
-    if [[ "${seen_sep}" -eq 0 ]]; then
-      vals+=("${arg}")
-    else
-      uncs+=("${arg}")
-    fi
-  done
-  local i
-  if [[ "${#vals[@]}" -lt 2 ]]; then
-    return 0   # cannot judge -> caller marks FAIL (unchanged behaviour)
-  fi
-  for ((i = 1; i < ${#vals[@]}; i++)); do
-    local a="${vals[i-1]}"
-    local b="${vals[i]}"
-    if [[ "${a}" == "NA" || "${b}" == "NA" ]]; then
-      return 0
-    fi
-    local ua="${uncs[i-1]:-0}"
-    local ub="${uncs[i]:-0}"
-    # awk: does b exceed a by more than the noise floor?
-    if awk -v a="${a}" -v b="${b}" -v ua="${ua}" -v ub="${ub}" \
-            -v eabs="${KLD_EPS_ABS}" -v erel="${KLD_EPS_REL}" '
-        BEGIN {
-          noise = eabs + erel * a;
-          if (ua + 0 > noise) noise = ua;
-          if (ub + 0 > noise) noise = ub;
-          exit !(b - a > noise);
-        }'; then
-      return 0
-    fi
-  done
-  return 1
-}
-
-PASS_TURBO3=0
-PASS_TURBO4=0
-NOTE=""
-
-if [[ "${#SERIES_TURBO3[@]}" -eq 3 ]] && [[ "${SERIES_TURBO3[*]}" != *"NA"* ]]; then
-  if walks_up "${SERIES_TURBO3[@]}" -- "${UNC_TURBO3[@]}"; then
-    NOTE+="turbo3 KLD walks up (${SERIES_TURBO3[*]}); "
-  else
-    PASS_TURBO3=1
-    NOTE+="turbo3 KLD flat-or-down (${SERIES_TURBO3[*]}); "
-  fi
-else
-  NOTE+="turbo3 series incomplete; "
-fi
-
-if [[ "${#SERIES_TURBO4[@]}" -eq 3 ]] && [[ "${SERIES_TURBO4[*]}" != *"NA"* ]]; then
-  if walks_up "${SERIES_TURBO4[@]}" -- "${UNC_TURBO4[@]}"; then
-    NOTE+="turbo4 KLD walks up (${SERIES_TURBO4[*]}); "
-  else
-    PASS_TURBO4=1
-    NOTE+="turbo4 KLD flat-or-down (${SERIES_TURBO4[*]}); "
-  fi
-else
-  NOTE+="turbo4 series incomplete; "
-fi
-
-if [[ "${ANY_FAIL}" -eq 0 && "${PASS_TURBO3}" -eq 1 && "${PASS_TURBO4}" -eq 1 ]]; then
-  VERDICT=PASS
-  RC=0
-else
+# Verdict: every arm must stay flat-or-down across CTX. The rise rule lives in
+# tests/lib/kld_verdict.py so any arm name works (turbo3.8 / turbo4.8 included);
+# the old bash tracked only turbo3/turbo4 and called brackets "incomplete".
+VERDICT_PY="${REPO_ROOT}/tests/lib/kld_verdict.py"
+[[ -f "${VERDICT_PY}" ]] || die "missing ${VERDICT_PY}"
+if [[ "${ANY_FAIL}" -ne 0 ]]; then
   VERDICT=FAIL
   RC=1
+  NOTE="one or more runs failed; see ${SUMMARY}"
+else
+  set +e
+  VERDICT_OUT="$(python3 "${VERDICT_PY}" \
+      --table "${TABLE}" \
+      --ctx-list "${CTX_LIST}" \
+      --eps-abs "${KLD_EPS_ABS}" \
+      --eps-rel "${KLD_EPS_REL}" \
+      --json "${OUT_DIR}/verdict.json" 2>&1)"
+  RC=$?
+  set -e
+  echo "${VERDICT_OUT}" | tee -a "${SUMMARY}"
+  NOTE="$(echo "${VERDICT_OUT}" | sed -n 's/^note=//p')"
+  VERDICT="$(echo "${VERDICT_OUT}" | sed -n 's/^VERDICT=//p')"
 fi
 
 {
   echo "VERDICT=${VERDICT}"
   echo "note=${NOTE}"
-  echo "pass_rule=for each cand, KLD(4096),KLD(16384),KLD(65536) must not strictly increase"
+  echo "pass_rule=every arm: no CTX step may rise above max(KLD_EPS_ABS, KLD_EPS_REL*a, unc_a, unc_b)"
+  echo "chunk_rule=$([[ "${CHUNKS_BY_CTX}" == "1" ]] && echo "budget ${KLD_TOKEN_BUDGET} tokens/CTX" || echo "fixed CHUNKS=${CHUNKS}")"
   echo "table=${TABLE}"
 } | tee -a "${SUMMARY}" | tee "${VERDICT_FILE}"
 

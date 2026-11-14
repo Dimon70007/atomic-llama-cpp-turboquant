@@ -1041,10 +1041,17 @@ bool is_turbo_kv_type(ggml_type t) {
     return t == GGML_TYPE_TURBO2_0 || t == GGML_TYPE_TURBO3_0 || t == GGML_TYPE_TURBO4_0;
 }
 
-// Minimal name→type for diag overrides (product names only).
+// Minimal name->type for diag overrides (product names only).
+// Also accepts the V-only bracket aliases turbo3.8 / turbo4.8 and arms
+// TURBO_LAYER_Q8_BRACKETS, same as common/arg.cpp does for -ctv.
 bool parse_kv_type_name(const char * name, ggml_type & out) {
     if (!name || !name[0]) {
         return false;
+    }
+    if (std::strcmp(name, "turbo3.8") == 0 || std::strcmp(name, "turbo4.8") == 0) {
+        setenv("TURBO_LAYER_Q8_BRACKETS", "1", 1);
+        out = std::strcmp(name, "turbo3.8") == 0 ? GGML_TYPE_TURBO3_0 : GGML_TYPE_TURBO4_0;
+        return true;
     }
     const ggml_type candidates[] = {
             GGML_TYPE_F16, GGML_TYPE_BF16, GGML_TYPE_F32, GGML_TYPE_Q8_0,

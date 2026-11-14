@@ -133,11 +133,21 @@ cmake --build build --target llama-perplexity
 export TASK068_MODEL=/path/to/model.gguf
 export TASK068_CTX=16384   # recommend >=16384; raise toward product long-ctx when VRAM allows
 # optional: TASK068_PROMPT=/path/to/prompt.txt
+# optional: TASK068_CHUNKS=<n> to pin chunks (default: whole prompt as one chunk)
+# optional: TASK068_PAYLOAD_MAX_GB=40 (default 40)
 # Exclusive Metal/CUDA: stop other llama-server / minillm first.
 ./tests/run-task068-q8-brackets-kl.sh ./build/bin/llama-perplexity
-# Pass: Mean KLD(turbo3.8) < Mean KLD(turbo4) vs q8_V base (exit 0).
+# Pass: KL(turbo3.8) < KL(turbo3) AND KL(turbo4.8) < KL(turbo4) vs q8_V base (exit 0).
 # Missing env or GPU busy: exit 77 (skip).
 ```
+
+**Cost guard.** `--save-all-logits` writes one uint16 row per (token, vocab)
+entry: about 0.5 MiB per token at `n_vocab=262144`. A base file therefore grows
+with `CTX * CHUNKS` and nothing else. Both KL runners call
+`tests/lib/kld_ladder_plan.py` before running and refuse the whole run when a
+point would exceed `KLD_PAYLOAD_MAX_GB` (40 GB default) or 70% of free disk.
+Do not raise the cap to "make it fit": cut `KLD_TOKEN_BUDGET` or drop the high
+CTX instead.
 
 Upstream attention rotation is off by default: TurboQuant manages rotation
 itself (the WHT applied at cache write is equivalent and interacts with the
