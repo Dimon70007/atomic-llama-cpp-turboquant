@@ -10,7 +10,11 @@
 #   TEXT=wikitext-2-raw/wiki.test.raw
 #   CTX_LIST="4096 16384 65536"
 #   CAND_LIST="turbo3 turbo4"   # each implies -ctk q8_0 -ctv <cand>
-#   NGL=99  N_BATCH=2048 (product gemma4 batch; required unless BATCH_EQ_CTX=1)  CHUNKS=1
+#   NGL=99  N_BATCH=2048 (product gemma4 batch; required unless BATCH_EQ_CTX=1)
+#   CHUNKS=6                    # wikitext chunks per CTX. Minimum 6: with 1 chunk the
+#                               # +-unc of Mean PPL(Q)/PPL(base) is wider than the effect
+#                               # between turbo3 and turbo4, so ppl_ratio becomes noise.
+#                               # Raise for tighter intervals; lower only for smoke runs.
 #   KEEP_LOGITS=0               # delete per-CTX base logits after candidates
 #   FA_MODE=on                  # required; for CTX>=8000 refuse anything else
 #   BATCH_EQ_CTX=0|1            # -b=CTX; ONLY allowed when every CTX <= 2000 (diag/smoke)
@@ -30,8 +34,14 @@ TEXT="${TEXT:-${REPO_ROOT}/wikitext-2-raw/wiki.test.raw}"
 CTX_LIST="${CTX_LIST:-4096 16384 65536}"
 CAND_LIST="${CAND_LIST:-turbo3 turbo4}"
 NGL="${NGL:-99}"
-CHUNKS="${CHUNKS:-1}"
+CHUNKS="${CHUNKS:-6}"
 KEEP_LOGITS="${KEEP_LOGITS:-0}"
+# KLD rise threshold for walks_up: a step must exceed the noise floor to count as a
+# rise, where floor = max(KLD_EPS_ABS, KLD_EPS_REL * a, unc_a, unc_b).
+# Defaults target llama-perplexity KLD on wiki text: the measurement noise dominates
+# at small CTX (unc ~1e-3..1e-2), so a bare "b > a" test flipped PASS on a +29% jump.
+KLD_EPS_ABS="${KLD_EPS_ABS:-0.001}"
+KLD_EPS_REL="${KLD_EPS_REL:-0.02}"
 # Product gemma4_*_metal.yaml: batch 2048 / ubatch 512.
 # BATCH_EQ_CTX=1 (-b=CTX) only for small CTX (<=2000); larger blows ~n_batch*n_vocab logits.
 N_BATCH="${N_BATCH:-}"
@@ -48,6 +58,21 @@ fi
 
 if [[ "${BATCH_EQ_CTX}" != "0" && "${BATCH_EQ_CTX}" != "1" ]]; then
   die "BATCH_EQ_CTX must be 0|1 (got ${BATCH_EQ_CTX})"
+fi
+
+# CHUNKS>=6 is the measurement floor: at 1 chunk the +-unc of Mean PPL(Q)/PPL(base)
+# exceeds the turbo3-vs-turbo4 effect, so ppl_ratio stops resolving the difference
+# (TASK-071 ST-7.6). ALLOW_FEW_CHUNKS=1 is the explicit opt-out for smoke runs only.
+if ! [[ "${CHUNKS}" =~ ^[0-9]+$ ]]; then
+  die "CHUNKS must be a positive integer (got '${CHUNKS}')"
+fi
+if [[ "${CHUNKS}" -lt 6 ]]; then
+  if [[ "${ALLOW_FEW_CHUNKS:-0}" == "1" ]]; then
+    echo "WARN: CHUNKS=${CHUNKS} < 6 (ALLOW_FEW_CHUNKS=1) - ppl_ratio will not resolve" >&2
+    echo "WARN: a turbo3-vs-turbo4 comparison from this stamp is not valid" >&2
+  else
+    die "CHUNKS=${CHUNKS} < 6: one chunk makes ppl_ratio noise (TASK-071 ST-7.6); set ALLOW_FEW_CHUNKS=1 for a smoke run only"
+  fi
 fi
 
 [[ -n "${BUILD_DIR}" ]] || die "missing required BUILD_DIR (refusing silent build dir)"
@@ -96,7 +121,7 @@ VERDICT_FILE="${OUT_DIR}/verdict.txt"
   echo "fa_required_ctx_min=${FA_REQUIRED_CTX_MIN}"
   echo "ctx_list=${CTX_LIST}"
   echo "cand_list=${CAND_LIST}"
-  echo "size_swa_formula=PAD(min(size_base, pad128(n_swa)*(unified?n_seq_max:1)+n_ubatch),256)"
+  echo "size_swa_formula=PAD(min(size_base, pad128(n_swa)*(unified?n_seq_max:1)+n_ubatch),512)"
   echo "ref=ctk=f16 ctv=f16 fa=${FA_MODE}"
   echo "note=ideas: FA-off @ long ctx = V-transpose + NxN attn RAM blow; product flash_attn:on"
   echo "note=BATCH_EQ_CTX=1 only when every CTX<=${BATCH_EQ_CTX_MAX}; long KLD uses N_BATCH (product 2048)"
@@ -143,6 +168,8 @@ run_ppl() {
 ANY_FAIL=0
 declare -a SERIES_TURBO3=()
 declare -a SERIES_TURBO4=()
+declare -a UNC_TURBO3=()
+declare -a UNC_TURBO4=()
 
 for CTX in ${CTX_LIST}; do
   if [[ "${BATCH_EQ_CTX}" == "1" ]]; then
@@ -191,8 +218,10 @@ for CTX in ${CTX_LIST}; do
     echo "KLD ${CAND}@${CTX} mean=${KLD_MEAN} unc=${KLD_UNC}" | tee -a "${SUMMARY}"
     if [[ "${CAND}" == "turbo3" ]]; then
       SERIES_TURBO3+=("${KLD_MEAN}")
+      UNC_TURBO3+=("${KLD_UNC}")
     elif [[ "${CAND}" == "turbo4" ]]; then
       SERIES_TURBO4+=("${KLD_MEAN}")
+      UNC_TURBO4+=("${KLD_UNC}")
     fi
   done
 
@@ -201,13 +230,36 @@ for CTX in ${CTX_LIST}; do
   fi
 done
 
+# Return 0 if the KLD series walks up with context, i.e. any step rises beyond the
+# noise floor. Return 1 if it is flat-or-down.
+#
+# The old rule demanded strict monotonic increase, so a series that dipped and then
+# jumped (0.169537 0.168799 0.218236, +29% at the last step) was reported as
+# "flat-or-down" and PASSED. A step counts as a rise when
+#   b - a > max(KLD_EPS_ABS, KLD_EPS_REL * a, unc_a, unc_b)
+# so a rise inside the reported +-unc stays within noise (flat), while any rise
+# larger than the noise fails.
+#
+# argv: means... -- uncs... (uncs optional; missing entries treated as 0)
 walks_up() {
-  # Return 0 if series is strictly monotonic increasing (walks up).
-  # NA / non-numeric => treat as failure to judge (caller marks FAIL).
-  local -a vals=("$@")
+  local -a vals=()
+  local -a uncs=()
+  local seen_sep=0
+  local arg
+  for arg in "$@"; do
+    if [[ "${arg}" == "--" ]]; then
+      seen_sep=1
+      continue
+    fi
+    if [[ "${seen_sep}" -eq 0 ]]; then
+      vals+=("${arg}")
+    else
+      uncs+=("${arg}")
+    fi
+  done
   local i
   if [[ "${#vals[@]}" -lt 2 ]]; then
-    return 0
+    return 0   # cannot judge -> caller marks FAIL (unchanged behaviour)
   fi
   for ((i = 1; i < ${#vals[@]}; i++)); do
     local a="${vals[i-1]}"
@@ -215,14 +267,21 @@ walks_up() {
     if [[ "${a}" == "NA" || "${b}" == "NA" ]]; then
       return 0
     fi
-    # awk: b > a ?
-    if awk -v a="${a}" -v b="${b}" 'BEGIN { exit !(b > a) }'; then
-      continue
-    else
-      return 1
+    local ua="${uncs[i-1]:-0}"
+    local ub="${uncs[i]:-0}"
+    # awk: does b exceed a by more than the noise floor?
+    if awk -v a="${a}" -v b="${b}" -v ua="${ua}" -v ub="${ub}" \
+            -v eabs="${KLD_EPS_ABS}" -v erel="${KLD_EPS_REL}" '
+        BEGIN {
+          noise = eabs + erel * a;
+          if (ua + 0 > noise) noise = ua;
+          if (ub + 0 > noise) noise = ub;
+          exit !(b - a > noise);
+        }'; then
+      return 0
     fi
   done
-  return 0
+  return 1
 }
 
 PASS_TURBO3=0
@@ -230,7 +289,7 @@ PASS_TURBO4=0
 NOTE=""
 
 if [[ "${#SERIES_TURBO3[@]}" -eq 3 ]] && [[ "${SERIES_TURBO3[*]}" != *"NA"* ]]; then
-  if walks_up "${SERIES_TURBO3[@]}"; then
+  if walks_up "${SERIES_TURBO3[@]}" -- "${UNC_TURBO3[@]}"; then
     NOTE+="turbo3 KLD walks up (${SERIES_TURBO3[*]}); "
   else
     PASS_TURBO3=1
@@ -241,7 +300,7 @@ else
 fi
 
 if [[ "${#SERIES_TURBO4[@]}" -eq 3 ]] && [[ "${SERIES_TURBO4[*]}" != *"NA"* ]]; then
-  if walks_up "${SERIES_TURBO4[@]}"; then
+  if walks_up "${SERIES_TURBO4[@]}" -- "${UNC_TURBO4[@]}"; then
     NOTE+="turbo4 KLD walks up (${SERIES_TURBO4[*]}); "
   else
     PASS_TURBO4=1

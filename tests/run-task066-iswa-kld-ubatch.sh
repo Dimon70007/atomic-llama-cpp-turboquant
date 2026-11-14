@@ -16,7 +16,11 @@
 #   TEXT=wikitext-2-raw/wiki.test.raw
 #   CAND_LIST="turbo3 turbo4"
 #   REF_UBATCH=<max of UBATCH_LIST>   # oneshot / large-ub reference for cross-ub
-#   NGL=99  CHUNKS=1  KEEP_LOGITS=0
+#   NGL=99  KEEP_LOGITS=0
+#   CHUNKS=6                          # wikitext chunks per run. Minimum 6: below that the
+#                                     # +-unc dominates and both ppl_ratio and the KLD point
+#                                     # estimate stop resolving (TASK-071 ST-7.6). The sweep
+#                                     # cost scales linearly with CHUNKS.
 #   ALLOW_NON128_UB=0|1               # default 0: refuse ub % 128 != 0 (turbo block)
 #
 # Stamp: logs/task066-iswa-kld-ubatch-<UTC>/
@@ -34,7 +38,7 @@ TEXT="${TEXT:-${REPO_ROOT}/wikitext-2-raw/wiki.test.raw}"
 CAND_LIST="${CAND_LIST:-turbo3 turbo4}"
 REF_UBATCH="${REF_UBATCH:-}"
 NGL="${NGL:-99}"
-CHUNKS="${CHUNKS:-1}"
+CHUNKS="${CHUNKS:-6}"
 KEEP_LOGITS="${KEEP_LOGITS:-0}"
 ALLOW_NON128_UB="${ALLOW_NON128_UB:-0}"
 FA_REQUIRED_CTX_MIN=8000
@@ -60,6 +64,19 @@ if [[ "${N_BATCH}" -eq "${CTX}" && "${CTX}" -gt "${BATCH_EQ_CTX_MAX}" ]]; then
 fi
 if [[ "${CTX}" -ge "${FA_REQUIRED_CTX_MIN}" && "${FA_MODE}" != "on" ]]; then
   die "CTX=${CTX} >= ${FA_REQUIRED_CTX_MIN} requires FA_MODE=on"
+fi
+
+# CHUNKS>=6 is the measurement floor (TASK-071 ST-7.6): fewer chunks and the +-unc
+# exceeds the effect being measured. ALLOW_FEW_CHUNKS=1 is the explicit smoke opt-out.
+if ! [[ "${CHUNKS}" =~ ^[0-9]+$ ]]; then
+  die "CHUNKS must be a positive integer (got '${CHUNKS}')"
+fi
+if [[ "${CHUNKS}" -lt 6 ]]; then
+  if [[ "${ALLOW_FEW_CHUNKS:-0}" == "1" ]]; then
+    echo "WARN: CHUNKS=${CHUNKS} < 6 (ALLOW_FEW_CHUNKS=1) - measurement will not resolve" >&2
+  else
+    die "CHUNKS=${CHUNKS} < 6: too few chunks to resolve a difference (TASK-071 ST-7.6); set ALLOW_FEW_CHUNKS=1 for a smoke run only"
+  fi
 fi
 
 declare -a UBS=()
@@ -118,7 +135,7 @@ VERDICT_FILE="${OUT_DIR}/verdict.txt"
   echo "ngl=${NGL}"
   echo "chunks=${CHUNKS}"
   echo "allow_non128_ub=${ALLOW_NON128_UB}"
-  echo "size_swa_formula=PAD(min(size_base, pad128(n_swa)*(unified?n_seq_max:1)+n_ubatch),256)"
+  echo "size_swa_formula=PAD(min(size_base, pad128(n_swa)*(unified?n_seq_max:1)+n_ubatch),512)"
   echo "note=vs-f16: cand@ub vs f16@same-ub; cross-ub: cand@ub vs cand@REF_UBATCH (C3-class)"
 } | tee "${SUMMARY}"
 
