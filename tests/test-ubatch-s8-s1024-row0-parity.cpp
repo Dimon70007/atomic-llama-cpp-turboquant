@@ -1310,6 +1310,13 @@ int main(int argc, char ** argv) {
                 ggml_type_name(params.cache_type_k), ggml_type_name(params.cache_type_v));
     }
 
+    // Localization only: full-size SWA cache removes the ring wrap, which is the
+    // suspected C3 cause when n > n_swa. Not a product change.
+    if (const char * sf = std::getenv("TASK066_SWA_FULL"); sf && std::strcmp(sf, "1") == 0) {
+        params.swa_full = true;
+        fprintf(stderr, "DIAG_ONLY: TASK066_SWA_FULL=1 (no SWA ring wrap; localization only)\n");
+    }
+
     int32_t n_predict = 64;
     if (const char * e = std::getenv("TASK066_N_PREDICT"); e && e[0]) {
         n_predict = (int32_t) std::strtol(e, nullptr, 10);
