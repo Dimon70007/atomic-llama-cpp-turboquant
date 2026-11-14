@@ -244,6 +244,16 @@ static void llama_kv_cache_q8_brackets_widths(
             "(M_eff=" + std::to_string(m_eff) + " N=" + std::to_string(n_tail) +
             " n_layer=" + std::to_string(n_layer) + ")");
     }
+
+    // Hard policy: q8_0 may cover at most half the layers. Beyond that the cache
+    // stops being a compression win and the schedule is no longer a bracket.
+    const uint32_t q8_layers = m_eff + n_tail;
+    if (q8_layers * 2 > n_layer) {
+        throw std::runtime_error(
+            "q8 brackets would put " + std::to_string(q8_layers) + " of " +
+            std::to_string(n_layer) + " layers in q8_0 (limit: half); "
+            "lower TURBO_LAYER_HEAD/TAIL");
+    }
 }
 
 ggml_type llama_kv_cache_q8_brackets_type_v(

@@ -125,6 +125,10 @@ if [[ -n "${KLD_TOKEN_BUDGET}" ]]; then
   if [[ "${ALLOW_FEW_CHUNKS:-0}" != "1" ]]; then
     PLAN_ARGS=()
   fi
+  # A single CTX point is a valid single-point probe (plateau / HEAD sweep).
+  if [[ "$(echo ${CTX_LIST} | wc -w | tr -d ' ')" -lt 2 ]]; then
+    PLAN_ARGS+=(--allow-single-ctx)
+  fi
   PLAN_OUT="$(python3 "${PLAN_PY}" plan \
       --model "${MODEL}" \
       --ctx-list "${CTX_LIST}" \

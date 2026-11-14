@@ -145,14 +145,23 @@ int main() {
         expect_type("head0_tail22_q8", llama_kv_cache_q8_brackets_type_v(mid3, 22, n_layer), GGML_TYPE_Q8_0);
     }
 
-    // Minimal fit: n_layer=3, HEAD=1, TAIL=1 -> layers q8 | mid | q8
+    // Minimal fit under the half-layer policy: n_layer=4, HEAD=1, TAIL=1 ->
+    // q8 | mid | mid | q8 = 2 of 4 layers (exactly half, allowed).
     {
         arm_brackets_defaults();
         env_set("TURBO_LAYER_HEAD", "1");
         env_set("TURBO_LAYER_TAIL", "1");
-        expect_type("min_il0_q8", llama_kv_cache_q8_brackets_type_v(mid3, 0, 3), GGML_TYPE_Q8_0);
-        expect_type("min_il1_mid", llama_kv_cache_q8_brackets_type_v(mid3, 1, 3), mid3);
-        expect_type("min_il2_q8", llama_kv_cache_q8_brackets_type_v(mid3, 2, 3), GGML_TYPE_Q8_0);
+        expect_type("min_il0_q8", llama_kv_cache_q8_brackets_type_v(mid3, 0, 4), GGML_TYPE_Q8_0);
+        expect_type("min_il1_mid", llama_kv_cache_q8_brackets_type_v(mid3, 1, 4), mid3);
+        expect_type("min_il2_mid", llama_kv_cache_q8_brackets_type_v(mid3, 2, 4), mid3);
+        expect_type("min_il3_q8", llama_kv_cache_q8_brackets_type_v(mid3, 3, 4), GGML_TYPE_Q8_0);
+    }
+    {
+        // Same widths on a 3-layer model are 2 of 3 (over half) and must abort.
+        arm_brackets_defaults();
+        env_set("TURBO_LAYER_HEAD", "1");
+        env_set("TURBO_LAYER_TAIL", "1");
+        expect_throws("min_over_half_throws", mid3, 0, 3);
     }
 
     // Fail-closed corners
@@ -173,6 +182,17 @@ int main() {
         expect_type("adaptive0_ok_head2", llama_kv_cache_q8_brackets_type_v(mid3, 2, n_layer), mid3);
         env_set("TURBO_LAYER_ADAPTIVE", "");
         expect_type("adaptive_empty_ok_head2", llama_kv_cache_q8_brackets_type_v(mid3, 2, n_layer), mid3);
+    }
+    {
+        // Hard policy: q8_0 covers at most half the layers (n_layer=30 here,
+        // so 15 max). 15 is allowed, 16 must abort.
+        arm_brackets_defaults();
+        env_set("TURBO_LAYER_HEAD", "7");
+        env_set("TURBO_LAYER_TAIL", "8");
+        expect_type("q8_exactly_half_ok", llama_kv_cache_q8_brackets_type_v(mid3, 0, n_layer), GGML_TYPE_Q8_0);
+        env_set("TURBO_LAYER_HEAD", "8");
+        env_set("TURBO_LAYER_TAIL", "8");
+        expect_throws("q8_over_half_throws", mid3, 0, n_layer);
     }
     {
         arm_brackets_defaults();
