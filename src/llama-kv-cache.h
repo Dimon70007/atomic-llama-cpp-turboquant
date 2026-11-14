@@ -45,6 +45,10 @@ ggml_type llama_kv_cache_turbo_layer_adaptive_type_v(
 // Returns true when the schedule is active (mixed per-layer V types).
 bool llama_kv_cache_q8_brackets_active(void);
 
+// True when TURBO_LAYER_PROTECT_DENSE is set: protect head layers plus every
+// full-context (non-SWA) layer, ignoring the positional tail.
+bool llama_kv_cache_q8_brackets_dense_mode(void);
+
 // Resolve effective V type for layer il under q8 brackets. If brackets are
 // inactive, returns type_v unchanged. Throws on ADAPTIVE conflict / bad widths.
 ggml_type llama_kv_cache_q8_brackets_type_v(

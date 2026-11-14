@@ -182,6 +182,11 @@ bool llama_kv_cache_q8_brackets_active(void) {
     return env != nullptr && env[0] != '\0' && env[0] != '0';
 }
 
+bool llama_kv_cache_q8_brackets_dense_mode(void) {
+    const char * env = getenv("TURBO_LAYER_PROTECT_DENSE");
+    return env != nullptr && env[0] != '\0' && env[0] != '0';
+}
+
 // Resolve HEAD/TAIL widths for q8 brackets. Defaults 2/8 when env unset.
 // Throws on ADAPTIVE conflict or widths that cannot fit n_layer.
 // When head_req_out/tail_req_out non-null, writes the requested (pre-clamp) values.
@@ -254,6 +259,74 @@ static void llama_kv_cache_q8_brackets_widths(
             std::to_string(n_layer) + " layers in q8_0 (limit: half); "
             "lower TURBO_LAYER_HEAD/TAIL");
     }
+}
+
+// Plan which layers get q8_0 V for the bracket schedule.
+//
+// Everything is derived from the model, never assumed: n_layer comes from
+// hparams, only layers with their own KV (has_kv) can be protected, and dense
+// (non-SWA) layers are the ones whose cache spans the full context.
+//
+// Two policies:
+//   positional (default): HEAD first + TAIL last layers
+//   PROTCECT_DENSE:       HEAD first + every non-SWA layer that has KV
+//
+// Returns the planned set as a bitmask-free vector<uint8_t> of size n_layer.
+// Throws when a policy would exceed the half-layers cap.
+static std::vector<uint8_t> llama_kv_cache_q8_brackets_plan(
+        const llama_hparams & hparams,
+        bool dense_mode,
+        uint32_t head_req,
+        uint32_t tail_req) {
+    const uint32_t n_layer = hparams.n_layer();
+    std::vector<uint8_t> want(n_layer, 0);
+
+    if (n_layer == 0) {
+        return want;
+    }
+    if (head_req >= n_layer) {
+        throw std::runtime_error(
+            "TURBO_LAYER_HEAD must be < n_layer (head=" + std::to_string(head_req) +
+            " n_layer=" + std::to_string(n_layer) + ")");
+    }
+
+    uint32_t planned = 0;
+    if (dense_mode) {
+        for (uint32_t il = 0; il < n_layer; ++il) {
+            if (!hparams.has_kv(il)) {
+                continue;  // shared-KV layer: no cache to quantize
+            }
+            if (il < head_req || !hparams.is_swa(il)) {
+                want[il] = 1;
+                ++planned;
+            }
+        }
+    } else {
+        if (tail_req >= n_layer) {
+            throw std::runtime_error(
+                "TURBO_LAYER_TAIL must be < n_layer (tail=" + std::to_string(tail_req) +
+                " n_layer=" + std::to_string(n_layer) + ")");
+        }
+        for (uint32_t il = 0; il < n_layer; ++il) {
+            if (il < head_req || il >= n_layer - tail_req) {
+                want[il] = 1;
+                ++planned;
+            }
+        }
+    }
+
+    if (planned == 0) {
+        throw std::runtime_error(
+            "q8 brackets selected no layer (head=" + std::to_string(head_req) +
+            " tail=" + std::to_string(tail_req) +
+            (dense_mode ? " dense-mode" : "") + ")");
+    }
+    if (planned * 2 > n_layer) {
+        throw std::runtime_error(
+            "q8 brackets would put " + std::to_string(planned) + " of " +
+            std::to_string(n_layer) + " layers in q8_0 (limit: half); lower HEAD/TAIL");
+    }
+    return want;
 }
 
 ggml_type llama_kv_cache_q8_brackets_type_v(
@@ -428,36 +501,62 @@ llama_kv_cache::llama_kv_cache(
     // MTP draft heads / measure passes can report n_layer=0 — skip brackets
     // there (uniform mid type_v) instead of aborting the whole server load.
     bool kv_q8_brackets = llama_kv_cache_q8_brackets_active();
-    uint32_t kv_q8_m_eff = 0;
-    uint32_t kv_q8_n_tail = 0;
     if (kv_q8_brackets && hparams.n_layer() == 0) {
         LLAMA_LOG_WARN(
             "llama_kv_cache: q8 brackets skipped (n_layer=0; draft/measure stub)\n");
         kv_q8_brackets = false;
     }
+    // The schedule is planned from the model, never assumed: has_kv() decides which
+    // layers own a cache, is_swa() which ones span the full context.
+    std::vector<uint8_t> kv_q8_want;
     if (kv_q8_brackets) {
-        uint32_t head_req = 0;
-        uint32_t tail_req = 0;
-        llama_kv_cache_q8_brackets_widths(
-            hparams.n_layer(), kv_q8_m_eff, kv_q8_n_tail, &head_req, &tail_req);
-        if (kv_q8_n_tail < tail_req || kv_q8_m_eff < head_req) {
-            LLAMA_LOG_WARN(
-                "llama_kv_cache: q8 brackets clamped HEAD %u->%u TAIL %u->%u (n_layer=%u)\n",
-                head_req, kv_q8_m_eff, tail_req, kv_q8_n_tail, hparams.n_layer());
-        } else if (!getenv("TURBO_LAYER_HEAD") || !getenv("TURBO_LAYER_TAIL")) {
-            LLAMA_LOG_INFO(
-                "llama_kv_cache: q8 brackets using default HEAD/TAIL "
-                "(HEAD=%u TAIL=%u; override via TURBO_LAYER_HEAD / TURBO_LAYER_TAIL)\n",
-                kv_q8_m_eff, kv_q8_n_tail);
-        }
-        LLAMA_LOG_INFO(
-            "llama_kv_cache: q8 brackets enabled: front %u x q8_0, mid %u x %s, tail %u x q8_0\n",
-            kv_q8_m_eff,
-            hparams.n_layer() - kv_q8_m_eff - kv_q8_n_tail,
-            ggml_type_name(type_v),
-            kv_q8_n_tail);
-    }
+        const bool dense = llama_kv_cache_q8_brackets_dense_mode();
+        const char * head_env = getenv("TURBO_LAYER_HEAD");
+        const char * tail_env = getenv("TURBO_LAYER_TAIL");
+        const uint32_t head_req = (head_env && head_env[0] != '\0')
+            ? (uint32_t) std::strtol(head_env, nullptr, 10) : 2u;
+        const uint32_t tail_req = (tail_env && tail_env[0] != '\0')
+            ? (uint32_t) std::strtol(tail_env, nullptr, 10) : 8u;
 
+        kv_q8_want = llama_kv_cache_q8_brackets_plan(hparams, dense, head_req, tail_req);
+
+        uint32_t planned   = 0;
+        uint32_t dead      = 0;
+        uint32_t effective = 0;
+        std::string layers;
+        for (uint32_t il = 0; il < hparams.n_layer(); ++il) {
+            if (!kv_q8_want[il]) {
+                continue;
+            }
+            ++planned;
+            if (!hparams.has_kv(il)) {
+                ++dead;
+            } else {
+                ++effective;
+                if (layers.size() < 96) {
+                    layers += (layers.empty() ? "" : ",") + std::to_string(il);
+                }
+            }
+        }
+        if (dense) {
+            LLAMA_LOG_INFO(
+                "llama_kv_cache: q8 brackets DENSE mode: %u x q8_0 (head %u + all non-SWA"
+                " with KV), mid %u x %s; layers q8 = [%s]\n",
+                effective, head_req, hparams.n_layer() - planned, ggml_type_name(type_v),
+                layers.c_str());
+        } else {
+            LLAMA_LOG_INFO(
+                "llama_kv_cache: q8 brackets positional: front %u x q8_0, mid %u x %s, "
+                "tail %u x q8_0; layers q8 = [%s]\n",
+                head_req, hparams.n_layer() - planned, ggml_type_name(type_v), tail_req,
+                layers.c_str());
+        }
+        if (dead > 0) {
+            LLAMA_LOG_WARN(
+                "llama_kv_cache: %u q8 bracket slots have no KV cache (shared KV): "
+                "those slots do nothing - use TURBO_LAYER_PROTECT_DENSE=1\n", dead);
+        }
+    }
     const int kv_adaptive_mode = kv_q8_brackets
         ? 0
         : llama_kv_cache_turbo_layer_adaptive_mode(type_v, hparams.n_layer());
@@ -709,7 +808,8 @@ llama_kv_cache::llama_kv_cache(
                 kv_adaptive_mode, type_k, type_v, il, hparams.n_layer());
         ggml_type layer_type_v;
         if (kv_q8_brackets) {
-            layer_type_v = (il < kv_q8_m_eff || il >= hparams.n_layer() - kv_q8_n_tail)
+            // Planned once above from model properties (has_kv / is_swa).
+            layer_type_v = (il < kv_q8_want.size() && kv_q8_want[il])
                 ? GGML_TYPE_Q8_0
                 : type_v;
         } else {
