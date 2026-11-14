@@ -888,6 +888,15 @@ llama_kv_cache::llama_kv_cache(
         has_k && ggml_format_name(k, "cache_%sk_l%d", name_tag, il);
         has_v && ggml_format_name(v, "cache_%sv_l%d", name_tag, il);
 
+        // TASK-068 diagnostic: the bracket log states the intent, this states reality.
+        // Gated by env so normal runs stay quiet.
+        if (getenv("TURBO_DUMP_LAYER_TYPES")) {
+            LLAMA_LOG_WARN("%s: DUMP layer %3u: k=%s v=%s (bracket=%d)\n", __func__, il,
+                    k ? ggml_type_name(k->type) : "-",
+                    v ? ggml_type_name(v->type) : "-",
+                    (kv_q8_brackets && il < kv_q8_want.size()) ? (int) kv_q8_want[il] : -1);
+        }
+
         std::vector<ggml_tensor *> k_stream;
         std::vector<ggml_tensor *> v_stream;
 
