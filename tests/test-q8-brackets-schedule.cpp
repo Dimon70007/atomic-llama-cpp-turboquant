@@ -167,6 +167,14 @@ int main() {
         env_unset("TURBO_LAYER_ADAPTIVE");
     }
     {
+        // 0 and empty are the documented "disabled" values, not a conflict.
+        arm_brackets_defaults();
+        env_set("TURBO_LAYER_ADAPTIVE", "0");
+        expect_type("adaptive0_ok_head2", llama_kv_cache_q8_brackets_type_v(mid3, 2, n_layer), mid3);
+        env_set("TURBO_LAYER_ADAPTIVE", "");
+        expect_type("adaptive_empty_ok_head2", llama_kv_cache_q8_brackets_type_v(mid3, 2, n_layer), mid3);
+    }
+    {
         arm_brackets_defaults();
         env_set("TURBO_LAYER_HEAD", "30");
         env_set("TURBO_LAYER_TAIL", "8");

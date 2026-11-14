@@ -191,7 +191,10 @@ static void llama_kv_cache_q8_brackets_widths(
         uint32_t & n_tail,
         uint32_t * head_req_out = nullptr,
         uint32_t * tail_req_out = nullptr) {
-    if (getenv("TURBO_LAYER_ADAPTIVE")) {
+    // TURBO_LAYER_ADAPTIVE=0 is the documented way to disable adaptive mode, so
+    // only a non-zero value conflicts with the bracket schedule.
+    const char * adaptive_env = getenv("TURBO_LAYER_ADAPTIVE");
+    if (adaptive_env && adaptive_env[0] != '\0' && std::strtol(adaptive_env, nullptr, 10) != 0) {
         throw std::runtime_error(
             "TURBO_LAYER_ADAPTIVE is not supported with -ctv turbo3.8|turbo4.8 "
             "(use TURBO_LAYER_HEAD / TURBO_LAYER_TAIL instead)");
@@ -456,8 +459,7 @@ llama_kv_cache::llama_kv_cache(
 
     if (kv_adaptive_mode > 0) {
         if (getenv("TURBO_LAYER_ADAPTIVE")) {
-            LLAMA_LOG_INFO("llama_kv_cache: layer-adaptive mode %d enabled (env)\n", kv_adaptive_mode);
-        } else {
+            LLAMA_LOG_INFO("llama_kv_cache: layer-adaptive mode %d enabled (env)\n", kv_adaptive_mode);        } else {
             LLAMA_LOG_INFO("llama_kv_cache: Boundary V auto-enabled for turbo2-V (opt-out: TURBO_LAYER_ADAPTIVE=0)\n");
         }
     }
