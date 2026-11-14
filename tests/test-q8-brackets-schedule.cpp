@@ -181,6 +181,68 @@ void check_model(const ModelShape & m, bool dense, uint32_t head, uint32_t tail)
 // Number of layers with a cache; the useful denominator for "how many live slots".
 uint32_t live_kv(const ModelShape & m) { return m.n_layer - m.shared_kv; }
 
+// Chain the two halves the loader actually runs: env percent -> resolve_widths
+// -> plan_layers. Asserts the resulting LAYER INDICES, not the counts.
+//
+// This is the gap 10.24 covers: resolve_widths and plan_layers are each tested
+// on their own, so a regression in the chain (wrong rounding feeding a correct
+// planner, or a wrong slide with the right count) would go unnoticed - which is
+// exactly how the original shared-KV bug looked (`[0,1]` is a legal count).
+void check_env_chain(const ModelShape & m, uint32_t head_pct, uint32_t tail_pct) {
+    char label[160];
+    snprintf(label, sizeof(label), "%s env head%u%%_tail%u%%", m.name, head_pct, tail_pct);
+
+    setenv("TURBO_LAYER_HEAD_PERCENT", std::to_string(head_pct).c_str(), 1);
+    setenv("TURBO_LAYER_TAIL_PERCENT", std::to_string(tail_pct).c_str(), 1);
+    unsetenv("TURBO_LAYER_HEAD");
+    unsetenv("TURBO_LAYER_TAIL");
+
+    llama_kv_cache_q8_widths w;
+    try {
+        w = llama_kv_cache_q8_brackets_resolve_widths(m.n_layer);
+    } catch (const std::runtime_error & e) {
+        printf("FAIL %s resolve_widths threw (%s)\n", label, e.what());
+        ++g_fails;
+        return;
+    }
+
+    // The resolved counts must match the percent->layers rule for this depth.
+    const uint32_t want_head = llama_kv_cache_q8_brackets_percent_to_layers(m.n_layer, head_pct);
+    const uint32_t want_tail = llama_kv_cache_q8_brackets_percent_to_layers(m.n_layer, tail_pct);
+    if (w.head != want_head || w.tail != want_tail) {
+        printf("FAIL %s resolved head=%u tail=%u, want %u/%u\n", label, w.head, w.tail,
+               want_head, want_tail);
+        ++g_fails;
+        return;
+    }
+
+    const auto kv  = make_has_kv(m);
+    const auto swa = make_swa(m);
+    const std::string want = expected_plan(m, false, w.head, w.tail);
+
+    std::vector<uint8_t> got;
+    try {
+        got = llama_kv_cache_q8_brackets_plan_layers(m.n_layer, kv, swa, false, w.head, w.tail);
+    } catch (const std::runtime_error & e) {
+        printf("FAIL %s plan_layers threw (%s), oracle expected %s\n", label, e.what(),
+               want.c_str());
+        ++g_fails;
+        return;
+    }
+    expect_plan(label, got, want);
+
+    // The chain must never select a layer without a cache.
+    uint32_t dead = 0;
+    for (uint32_t i = 0; i < m.n_layer; ++i) {
+        if (got[i] && !kv[i]) {
+            ++dead;
+        }
+    }
+    char dead_label[176];
+    snprintf(dead_label, sizeof(dead_label), "%s_no_dead_slots", label);
+    expect_true(dead_label, dead == 0);
+}
+
 }  // namespace
 
 int main() {
@@ -214,6 +276,14 @@ int main() {
         check_model(m, false, 2, 8);
         check_model(m, false, 0, 8);
         check_model(m, true,  2, 8);
+
+        // Chain env percent -> resolved widths -> planned indices (10.24).
+        // The default pair must be a no-op relative to the code default, and a
+        // different pair must move the indices, not just the count.
+        check_env_chain(m, 6, 25);
+        check_env_chain(m, 12, 10);
+        check_env_chain(m, 0, 25);
+        check_env_chain(m, 6, 0);
 
         // The regression: on a shared-KV model every planned layer must own a
         // cache, otherwise the slot is a silent no-op.
