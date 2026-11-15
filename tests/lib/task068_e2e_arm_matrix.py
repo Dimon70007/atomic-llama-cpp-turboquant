@@ -64,6 +64,29 @@ def _parse_pairs(spec: str) -> list[tuple[str, str]]:
     return pairs
 
 
+def _parse_arm_env(spec: str) -> dict[str, dict[str, str]]:
+    """Parse 'arm=K=V,K2=V2;arm2=K=V' into {arm: {K: V}}."""
+    out: dict[str, dict[str, str]] = {}
+    for block in spec.split(";"):
+        block = block.strip()
+        if not block:
+            continue
+        if "=" not in block:
+            raise SystemExit(f"bad --arm-env entry '{block}' (want arm=KEY=VAL)")
+        arm, rest = block.split("=", 1)
+        kv: dict[str, str] = {}
+        for item in rest.split(","):
+            item = item.strip()
+            if not item:
+                continue
+            if "=" not in item:
+                raise SystemExit(f"bad --arm-env pair '{item}' (want KEY=VAL)")
+            k, v = item.split("=", 1)
+            kv[k.strip()] = v.strip()
+        out[arm.strip()] = kv
+    return out
+
+
 def run_arm(
     bin_path: Path,
     model: Path,
@@ -80,12 +103,22 @@ def run_arm(
     model_draft: Path | None,
     seed: int,
     out_dir: Path,
+    arm_env: dict[str, str] | None = None,
 ) -> list[Path]:
     """Generate `runs` summaries for one arm; return the text files."""
     arm_dir = out_dir / arm
     arm_dir.mkdir(parents=True, exist_ok=True)
     prompt = prompt_file.read_text(encoding="utf-8")
     produced: list[Path] = []
+    env = None
+    if arm_env:
+        # Arm-specific schedule knobs (e.g. TURBO_LAYER_DENSE_NEIGHBOUR) reach the
+        # child only, so one matrix can mix schedules without leaking between arms.
+        import os
+
+        env = os.environ.copy()
+        env.update(arm_env)
+        print(f"  [{arm}] env {arm_env}")
 
     for i in range(runs):
         out_txt = arm_dir / f"run{i:02d}.txt"
@@ -121,7 +154,7 @@ def run_arm(
         t0 = time.time()
         # Bytes, not text: llama-cli can cut a multi-byte char at the n_predict
         # boundary, and text=True would raise mid-pipeline.
-        proc = subprocess.run(cmd, capture_output=True, timeout=7200)
+        proc = subprocess.run(cmd, capture_output=True, timeout=7200, env=env)
         dt = time.time() - t0
         stdout = proc.stdout.decode("utf-8", errors="replace")
         stderr = proc.stderr.decode("utf-8", errors="replace")
@@ -184,6 +217,14 @@ def main(argv: list[str]) -> int:
     ap.add_argument("--mtp", action="store_true")
     ap.add_argument("--model-draft", type=Path)
     ap.add_argument("--seed", type=int, default=1234)
+    ap.add_argument(
+        "--arm-env",
+        default="",
+        help=(
+            'Per-arm env, e.g. "turbo3.8=TURBO_LAYER_DENSE_NEIGHBOUR=1,TURBO_LAYER_HEAD_PERCENT=6"'
+            " (comma-separated KEY=VAL after the arm name, ';' separates arms)"
+        ),
+    )
     ap.add_argument("--out-dir", required=True, type=Path)
     args = ap.parse_args(argv)
 
@@ -200,6 +241,10 @@ def main(argv: list[str]) -> int:
 
     rubric = _load_rubric()
     pairs = _parse_pairs(args.pairs)
+    arm_env_map = _parse_arm_env(args.arm_env)
+    unknown = set(arm_env_map) - {a for pair in pairs for a in pair}
+    if unknown:
+        raise SystemExit(f"--arm-env names arms not in --pairs: {sorted(unknown)}")
     args.out_dir.mkdir(parents=True, exist_ok=True)
 
     summary: dict[str, Any] = {
@@ -223,6 +268,7 @@ def main(argv: list[str]) -> int:
                 args.bin_path, args.model, args.prompt, arm, args.runs, args.n_predict,
                 args.ctx, args.ngl, args.batch, args.ubatch, args.ctk,
                 args.mtp, args.model_draft, args.seed, args.out_dir,
+                arm_env_map.get(arm),
             )
             if len(files) < args.runs:
                 print(f" WARN: {arm} produced {len(files)}/{args.runs} runs", file=sys.stderr)

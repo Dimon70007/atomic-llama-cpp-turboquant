@@ -46,8 +46,9 @@ ggml_type llama_kv_cache_turbo_layer_adaptive_type_v(
 // Returns true when the schedule is active (mixed per-layer V types).
 bool llama_kv_cache_q8_brackets_active(void);
 
-// True when TURBO_LAYER_PROTECT_DENSE is set: protect head layers plus every
-// full-context (non-SWA) layer, ignoring the positional tail.
+// True when TURBO_LAYER_PROTECT_DENSE is set: q8 goes to the layers AFTER each
+// full-context (non-SWA) layer, spread outwards from the last one, so the dense
+// layers keep the cheap mid type while their neighbours carry q8.
 bool llama_kv_cache_q8_brackets_dense_mode(void);
 
 // Convert a percentage of the stack into a layer count for this model.
@@ -55,6 +56,11 @@ uint32_t llama_kv_cache_q8_brackets_percent_to_layers(uint32_t n_layer, uint32_t
 
 // Resolved head/tail widths for this model, from the percent knobs (or the
 // deprecated absolute ones). Throws when a pair is set simultaneously.
+//
+// Percentages are shares of ``n_kv_layer`` (layers that own a cache), not of
+// ``n_layer``: on a shared-KV model the tail layers hold no cache, so dividing
+// by n_layer overshoots badly (6/25 of E4B's 42 layers = 14 slots = 58% of its
+// 24 real cache layers). Pass 0 for n_kv_layer to fall back to n_layer.
 struct llama_kv_cache_q8_widths {
     uint32_t head = 0;
     uint32_t tail = 0;
@@ -62,7 +68,7 @@ struct llama_kv_cache_q8_widths {
     uint32_t tail_pct = 0;
 };
 
-llama_kv_cache_q8_widths llama_kv_cache_q8_brackets_resolve_widths(uint32_t n_layer);
+llama_kv_cache_q8_widths llama_kv_cache_q8_brackets_resolve_widths(uint32_t n_layer, uint32_t n_kv_layer = 0);
 
 // Plan which layers get q8_0 V for the bracket schedule.
 //
@@ -72,8 +78,10 @@ llama_kv_cache_q8_widths llama_kv_cache_q8_brackets_resolve_widths(uint32_t n_la
 //
 //   dense_mode = false: head first layers + tail last layers, both counting
 //                       only layers that own a KV cache.
-//   dense_mode = true : head first layers + every non-SWA layer that owns KV;
-//                       tail_req is ignored.
+//   dense_mode = true : head first layers + the layers AFTER each non-SWA
+//                       layer, walking outwards from the last dense layer until
+//                       tail_req slots are filled. The dense layers themselves
+//                       stay on the mid type.
 //
 // Throws when the plan selects no layer or would exceed half of n_layer.
 std::vector<uint8_t> llama_kv_cache_q8_brackets_plan_layers(
@@ -83,6 +91,14 @@ std::vector<uint8_t> llama_kv_cache_q8_brackets_plan_layers(
         bool dense_mode,
         uint32_t head_req,
         uint32_t tail_req);
+
+// Per-layer V type for the bracket schedule: q8_0 where the plan marks the
+// layer, the mid type otherwise. Mid-agnostic, so turbo3.8 and turbo4.8 share
+// one path and a layer index out of range resolves to the mid type.
+ggml_type llama_kv_cache_q8_brackets_layer_type_v(
+        ggml_type mid_v,
+        const std::vector<uint8_t> & plan,
+        uint32_t il);
 
 //
 // llama_kv_cache

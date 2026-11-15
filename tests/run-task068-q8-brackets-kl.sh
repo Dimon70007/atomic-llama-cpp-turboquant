@@ -12,8 +12,16 @@
 #   TASK068_MODEL  - GGUF path
 #   TASK068_CTX    - context size (recommend >=16384)
 # Env (optional):
-#   TASK068_PROMPT - prompt file (else tile a short built-in seed)
+#   TASK068_PROMPT - prompt file (else take a real-prose Voyna i Mir slice)
+#   TASK068_CORPUS - corpus for the default prompt (assets/literature/voyna_i_mir_ru.txt)
+#   TASK068_TOKENIZE_BIN - llama-tokenize next to llama-perplexity by default
+#   TASK068_PROMPT_MIN_TOKENS - prompt size target (default 2 * CTX)
 #   TASK068_WORKDIR - scratch dir for logits / padded prompt
+#   TASK068_PROTECT_DENSE - 0 (default) = positional head/tail brackets;
+#                           1 = q8 on the layers AFTER each dense layer, with the
+#                           tail spread outwards from the last dense layer
+#   TASK068_HEAD_PERCENT - head width as % of KV-bearing layers (default: library)
+#   TASK068_TAIL_PERCENT - tail width as % of KV-bearing layers (default: library)
 #   LLAMA_PERPLEXITY - override binary (else arg1)
 #
 # Pass: Mean KLD(-ctv turbo3.8) < Mean KLD(-ctv turbo4) vs -ctv q8_0 base.
@@ -96,13 +104,34 @@ if [[ -n "${PROMPT_SRC}" ]]; then
   fi
   cp "${PROMPT_SRC}" "${PROMPT_FILE}"
 else
-  # Tile ASCII seed until roughly CTX*4 bytes (approx token budget without tokenizer).
-  SEED="Pierre Belukhov and Dolokhov duel at dawn. The shot wounds Dolokhov badly. "
-  : > "${PROMPT_FILE}"
-  TARGET_BYTES=$((CTX * 4))
-  while [[ "$(wc -c < "${PROMPT_FILE}" | tr -d ' ')" -lt "${TARGET_BYTES}" ]]; do
-    printf '%s' "${SEED}" >> "${PROMPT_FILE}"
-  done
+  # Real prose, never tiled filler: on a repeated sentence the model is nearly
+  # certain of the next token, every arm lands at KLD ~1e-6 and the ranking is
+  # noise. Take a contiguous Voyna i Mir slice instead (TASK-068 10.28 F).
+  PROMPT_PY="${REPO_ROOT}/tests/lib/voyna_kl_prompt.py"
+  # Default prompt is exactly 2 * CTX worth of prose (perplexity needs that much).
+  PROMPT_TOKENS="${TASK068_PROMPT_MIN_TOKENS:-$((CTX * 2))}"
+  TOKENIZE_BIN="${TASK068_TOKENIZE_BIN:-$(dirname "${PPL_BIN}")/llama-tokenize}"
+  if [[ ! -f "${PROMPT_PY}" ]]; then
+    echo "fail-closed: missing ${PROMPT_PY}" >&2
+    exit 1
+  fi
+  if [[ ! -x "${TOKENIZE_BIN}" ]]; then
+    echo "host-skip: missing llama-tokenize for real-prose prompt (TASK068_TOKENIZE_BIN)" >&2
+    exit 77
+  fi
+  if ! PROMPT_OUT="$(
+        python3 "${PROMPT_PY}" \
+          --model "${MODEL}" \
+          --tokenize-bin "${TOKENIZE_BIN}" \
+          --min-tokens "${PROMPT_TOKENS}" \
+          --out "${PROMPT_FILE}" \
+          --corpus "${TASK068_CORPUS:-${REPO_ROOT}/../assets/literature/voyna_i_mir_ru.txt}"
+      )"; then
+    echo "${PROMPT_OUT}" >&2
+    echo "fail-closed: could not build a real-prose prompt (no tiled fallback)" >&2
+    exit 1
+  fi
+  echo "${PROMPT_OUT}"
 fi
 
 BASE_LOGITS="${WORKDIR}/base-q8.logits"
@@ -117,7 +146,39 @@ unset TURBO_LAYER_HEAD || true
 unset TURBO_LAYER_TAIL || true
 unset TURBO_LAYER_Q8_BRACKETS || true
 
-echo "TASK-068 KL drift: model=${MODEL} ctx=${CTX} workdir=${WORKDIR}"
+# Dense mode is opt-in: an unset/0 value must leave the positional schedule in
+# place, and only "1" switches the plan to the dense-neighbour spread.
+PROTECT_DENSE="${TASK068_PROTECT_DENSE:-0}"
+case "${PROTECT_DENSE}" in
+  0|1) ;;
+  *)
+    echo "fail-closed: TASK068_PROTECT_DENSE must be 0 or 1 (got '${PROTECT_DENSE}')" >&2
+    exit 1
+    ;;
+esac
+if [[ "${PROTECT_DENSE}" == "1" ]]; then
+  export TURBO_LAYER_PROTECT_DENSE=1
+else
+  unset TURBO_LAYER_PROTECT_DENSE || true
+fi
+
+# Widths are optional: unset means "library default" (6/25). Setting them here is
+# what makes a 6/35 sweep comparable across arms, so an explicit value must reach
+# every bracket arm.
+for pair in "TASK068_HEAD_PERCENT:TURBO_LAYER_HEAD_PERCENT" \
+            "TASK068_TAIL_PERCENT:TURBO_LAYER_TAIL_PERCENT"; do
+  src="${pair%%:*}"; dst="${pair##*:}"
+  val="${!src:-}"
+  if [[ -n "${val}" ]]; then
+    if ! [[ "${val}" =~ ^[0-9]+$ ]] || (( val > 100 )); then
+      echo "fail-closed: ${src} must be an integer 0..100 (got '${val}')" >&2
+      exit 1
+    fi
+    export "${dst}=${val}"
+  fi
+done
+
+echo "TASK-068 KL drift: model=${MODEL} ctx=${CTX} workdir=${WORKDIR} protect_dense=${PROTECT_DENSE} head_pct=${TASK068_HEAD_PERCENT:-default} tail_pct=${TASK068_TAIL_PERCENT:-default}"
 
 # Common argv: -fit off avoids hard abort when VRAM fit probe fails on Metal hosts.
 PPL_COMMON=(
@@ -143,6 +204,17 @@ echo "== base: -ctk q8_0 -ctv q8_0 (save logits) =="
     echo "fail: base logits run failed; see ${LOG_BASE}" >&2
     exit 1
   }
+
+# perplexity can exit 0 after refusing the input ("you need at least ... tokens"),
+# leaving a stub header and no logits. Fail here instead of running four arms
+# that all report "failed reading n_vocab, n_chunk".
+BASE_BYTES="$(wc -c < "${BASE_LOGITS}" | tr -d ' ')"
+if [[ "${BASE_BYTES}" -lt 1024 ]]; then
+  echo "fail: base logits is only ${BASE_BYTES} bytes; perplexity refused the prompt" >&2
+  grep -E 'you need at least|tokenizes to only' "${LOG_BASE}" >&2 || true
+  echo "fail: raise TASK068_CTX or the prompt size (needs >= 2 * CTX tokens)" >&2
+  exit 1
+fi
 
 run_kl() {
   local label="$1"

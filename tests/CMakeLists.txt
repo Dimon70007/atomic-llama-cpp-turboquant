@@ -449,9 +449,24 @@ llama_build(test-ubatch-s8-s1024-row0-parity.cpp)
 # LABELS main via llama_build_and_test (default) - included in `ctest -L main`.
 llama_build_and_test(test-q8-brackets-schedule.cpp)
 
-# TASK-068 ST-6.2 gated KL ladder is NOT registered in ctest.
-# Operator / reviewer script only: tests/run-task068-q8-brackets-kl.sh
-# (see docs/KV-cache-quantization.md "Regression gates").
+# TASK-068 10.31: schedule report across real models. Build-only (no ctest entry):
+# it needs GGUF paths and is an operator/diagnostic tool, not a pass/fail gate.
+# Reads model hparams, so it needs the internal headers like test-kv-stream-plan.
+llama_build(test-q8-brackets-report.cpp)
+target_include_directories(test-q8-brackets-report PRIVATE ${PROJECT_SOURCE_DIR}/src)
+
+# TASK-068 ST-6.2 gated KL ladder: a pass/fail ctest gate (label turbo), not an
+# operator-only script. Skips (77) when TASK068_MODEL / TASK068_CTX are absent,
+# so the CPU CI suite stays offline while a model host runs the comparison.
+if (LLAMA_BUILD_TOOLS AND LLAMA_BUILD_COMMON)
+    add_test(NAME test-task068-q8-brackets-kl
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+        COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/run-task068-q8-brackets-kl.sh $<TARGET_FILE:llama-perplexity>)
+    set_tests_properties(test-task068-q8-brackets-kl PROPERTIES
+        LABELS "turbo"
+        SKIP_RETURN_CODE 77
+        TIMEOUT 14400)
+endif()
 
 llama_build_and_test(test-model-load-cancel.cpp LABEL "model")
 llama_build_and_test(test-autorelease.cpp       LABEL "model")

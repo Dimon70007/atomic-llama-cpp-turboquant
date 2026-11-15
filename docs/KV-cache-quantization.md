@@ -137,6 +137,11 @@ cmake --build build --target llama-perplexity
 export TASK068_MODEL=/path/to/model.gguf
 export TASK068_CTX=16384   # recommend >=16384; raise toward product long-ctx when VRAM allows
 # optional: TASK068_PROMPT=/path/to/prompt.txt
+# default prompt: real Voyna i Mir prose (assets/literature/voyna_i_mir_ru.txt),
+#   sliced to >= 2 * CTX tokens. Never tiled filler: on a repeated sentence the
+#   model is nearly certain of the next token, every arm lands at KLD ~1e-6 and
+#   the ranking is noise. TASK068_PROMPT_MIN_TOKENS overrides the size.
+# optional: TASK068_CORPUS / TASK068_TOKENIZE_BIN override the prompt builder
 # optional: TASK068_CHUNKS=<n> to pin chunks (default: whole prompt as one chunk)
 # optional: TASK068_PAYLOAD_MAX_GB=40 (default 40)
 # Exclusive Metal/CUDA: stop other llama-server / minillm first.

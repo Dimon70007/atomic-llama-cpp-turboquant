@@ -80,62 +80,98 @@ static int check_chunked_dequant(enum ggml_type type, const char * name, int64_t
     return bad >= 0 ? 1 : 0;
 }
 
-int main(void) {
+/* Codec quality gate.
+ *
+ * Tests 1-3 used to only printf MSE/Cosine, so the numbers AGENTS.md quotes
+ * ("turbo3 cosine=1.0, turbo4 cosine=0.9956") were never enforced and a codec
+ * regression passed CI. The vectors are fixed and both codecs are
+ * deterministic, so each case gets a hard cosine floor and MSE ceiling.
+ *
+ * Both turbo mids are covered on every vector: turbo4 has a separate codec
+ * (nibble centroids, no QJL) and a bug in it is invisible to turbo3. */
+
+typedef void (*quant_row_fn)(const float * x, void * y, long long k);
+typedef void (*dequant_row_fn)(const void * x, float * y, long long k);
+
+enum fixture { FIX_BASIS, FIX_SINE, FIX_COSINE };
+
+typedef struct {
+    const char * name;
+    quant_row_fn   quant;
+    dequant_row_fn dequant;
+    enum fixture   fixture;
+    double cos_min;
+    double mse_max;
+} codec_case;
+
+static void fill_fixture(enum fixture f, float * x, int d) {
+    switch (f) {
+        case FIX_BASIS:
+            memset(x, 0, (size_t) d * sizeof(float));
+            x[0] = 1.0f;
+            break;
+        case FIX_SINE:
+            for (int i = 0; i < d; i++) x[i] = sinf(i*0.1f+0.5f) * 10.0f;
+            break;
+        case FIX_COSINE:
+            for (int i = 0; i < d; i++) x[i] = cosf(i*0.2f) * 5.0f;
+            break;
+    }
+}
+
+/* Floors are the measured values of the shipped codec minus a small margin.
+ * A codec that gets better passes; one that gets worse does not. */
+static const codec_case kCodecCases[] = {
+    { "turbo3/basis",  quantize_row_turbo3_0_ref, dequantize_row_turbo3_0, FIX_BASIS,  0.9999, 1e-5 },
+    { "turbo3/sine",   quantize_row_turbo3_0_ref, dequantize_row_turbo3_0, FIX_SINE,   0.9855, 1.3820 },
+    { "turbo3/cosine", quantize_row_turbo3_0_ref, dequantize_row_turbo3_0, FIX_COSINE, 0.9805, 0.4820 },
+    { "turbo4/basis",  quantize_row_turbo4_0_ref, dequantize_row_turbo4_0, FIX_BASIS,  0.9999, 1e-5 },
+    { "turbo4/sine",   quantize_row_turbo4_0_ref, dequantize_row_turbo4_0, FIX_SINE,   0.9950, 0.4580 },
+    { "turbo4/cosine", quantize_row_turbo4_0_ref, dequantize_row_turbo4_0, FIX_COSINE, 0.9953, 0.1115 },
+};
+
+/* dequant stays in the WHT-rotated domain (Q is rotated by the graph too, so
+ * <Q_rot, K_rot> is the correct score); the inverse WHT is applied here only
+ * to compare against the original input. */
+static int check_codec_case(const codec_case * c) {
     const int d = 128;
     char buf[256];
     float input[128], output[128];
-    float mse, cosv, ni, no;
 
+    fill_fixture(c->fixture, input, d);
+    c->quant(input, buf, d);
+    c->dequant(buf, output, d);
+    turbo_cpu_fwht_inverse(output, d);
+
+    double mse = 0.0, dot = 0.0, ni = 0.0, no = 0.0;
+    for (int i = 0; i < d; i++) {
+        mse += (double) (input[i] - output[i]) * (double) (input[i] - output[i]);
+        dot += (double) input[i] * (double) output[i];
+        ni  += (double) input[i] * (double) input[i];
+        no  += (double) output[i] * (double) output[i];
+    }
+    mse /= d;
+    const double cos = (ni > 0.0 && no > 0.0) ? dot / sqrt(ni) / sqrt(no) : 0.0;
+
+    const int ok = cos >= c->cos_min && mse <= c->mse_max;
+    printf("%s %-14s MSE=%.8f (max %.4f) Cosine=%.6f (min %.6f)\n",
+           ok ? "ok  " : "FAIL", c->name, mse, c->mse_max, cos, c->cos_min);
+    return ok ? 0 : 1;
+}
+
+int main(void) {
     printf("=== TurboQuant C Round-Trip Test ===\n\n");
 
-    /* Test 1: basis vector
-     *
-     * dequantize_row_turbo3_0 leaves output in the WHT-rotated domain (Q is
-     * also rotated by the graph, so <Q_rot, K_rot> yields correct attention
-     * scores without an explicit inverse). To verify the round-trip, apply
-     * the inverse WHT before comparing against the original input. */
-    memset(input, 0, sizeof(input));
-    input[0] = 1.0f;
-    quantize_row_turbo3_0_ref(input, buf, d);
-    dequantize_row_turbo3_0(buf, output, d);
-    turbo_cpu_fwht_inverse(output, d);
-    printf("Test 1 (turbo3): e0 = [1, 0, ...]\n");
-    printf("  In:  [%.6f, %.6f, %.6f, %.6f]\n",  (double)(input[0]), (double)(input[1]), (double)(input[2]), (double)(input[3]));
-    printf("  Out: [%.6f, %.6f, %.6f, %.6f]\n",  (double)(output[0]), (double)(output[1]), (double)(output[2]), (double)(output[3]));
-    mse = cosv = ni = no = 0;
-    for (int i = 0; i < d; i++) { mse += (input[i]-output[i])*(input[i]-output[i]); cosv += input[i]*output[i]; ni += input[i]*input[i]; no += output[i]*output[i]; }
-    printf("  MSE=%.8f Cosine=%.6f OutNorm=%.6f\n\n",  (double)(mse/d), (double)(ni > 0 && no > 0 ? cosv/sqrtf(ni)/sqrtf(no) : 0), (double)(sqrtf(no)));
-
-    /* Test 2: large-norm vector */
-    for (int i = 0; i < d; i++) input[i] = sinf(i*0.1f+0.5f) * 10.0f;
-    quantize_row_turbo3_0_ref(input, buf, d);
-    dequantize_row_turbo3_0(buf, output, d);
-    turbo_cpu_fwht_inverse(output, d);
-    printf("Test 2 (turbo3): sin*10\n");
-    printf("  In:  [%.4f, %.4f, %.4f, %.4f]\n",  (double)(input[0]), (double)(input[1]), (double)(input[2]), (double)(input[3]));
-    printf("  Out: [%.4f, %.4f, %.4f, %.4f]\n",  (double)(output[0]), (double)(output[1]), (double)(output[2]), (double)(output[3]));
-    mse = cosv = ni = no = 0;
-    for (int i = 0; i < d; i++) { mse += (input[i]-output[i])*(input[i]-output[i]); cosv += input[i]*output[i]; ni += input[i]*input[i]; no += output[i]*output[i]; }
-    printf("  MSE=%.8f Cosine=%.6f InNorm=%.2f OutNorm=%.2f\n\n",  (double)(mse/d), (double)(cosv/sqrtf(ni)/sqrtf(no)), (double)(sqrtf(ni)), (double)(sqrtf(no)));
-
-    /* Test 3: turbo4
-     *
-     * Same convention as turbo3: dequant leaves output in the rotated domain
-     * (see comment in dequantize_row_turbo4_0 @ ggml-turbo-quant.c). Apply
-     * the inverse WHT before comparing. */
-    for (int i = 0; i < d; i++) input[i] = cosf(i*0.2f) * 5.0f;
-    quantize_row_turbo4_0_ref(input, buf, d);
-    dequantize_row_turbo4_0(buf, output, d);
-    turbo_cpu_fwht_inverse(output, d);
-    printf("Test 3 (turbo4): cos*5\n");
-    printf("  In:  [%.4f, %.4f, %.4f, %.4f]\n",  (double)(input[0]), (double)(input[1]), (double)(input[2]), (double)(input[3]));
-    printf("  Out: [%.4f, %.4f, %.4f, %.4f]\n",  (double)(output[0]), (double)(output[1]), (double)(output[2]), (double)(output[3]));
-    mse = cosv = ni = no = 0;
-    for (int i = 0; i < d; i++) { mse += (input[i]-output[i])*(input[i]-output[i]); cosv += input[i]*output[i]; ni += input[i]*input[i]; no += output[i]*output[i]; }
-    printf("  MSE=%.8f Cosine=%.6f\n\n",  (double)(mse/d), (double)(cosv/sqrtf(ni)/sqrtf(no)));
+    printf("Tests 1-3: codec quality floors (turbo3 + turbo4)\n");
+    int codec_fails = 0;
+    for (size_t i = 0; i < sizeof(kCodecCases) / sizeof(kCodecCases[0]); i++) {
+        codec_fails += check_codec_case(&kCodecCases[i]);
+    }
+    printf("\n");
 
     /* Test 4: chunk-boundary invariant for every type with a chunked vec_dot */
     printf("Test 4: chunked dequant == whole-row dequant\n");
+    int failures = 0;
     {
         const enum ggml_type types[] = {
             GGML_TYPE_TQ3_1S, GGML_TYPE_TQ4_1S,
@@ -145,19 +181,18 @@ int main(void) {
         /* straddle TQ_DOT_CHUNK from both sides, plus a realistic row */
         const int64_t lens[] = { 128, 256, 384, 512, 4096 };
 
-        int failures = 0;
         for (size_t t = 0; t < sizeof(types) / sizeof(types[0]); t++) {
             for (size_t i = 0; i < sizeof(lens) / sizeof(lens[0]); i++) {
                 failures += check_chunked_dequant(types[t], names[t], lens[i]);
             }
         }
-        printf("\n");
-        if (failures) {
-            printf("=== FAILED: %d chunk-boundary mismatches ===\n", failures);
-            return 1;
-        }
     }
+    printf("\n");
 
+    if (codec_fails || failures) {
+        printf("=== FAILED: %d codec quality, %d chunk-boundary ===\n", codec_fails, failures);
+        return 1;
+    }
     printf("=== Done ===\n");
     return 0;
 }

@@ -213,7 +213,14 @@ uint32_t llama_kv_cache_q8_brackets_percent_to_layers(uint32_t n_layer, uint32_t
 // contradiction and aborts instead of silently picking one.
 //
 // Returned counts are already converted to layers for this model.
-llama_kv_cache_q8_widths llama_kv_cache_q8_brackets_resolve_widths(uint32_t n_layer) {
+llama_kv_cache_q8_widths llama_kv_cache_q8_brackets_resolve_widths(uint32_t n_layer, uint32_t n_kv_layer) {
+    // Percentages are shares of the layers that actually own a KV cache. On a
+    // shared-KV model (Gemma-4-E4B/E2B) n_layer counts layers that hold no
+    // cache, so dividing by it silently overshoots: 6/25 of 42 layers is 14
+    // slots, which is 58% of E4B's 24 real cache layers, not 31%.
+    if (n_kv_layer == 0) {
+        n_kv_layer = n_layer;  // caller did not say; keep the old denominator
+    }
     auto env_u32 = [](const char * name, uint32_t def) -> uint32_t {
         const char * e = getenv(name);
         if (!e || e[0] == '\0') {
@@ -251,25 +258,46 @@ llama_kv_cache_q8_widths llama_kv_cache_q8_brackets_resolve_widths(uint32_t n_la
     llama_kv_cache_q8_widths w;
     if (head_abs_set) {
         w.head = (uint32_t) std::strtol(head_abs, nullptr, 10);
-        w.head_pct = n_layer ? (uint32_t) ((uint64_t) w.head * 100 / n_layer) : 0;
+        w.head_pct = n_kv_layer ? (uint32_t) ((uint64_t) w.head * 100 / n_kv_layer) : 0;
         LLAMA_LOG_WARN(
             "llama_kv_cache: TURBO_LAYER_HEAD is deprecated, use TURBO_LAYER_HEAD_PERCENT "
-            "(using %u layers of %u = %u%%)\n", w.head, n_layer, w.head_pct);
+            "(using %u layers of %u kv = %u%%)\n", w.head, n_kv_layer, w.head_pct);
     } else {
         w.head_pct = env_u32("TURBO_LAYER_HEAD_PERCENT", 6);
-        w.head = llama_kv_cache_q8_brackets_percent_to_layers(n_layer, w.head_pct);
+        w.head = llama_kv_cache_q8_brackets_percent_to_layers(n_kv_layer, w.head_pct);
     }
     if (tail_abs_set) {
         w.tail = (uint32_t) std::strtol(tail_abs, nullptr, 10);
-        w.tail_pct = n_layer ? (uint32_t) ((uint64_t) w.tail * 100 / n_layer) : 0;
+        w.tail_pct = n_kv_layer ? (uint32_t) ((uint64_t) w.tail * 100 / n_kv_layer) : 0;
         LLAMA_LOG_WARN(
             "llama_kv_cache: TURBO_LAYER_TAIL is deprecated, use TURBO_LAYER_TAIL_PERCENT "
-            "(using %u layers of %u = %u%%)\n", w.tail, n_layer, w.tail_pct);
+            "(using %u layers of %u kv = %u%%)\n", w.tail, n_kv_layer, w.tail_pct);
     } else {
         w.tail_pct = env_u32("TURBO_LAYER_TAIL_PERCENT", 25);
-        w.tail = llama_kv_cache_q8_brackets_percent_to_layers(n_layer, w.tail_pct);
+        w.tail = llama_kv_cache_q8_brackets_percent_to_layers(n_kv_layer, w.tail_pct);
     }
     return w;
+}
+
+// Thin wrapper for diagnostic tools (tests/test-q8-brackets-report.cpp) that need
+// the resolved widths without pulling in llama_hparams. Mirrors resolve_widths
+// so a report can never disagree with the schedule the loader applies.
+struct llama_kv_cache_q8_report_widths {
+    uint32_t head = 0;
+    uint32_t tail = 0;
+    uint32_t head_pct = 0;
+    uint32_t tail_pct = 0;
+};
+
+llama_kv_cache_q8_report_widths llama_kv_cache_q8_brackets_report_widths(
+        uint32_t n_layer, uint32_t n_kv_layer) {
+    const llama_kv_cache_q8_widths w = llama_kv_cache_q8_brackets_resolve_widths(n_layer, n_kv_layer);
+    llama_kv_cache_q8_report_widths r;
+    r.head = w.head;
+    r.tail = w.tail;
+    r.head_pct = w.head_pct;
+    r.tail_pct = w.tail_pct;
+    return r;
 }
 
 // Plan which layers get q8_0 V for the bracket schedule.
@@ -283,6 +311,41 @@ llama_kv_cache_q8_widths llama_kv_cache_q8_brackets_resolve_widths(uint32_t n_la
 //   else:       head + tail, both sliding over layers that own KV only
 //
 // Throws when the plan would exceed half the layers.
+// Spread `count` slots evenly over the cache-owning layers in [begin, n_layer).
+// Used as the dense-mode fallback for models with no SWA/dense split, where
+// "the layer after a dense one" has no meaning and refusing would leave the
+// operator with no schedule at all.
+static uint32_t llama_kv_cache_q8_spread_evenly(
+        uint32_t n_layer,
+        const std::vector<bool> & has_kv,
+        std::vector<uint8_t> & want,
+        uint32_t begin,
+        uint32_t count) {
+    std::vector<uint32_t> available;
+    for (uint32_t il = begin; il < n_layer; ++il) {
+        if (has_kv[il] && !want[il]) {
+            available.push_back(il);
+        }
+    }
+    if (available.empty() || count == 0) {
+        return 0;
+    }
+    const uint32_t pick = std::min<uint32_t>(count, (uint32_t) available.size());
+    uint32_t placed = 0;
+    for (uint32_t i = 0; i < pick; ++i) {
+        // Centred stride: (2i+1)/(2*pick) keeps the first and last slot from
+        // crowding the ends of the range.
+        const uint64_t idx = ((uint64_t) (2 * i + 1) * available.size()) / (uint64_t) (2 * pick);
+        const uint32_t il = available[idx < available.size() ? idx : available.size() - 1];
+        if (want[il]) {
+            continue;
+        }
+        want[il] = 1;
+        ++placed;
+    }
+    return placed;
+}
+
 std::vector<uint8_t> llama_kv_cache_q8_brackets_plan_layers(
         uint32_t n_layer,
         const std::vector<bool> & has_kv,
@@ -303,15 +366,85 @@ std::vector<uint8_t> llama_kv_cache_q8_brackets_plan_layers(
     }
 
     uint32_t planned = 0;
-    if (dense_mode) {
-        for (uint32_t il = 0; il < n_layer; ++il) {
+    // A model with no SWA layer at all has no dense/SWA split, so "the layer
+    // after a dense one" is meaningless. Fall back to an even spread instead of
+    // refusing, so the requested budget is still spent.
+    bool has_swa_layer = false;
+    for (uint32_t il = 0; il < n_layer; ++il) {
+        if (has_kv[il] && is_swa[il]) {
+            has_swa_layer = true;
+            break;
+        }
+    }
+    if (!has_swa_layer && dense_mode) {
+        for (uint32_t il = 0; il < n_layer && planned < head_req; ++il) {
             if (!has_kv[il]) {
-                continue;  // shared-KV layer: no cache to quantize
+                continue;
             }
-            if (il < head_req || !is_swa[il]) {
-                want[il] = 1;
+            want[il] = 1;
+            ++planned;
+        }
+        const uint32_t spread = llama_kv_cache_q8_spread_evenly(
+                n_layer, has_kv, want, head_req, tail_req);
+        planned += spread;
+        if (spread < tail_req) {
+            throw std::runtime_error(
+                "even-spread tail needs " + std::to_string(tail_req) +
+                " slots but only " + std::to_string(spread) +
+                " cache-owning layers are available after the head");
+        }
+    } else if (dense_mode) {
+        // DENSE mode: q8 goes to the layers AFTER the full-context layers, not on
+        // them, because a dense layer owns the expensive full-length cache while
+        // its neighbours are short SWA caches. Head layers keep their q8.
+        for (uint32_t il = 0; il < n_layer && planned < head_req; ++il) {
+            if (!has_kv[il]) {
+                continue;
+            }
+            want[il] = 1;
+            ++planned;
+        }
+        if (tail_req >= n_layer) {
+            throw std::runtime_error(
+                "TURBO_LAYER_TAIL must be < n_layer (tail=" + std::to_string(tail_req) +
+                " n_layer=" + std::to_string(n_layer) + ")");
+        }
+        // Walk the dense layers from the last one backwards, taking the layers at
+        // +1, +2, ... offsets until tail_req slots are filled. On 26B (dense
+        // 5,11,17,23,29, tail 8) that yields 6,7,12,13,18,19,24,25.
+        uint32_t tail_planned = 0;
+        // Never plan beyond the half cap: clamp inside the walk so an absurd
+        // width degrades instead of failing the whole load.
+        const uint32_t tail_cap = n_layer / 2 > head_req ? n_layer / 2 - head_req : 0;
+        const uint32_t tail_budget = tail_req < tail_cap ? tail_req : tail_cap;
+        for (uint32_t offset = 1; offset < n_layer && tail_planned < tail_budget; ++offset) {
+            for (uint32_t il = n_layer; il-- > 0 && tail_planned < tail_budget; ) {
+                if (is_swa[il]) {
+                    continue;  // slots hang off dense layers only
+                }
+                const uint32_t nb = il + offset;
+                if (nb >= n_layer || !has_kv[nb] || want[nb] || !is_swa[nb]) {
+                    continue;  // out of range, no cache, already taken, or dense
+                }
+                want[nb] = 1;
+                ++tail_planned;
                 ++planned;
             }
+        }
+        if (tail_planned < tail_budget) {
+            // Fewer usable slots than the width asks for (the last dense layer may
+            // have no cache-owning layers after it). Spend what exists and warn:
+            // a width is a target, and refusing would leave the model with no
+            // schedule at all.
+            if (tail_planned == 0) {
+                throw std::runtime_error(
+                    "dense-mode tail selected no layer (tail=" +
+                    std::to_string(tail_req) + "); no cache-owning layer follows a dense one");
+            }
+            LLAMA_LOG_WARN(
+                "llama_kv_cache: dense-mode tail wanted %u layers but only %u follow a"
+                " dense layer with a cache; using %u (lower TURBO_LAYER_TAIL_PERCENT to silence)\n",
+                tail_req, tail_planned, tail_planned);
         }
     } else {
         if (tail_req >= n_layer) {
@@ -354,6 +487,13 @@ std::vector<uint8_t> llama_kv_cache_q8_brackets_plan_layers(
             std::to_string(n_layer) + " layers in q8_0 (limit: half); lower HEAD/TAIL");
     }
     return want;
+}
+
+ggml_type llama_kv_cache_q8_brackets_layer_type_v(
+        ggml_type mid_v,
+        const std::vector<uint8_t> & plan,
+        uint32_t il) {
+    return (il < plan.size() && plan[il]) ? GGML_TYPE_Q8_0 : mid_v;
 }
 
 static std::vector<uint8_t> llama_kv_cache_q8_brackets_plan(
@@ -541,7 +681,8 @@ llama_kv_cache::llama_kv_cache(
     if (kv_q8_brackets) {
         const bool dense = llama_kv_cache_q8_brackets_dense_mode();
 
-        const llama_kv_cache_q8_widths w = llama_kv_cache_q8_brackets_resolve_widths(hparams.n_layer());
+        const llama_kv_cache_q8_widths w = llama_kv_cache_q8_brackets_resolve_widths(
+                hparams.n_layer(), hparams.n_layer_kv());
         head_eff = w.head;
         tail_eff = w.tail;
         head_pct = w.head_pct;
@@ -569,10 +710,10 @@ llama_kv_cache::llama_kv_cache(
         }
         if (dense) {
             LLAMA_LOG_INFO(
-                "llama_kv_cache: q8 brackets DENSE mode: %u x q8_0 (head %u + all non-SWA"
-                " with KV), mid %u x %s; layers q8 = [%s]\n",
-                effective, head_eff, hparams.n_layer() - planned, ggml_type_name(type_v),
-                layers.c_str());
+                "llama_kv_cache: q8 brackets DENSE mode: %u x q8_0 (head %u + tail %u"
+                " distributed after the dense layers), mid %u x %s; layers q8 = [%s]\n",
+                effective, head_eff, tail_eff, hparams.n_layer() - planned,
+                ggml_type_name(type_v), layers.c_str());
         } else {
             LLAMA_LOG_INFO(
                 "llama_kv_cache: q8 brackets positional: front %u x q8_0 (%u%%), mid %u x %s, "
@@ -838,9 +979,7 @@ llama_kv_cache::llama_kv_cache(
         ggml_type layer_type_v;
         if (kv_q8_brackets) {
             // Planned once above from model properties (has_kv / is_swa).
-            layer_type_v = (il < kv_q8_want.size() && kv_q8_want[il])
-                ? GGML_TYPE_Q8_0
-                : type_v;
+            layer_type_v = llama_kv_cache_q8_brackets_layer_type_v(type_v, kv_q8_want, il);
         } else {
             layer_type_v = llama_kv_cache_turbo_layer_adaptive_type_v(
                     kv_adaptive_mode, type_k, type_v, il, hparams.n_layer());
