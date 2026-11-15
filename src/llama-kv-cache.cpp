@@ -388,10 +388,18 @@ std::vector<uint8_t> llama_kv_cache_q8_brackets_plan_layers(
                 n_layer, has_kv, want, head_req, tail_req);
         planned += spread;
         if (spread < tail_req) {
-            throw std::runtime_error(
-                "even-spread tail needs " + std::to_string(tail_req) +
-                " slots but only " + std::to_string(spread) +
-                " cache-owning layers are available after the head");
+            // Fewer cache-owning layers than the width asks for. Spend what
+            // exists and warn, like the dense-neighbour branch: a width is a
+            // target, and refusing would leave the model with no schedule.
+            if (spread == 0) {
+                throw std::runtime_error(
+                    "even-spread tail selected no layer (tail=" +
+                    std::to_string(tail_req) + "); no cache-owning layer is available");
+            }
+            LLAMA_LOG_WARN(
+                "llama_kv_cache: even-spread tail wanted %u layers but only %u cache-owning"
+                " layers are available after the head; using %u (lower TURBO_LAYER_TAIL_PERCENT"
+                " to silence)\n", tail_req, spread, spread);
         }
     } else if (dense_mode) {
         // DENSE mode: q8 goes to the layers AFTER the full-context layers, not on

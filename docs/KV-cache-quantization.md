@@ -142,6 +142,10 @@ export TASK068_CTX=16384   # recommend >=16384; raise toward product long-ctx wh
 #   model is nearly certain of the next token, every arm lands at KLD ~1e-6 and
 #   the ranking is noise. TASK068_PROMPT_MIN_TOKENS overrides the size.
 # optional: TASK068_CORPUS / TASK068_TOKENIZE_BIN override the prompt builder
+# optional: TASK068_PROTECT_DENSE=0|1  (0 default = positional brackets,
+#   1 = q8 on the layers AFTER each dense layer; measured worse, see TASK-068 10.31)
+# optional: TASK068_HEAD_PERCENT / TASK068_TAIL_PERCENT (default: library 6/25).
+#   The tail width is the lever that mattered: 35 beat 25 by 7.1% on 26B.
 # optional: TASK068_CHUNKS=<n> to pin chunks (default: whole prompt as one chunk)
 # optional: TASK068_PAYLOAD_MAX_GB=40 (default 40)
 # Exclusive Metal/CUDA: stop other llama-server / minillm first.

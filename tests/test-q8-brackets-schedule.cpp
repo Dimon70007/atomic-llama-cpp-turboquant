@@ -105,16 +105,29 @@ struct ModelShape {
     uint32_t swa_period;    // dense layer every swa_period-th layer
     uint32_t dense_offset;  // index of the first dense layer
     uint32_t shared_kv;     // trailing layers with no cache of their own
+    // Recurrent hybrid (qwen35 family): 0 = none, otherwise every n-th layer owns
+    // a KV cache (3,7,11,... for period 4) and the rest keep recurrent state.
+    uint32_t kv_period = 0;
 };
 
-// Real shapes, read from the GGUFs (see ST-10.11).
+// Real shapes, read from the GGUFs (see ST-10.11 / 10.33).
 const ModelShape kModels[] = {
     { "gemma-4-E2B",    35, 5, 4, 20 },  // dense 4,9,14,19,24,29,34; kv 0..14
     { "gemma-4-26B-A4B", 30, 6, 5,  0 },  // dense 5,11,17,23,29; kv 0..29
+    // DeepSeek-V4-Pro-Qwen3.5-9B: 32 layers, only 3,7,11,15,19,23,27,31 own KV,
+    // the other 24 are recurrent. n_layer_kv_from_start stays -1 here.
+    { "deepseek-v4-qwen35-9b", 32, 0, 0, 0, 4 },
 };
 
 std::vector<bool> make_swa(const ModelShape & m) {
     std::vector<bool> s(m.n_layer, true);
+    if (m.swa_period == 0) {
+        // No SWA split at all: every cache-bearing layer is full-context.
+        for (uint32_t i = 0; i < m.n_layer; ++i) {
+            s[i] = false;
+        }
+        return s;
+    }
     for (uint32_t i = m.dense_offset; i < m.n_layer; i += m.swa_period) {
         s[i] = false;
     }
@@ -125,6 +138,13 @@ std::vector<bool> make_has_kv(const ModelShape & m) {
     std::vector<bool> kv(m.n_layer, true);
     for (uint32_t i = m.n_layer - m.shared_kv; i < m.n_layer; ++i) {
         kv[i] = false;
+    }
+    if (m.kv_period != 0) {
+        // Recurrent hybrid: only every kv_period-th layer (1-based, so 3,7,11...)
+        // owns a KV cache; the rest hold recurrent state.
+        for (uint32_t i = 0; i < m.n_layer; ++i) {
+            kv[i] = ((i + 1) % m.kv_period) == 0;
+        }
     }
     return kv;
 }
@@ -195,7 +215,14 @@ void check_model(const ModelShape & m, bool dense, uint32_t head, uint32_t tail)
 }
 
 // Number of layers with a cache; the useful denominator for "how many live slots".
-uint32_t live_kv(const ModelShape & m) { return m.n_layer - m.shared_kv; }
+uint32_t live_kv(const ModelShape & m) {
+    uint32_t n = 0;
+    const auto kv = make_has_kv(m);
+    for (bool has : kv) {
+        n += has ? 1 : 0;
+    }
+    return n;
+}
 
 // Dense-mode throw check: dense=true, custom tail.
 void expect_throws_on(const char * name, const ModelShape & m,
@@ -456,6 +483,60 @@ void check_percent_denominator() {
     unsetenv("TURBO_LAYER_TAIL_PERCENT");
 }
 
+// Recurrent hybrid (qwen35 family, TASK-068 10.33): only every 4th layer owns a
+// KV cache, the rest hold recurrent state. Before the fix the percent widths
+// resolved against n_layer (32) instead of the 8 real cache layers, so 8 of 10
+// planned slots were dead and the dead-slot warning never fired.
+void check_recurrent_hybrid(const ModelShape & m) {
+    const auto kv  = make_has_kv(m);
+    const auto swa = make_swa(m);
+    const uint32_t n_kv = live_kv(m);
+
+    char label[192];
+    snprintf(label, sizeof(label), "%s hybrid_kv_layers_is_8", m.name);
+    expect_true(label, n_kv == 8);
+
+    // The planner must never select a layer without a cache.
+    const auto plan = llama_kv_cache_q8_brackets_plan_layers(m.n_layer, kv, swa, false, 1, 2);
+    uint32_t dead = 0;
+    uint32_t live = 0;
+    for (uint32_t il = 0; il < m.n_layer; ++il) {
+        if (!plan[il]) {
+            continue;
+        }
+        if (kv[il]) {
+            ++live;
+        } else {
+            ++dead;
+        }
+    }
+    snprintf(label, sizeof(label), "%s hybrid_no_dead_slots", m.name);
+    expect_true(label, dead == 0);
+
+    // 6%/25% of 8 KV layers = 1 head + 2 tail, every slot live.
+    snprintf(label, sizeof(label), "%s hybrid_6_25_plans_three_live_slots", m.name);
+    expect_true(label, live == 3);
+
+    // The slots must actually be KV layers (3, 27, 31 for this shape).
+    expect_plan("deepseek-v4-qwen35-9b hybrid_6_25_exact", plan, "3,27,31");
+
+    // The half-stack cap must scale with the real cache, not with n_layer: 3 of
+    // 8 kv is fine, and a wider tail must not be allowed to name 16 dead layers.
+    const auto wide = llama_kv_cache_q8_brackets_plan_layers(m.n_layer, kv, swa, false, 1, 20);
+    uint32_t wide_dead = 0;
+    uint32_t wide_total = 0;
+    for (uint32_t il = 0; il < m.n_layer; ++il) {
+        if (wide[il]) {
+            ++wide_total;
+            if (!kv[il]) {
+                ++wide_dead;
+            }
+        }
+    }
+    snprintf(label, sizeof(label), "%s hybrid_wide_tail_has_no_dead_slots", m.name);
+    expect_true(label, wide_dead == 0 && wide_total > 0);
+}
+
 void check_mid_application(const ModelShape & m, ggml_type mid) {
     char label[192];
     const auto kv  = make_has_kv(m);
@@ -607,6 +688,14 @@ int main() {
     // No literal index list here: expected_plan() derives the set from the same
     // ModelShape data, so adding a model only means adding one row to kModels.
     for (const auto & m : kModels) {
+        // Recurrent hybrids have no SWA/dense split and only 8 KV layers, so the
+        // Gemma-shaped expectations below do not apply; they get their own block.
+        if (m.kv_period != 0) {
+            printf("-- %s: n_layer=%u recurrent hybrid, kv only every %u-th (live %u)\n",
+                   m.name, m.n_layer, m.kv_period, live_kv(m));
+            check_recurrent_hybrid(m);
+            continue;
+        }
         printf("-- %s: n_layer=%u dense every %u from %u, shared_kv=%u (live %u)\n",
                m.name, m.n_layer, m.swa_period, m.dense_offset, m.shared_kv, live_kv(m));
 
@@ -663,6 +752,9 @@ int main() {
 
     // Percentages must be shares of the real cache, not of n_layer.
     check_percent_denominator();
+
+    // 10.33: recurrent hybrid (qwen35 family) is covered inside the model loop
+    // above, because its shape breaks the Gemma SWA assumptions.
 
     // ---- half-layer cap ---------------------------------------------------
     {

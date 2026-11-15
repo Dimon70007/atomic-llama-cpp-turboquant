@@ -309,15 +309,19 @@ uint32_t llama_hparams::n_embd_head_v_mla() const {
 }
 
 bool llama_hparams::has_kv(uint32_t il) const {
-    if (n_layer_kv_from_start >= 0) {
-        if (il < (uint32_t) n_layer_kv_from_start) {
-            return true;
-        }
-
+    // A recurrent layer holds a recurrent state, not a KV cache, regardless of
+    // how n_layer_kv_from_start is set. Hybrid stacks (qwen35) mark those layers
+    // in is_recr_impl; ignoring them made n_layer_kv() report every layer and
+    // put q8 slots on layers that have no cache at all.
+    if (is_recr(il)) {
         return false;
     }
 
-    // by default, all layers have kv
+    if (n_layer_kv_from_start >= 0) {
+        return il < (uint32_t) n_layer_kv_from_start;
+    }
+
+    // by default, all non-recurrent layers have kv
     return true;
 }
 
