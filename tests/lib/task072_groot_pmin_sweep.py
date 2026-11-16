@@ -176,6 +176,82 @@ class PromptTooLong(RuntimeError):
     """Server rejected the request because prompt + max_tokens exceeds its ctx."""
 
 
+def parse_facts(raw: Any, *, source: str) -> list[tuple[str, str]]:
+    """Validate ``[{id, regex}]`` fact rows; abort on anything unusable.
+
+    Args:
+        raw: Parsed JSON payload, expected to carry a ``facts`` list.
+        source: Path label for error messages.
+
+    Returns:
+        ``[(id, regex)]`` in file order.
+
+    Raises:
+        SystemExit: The payload is not a mapping, ``facts`` is missing/empty, a
+            row lacks ``id``/``regex``, or a regex does not compile.
+    """
+    if not isinstance(raw, dict):
+        raise SystemExit(f"facts file must be a JSON object: {source}")
+    rows = raw.get("facts")
+    if not isinstance(rows, list) or not rows:
+        raise SystemExit(f"{source}: missing non-empty 'facts' list")
+    out: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    for row in rows:
+        if not isinstance(row, dict):
+            raise SystemExit(f"{source}: fact row must be an object, got {row!r}")
+        fact_id = str(row.get("id") or "").strip()
+        regex = str(row.get("regex") or "").strip()
+        if not fact_id or not regex:
+            raise SystemExit(f"{source}: fact row needs id and regex, got {row!r}")
+        if fact_id in seen:
+            raise SystemExit(f"{source}: duplicate fact id {fact_id!r}")
+        seen.add(fact_id)
+        try:
+            re.compile(regex)
+        except re.error as exc:
+            raise SystemExit(f"{source}: fact {fact_id!r} regex does not compile: {exc}")
+        out.append((fact_id, regex))
+    return out
+
+
+def score_facts(emission: str, facts: Sequence[tuple[str, str]]) -> dict[str, bool]:
+    """Return ``{fact_id: present}`` over the full emission.
+
+    A fact is present when its regex matches anywhere in the emission
+    (``reasoning_content`` + ``content``): thinking mode can put the arithmetic
+    in the trace and never restate it in the answer.
+    """
+    return {fact_id: re.search(regex, emission) is not None for fact_id, regex in facts}
+
+
+def check_facts_prompt(raw: Any, prompt: str, *, source: str) -> None:
+    """Abort when the facts file declares a prompt the sweep is not sending.
+
+    A facts file is only meaningful for the question it was written for. Scored
+    against a different prompt it silently reports misses that are not model
+    failures, so a mismatch is an error rather than a warning.
+
+    Args:
+        raw: Parsed facts JSON.
+        prompt: The prompt the sweep will actually send.
+        source: Path label for the error message.
+
+    Raises:
+        SystemExit: A declared prompt differs from the one in use.
+    """
+    declared = str(raw.get("prompt") or "").strip() if isinstance(raw, dict) else ""
+    if not declared:
+        raise SystemExit(
+            f"{source}: missing 'prompt' (a facts file must name the question it scores)"
+        )
+    if declared != prompt.strip():
+        raise SystemExit(
+            f"{source}: declared prompt does not match the prompt being sent "
+            "(scoring a different question would report false misses)"
+        )
+
+
 def run_cell(
     cell: Cell,
     bin_path: Path,
@@ -192,6 +268,7 @@ def run_cell(
     load_timeout: float,
     repeats: int = 1,
     extra_server_args: Sequence[str] = (),
+    facts: Sequence[tuple[str, str]] = (),
 ) -> dict[str, Any]:
     """Start a server for one cell, run `repeats` greedy requests, tear it down.
 
@@ -210,6 +287,7 @@ def run_cell(
     log_path = cell_dir / "server.log"
     row: dict[str, Any] = {"id": cell.id, "n_max": cell.n_max, "p_min": cell.p_min}
     runs: list[dict[str, Any]] = []
+    emissions: list[str] = []
 
     t0 = time.time()
     try:
@@ -239,6 +317,7 @@ def run_cell(
                     message = choice.get("message") or {}
                     text = str(message.get("content") or "")
                     reasoning = str(message.get("reasoning_content") or "")
+                    emissions.append(reasoning + "\n<<<ANSWER>>>\n" + text)
                     if repeats == 1:
                         (cell_dir / "answer.txt").write_text(text, encoding="utf-8")
                         (cell_dir / "reasoning.txt").write_text(reasoning, encoding="utf-8")
@@ -290,6 +369,15 @@ def run_cell(
     row["acceptance_log"] = float(acc[-1]) if acc else None
     row["mean_len_log"] = float(mean_len[-1]) if mean_len else None
     row["mtp_draft_context"] = "creating MTP draft context against the target model" in log_text
+    # Fact scoring runs on the last emission: with repeats > 1 the earlier runs
+    # are the ones affected by cross-request state (TASK-073), so the reported
+    # accuracy would otherwise mix a clean run with a stale-state one.
+    if facts and emissions:
+        facts_last = score_facts(emissions[-1], facts)
+        row["facts"] = facts_last
+        row["facts_passed"] = sum(1 for ok_fact in facts_last.values() if ok_fact)
+        row["facts_total"] = len(facts)
+        row["facts_all_pass"] = all(facts_last.values())
     return row
 
 
@@ -339,15 +427,24 @@ def _write_summary(out_dir: Path, rows: list[dict[str, Any]], meta: dict[str, An
         "Text equality compares the full emission (`reasoning_content` + `content`),"
         " because thinking mode can consume the whole budget before any answer starts.",
         "",
-        "| cell | n_max | p_min | decode t/s (median) | min..max | acceptance | mean len | tokens | finish | answer chars | text == ref |",
-        "|---|---|---|---|---|---|---|---|---|---|---|",
     ]
+    has_facts = any("facts_total" in r for r in rows)
+    header = (
+        "| cell | n_max | p_min | decode t/s (median) | min..max | acceptance | "
+        "mean len | tokens | finish | answer chars | text == ref |"
+    )
+    separator = "|---|---|---|---|---|---|---|---|---|---|---|"
+    if has_facts:
+        header += " facts |"
+        separator += "---|"
+        lines += [f"scored facts: {meta.get('facts_passed_rule', '')}", ""]
+    lines += [header, separator]
     for r in rows:
         spread = "-"
         if r.get("decode_min") is not None and r.get("decode_max") is not None:
             if r["decode_min"] != r["decode_max"]:
                 spread = f"{r['decode_min']:.2f}..{r['decode_max']:.2f}"
-        lines.append(
+        line = (
             "| {id} | {n} | {p} | {d} | {s} | {a} | {m} | {t} | {f} | {c} | {eq} |".format(
                 id=r["id"],
                 n=r.get("n_max") if r.get("n_max") is not None else "-",
@@ -366,6 +463,12 @@ def _write_summary(out_dir: Path, rows: list[dict[str, Any]], meta: dict[str, An
                 eq="yes" if dist.get(r["id"]) else "**NO**",
             )
         )
+        if has_facts:
+            if r.get("facts_total") is None:
+                line += " - |"
+            else:
+                line += f" {r['facts_passed']}/{r['facts_total']} |"
+        lines.append(line)
     moved = [cid for cid, same in dist.items() if not same]
     truncated = [r["id"] for r in rows if r.get("finish_reason") == "length"]
     mtp_cells = [r["id"] for r in rows if r.get("p_min") is not None]
@@ -402,6 +505,36 @@ def _write_summary(out_dir: Path, rows: list[dict[str, Any]], meta: dict[str, An
             + ", ".join(f"`{c}`" for c in truncated)
             + ". A truncated cell compares only the prefix, so raise `--max-tokens`"
             " before quoting these cells as equality evidence.",
+        ]
+    if has_facts:
+        scored = [r for r in rows if r.get("facts_total") is not None]
+        perfect = [r["id"] for r in scored if r.get("facts_all_pass")]
+        broken = [r["id"] for r in scored if not r.get("facts_all_pass")]
+        lines += [
+            "",
+            "### Scored facts",
+            "",
+            f"Source: `{meta.get('facts_source', '')}` over the full emission.",
+            "",
+            "Cells with every fact present: "
+            + (", ".join(f"`{c}`" for c in perfect) if perfect else "none")
+            + ".",
+        ]
+        if broken:
+            lines += [
+                "",
+                "Cells missing at least one fact: " + ", ".join(f"`{c}`" for c in broken) + ".",
+            ]
+            for r in scored:
+                if r.get("facts_all_pass"):
+                    continue
+                missing = sorted(k for k, ok_fact in (r.get("facts") or {}).items() if not ok_fact)
+                lines.append(f"- `{r['id']}`: missing {', '.join(missing)}")
+        lines += [
+            "",
+            "A fact miss is a quality finding, not a knob effect, unless the speed"
+            " column also separates: divergence between MTP and sequential decode is"
+            " the TASK-066 class effect and reproduces at any `p_min`.",
         ]
     path = out_dir / "summary.md"
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -447,6 +580,12 @@ def main(argv: list[str]) -> int:
         default="",
         help="comma-separated cell ids (default: the built-in minimal grid)",
     )
+    ap.add_argument(
+        "--facts",
+        type=Path,
+        default=None,
+        help="JSON facts file ({facts:[{id,regex}]}) scored against each emission",
+    )
     args = ap.parse_args(argv)
 
     for path, name in ((args.model, "--model"), (args.bin_path, "--bin")):
@@ -473,6 +612,19 @@ def main(argv: list[str]) -> int:
         prompt = args.prompt
         prompt_source = "<--prompt>"
 
+    facts: list[tuple[str, str]] = []
+    if args.facts is not None:
+        if not args.facts.is_file():
+            print(f"FAIL: --facts not found: {args.facts}", file=sys.stderr)
+            return 2
+        try:
+            facts_raw = json.loads(args.facts.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            print(f"FAIL: --facts is not valid JSON: {exc}", file=sys.stderr)
+            return 2
+        facts = parse_facts(facts_raw, source=str(args.facts))
+        check_facts_prompt(facts_raw, prompt, source=str(args.facts))
+
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     out_dir = args.out_dir / stamp
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -491,6 +643,12 @@ def main(argv: list[str]) -> int:
         "prompt_chars": len(prompt),
         "prompt": prompt if len(prompt) <= 2000 else prompt[:2000] + "...[truncated]",
         "cells": [c.id for c in cells],
+        "facts_source": str(args.facts) if args.facts is not None else "",
+        "facts_passed_rule": (
+            "regex must match the full emission (reasoning_content + content); "
+            "last run only when repeats > 1"
+        ),
+        "facts": [{"id": fid, "regex": rx} for fid, rx in facts],
     }
     (out_dir / "meta.json").write_text(
         json.dumps(meta, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
@@ -505,6 +663,7 @@ def main(argv: list[str]) -> int:
                 cell, args.bin_path, args.model, out_dir, prompt,
                 args.ctx, args.ngl, args.batch, args.ubatch, args.ctk, args.ctv,
                 args.max_tokens, args.load_timeout, args.repeats, args.server_args,
+                facts,
             )
         except PromptTooLong as exc:
             print(
@@ -522,13 +681,17 @@ def main(argv: list[str]) -> int:
             failed = True
             print(f"  FAILED: {row.get('error') or 'no timings'}", file=sys.stderr)
             continue
+        facts_note = ""
+        if row.get("facts_total") is not None:
+            facts_note = f", facts {row['facts_passed']}/{row['facts_total']}"
         print(
-            "  {:.2f} t/s, acc {}, mean len {}, {} tok, finish {}".format(
+            "  {:.2f} t/s, acc {}, mean len {}, {} tok, finish {}{}".format(
                 row["decode_tok_per_s"],
                 row.get("acceptance_log"),
                 row.get("mean_len_log"),
                 row.get("completion_tokens"),
                 row.get("finish_reason"),
+                facts_note,
             ),
             flush=True,
         )

@@ -14,6 +14,7 @@
 #   TASK072_OUT        default <repo>/logs/task072-pmin-sweep
 #   TASK072_MAX_TOKENS default 4096 (thinking needs room to close)
 #   TASK072_CTX        default 16384
+#   TASK072_FACTS      JSON facts file scored against each emission (optional)
 #   ONLY               comma-separated cell ids
 #   TASK072_REPEATS    requests per cell on one server load (default 1; median is reported)
 #   TASK072_SERVER_ARGS extra llama-server args, space separated (e.g. "--ctx-checkpoints 0")
@@ -45,6 +46,10 @@ fi
 
 ARGS=(--model "${MODEL}" --bin "${SERVER}" --out-dir "${OUT}"
       --max-tokens "${MAX_TOKENS}" --ctx "${CTX}" --repeats "${REPEATS}")
+if [[ -n "${TASK072_FACTS:-}" ]]; then
+  [[ -f "${TASK072_FACTS}" ]] || { echo "FAIL: missing facts file ${TASK072_FACTS}" >&2; exit 2; }
+  ARGS+=(--facts "${TASK072_FACTS}")
+fi
 if [[ -n "${ONLY:-}" ]]; then
   ARGS+=(--only "${ONLY}")
 fi
