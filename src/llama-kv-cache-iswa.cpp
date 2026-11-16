@@ -392,7 +392,14 @@ bool llama_kv_cache_iswa::get_can_shift() const {
 }
 
 void llama_kv_cache_iswa::state_write(llama_io_write_i & io, llama_seq_id seq_id, llama_state_seq_flags flags) const {
-    if ((flags & LLAMA_STATE_SEQ_FLAGS_PARTIAL_ONLY) == 0) {
+    const bool partial_only = (flags & LLAMA_STATE_SEQ_FLAGS_PARTIAL_ONLY) != 0;
+    LLAMA_LOG_INFO("%s: seq %d, partial_only = %d, base [%d, %d] %s, swa [%d, %d]\n",
+            __func__, (int) seq_id, (int) partial_only,
+            (int) kv_base->seq_pos_min(seq_id), (int) kv_base->seq_pos_max(seq_id),
+            partial_only ? "SKIPPED" : "written",
+            (int) kv_swa->seq_pos_min(seq_id), (int) kv_swa->seq_pos_max(seq_id));
+
+    if (!partial_only) {
         kv_base->state_write(io, seq_id, flags);
     }
 
@@ -400,11 +407,21 @@ void llama_kv_cache_iswa::state_write(llama_io_write_i & io, llama_seq_id seq_id
 }
 
 void llama_kv_cache_iswa::state_read(llama_io_read_i & io, llama_seq_id seq_id, llama_state_seq_flags flags) {
-    if ((flags & LLAMA_STATE_SEQ_FLAGS_PARTIAL_ONLY) == 0) {
+    const bool partial_only = (flags & LLAMA_STATE_SEQ_FLAGS_PARTIAL_ONLY) != 0;
+
+    if (!partial_only) {
         kv_base->state_read(io, seq_id, flags);
     }
 
     kv_swa->state_read(io, seq_id, flags);
+
+    // a partial restore leaves the base half untouched, so its range is whatever
+    // the previous request left behind - report it next to the restored window
+    LLAMA_LOG_INFO("%s: seq %d, partial_only = %d, base [%d, %d] %s, swa [%d, %d]\n",
+            __func__, (int) seq_id, (int) partial_only,
+            (int) kv_base->seq_pos_min(seq_id), (int) kv_base->seq_pos_max(seq_id),
+            partial_only ? "untouched" : "restored",
+            (int) kv_swa->seq_pos_min(seq_id), (int) kv_swa->seq_pos_max(seq_id));
 }
 
 llama_kv_cache * llama_kv_cache_iswa::get_base() const {

@@ -473,6 +473,14 @@ endif()
 # truncated or wrong-version blob is refused instead of memcpy'd.
 llama_build_and_test(test-task073-mtp-state-codec.cpp)
 
+# TASK-073.1 ST-3: checkpoint resume position (CPU; no model).
+# A blob stamped [pos_min, pos_max] covers pos_max + 1 tokens. The old
+# max(pos_min + 1, pos_max) was right only for a single-position range (Groot)
+# and dropped the last covered token otherwise (Gemma), which replayed the
+# prompt in a different prefill partition and changed the text.
+llama_build_and_test(test-task0731-checkpoint-pos-next.cpp)
+target_include_directories(test-task0731-checkpoint-pos-next PRIVATE ${PROJECT_SOURCE_DIR}/tools/server)
+
 # TASK-073 ST-1/ST-3: one greedy request repeated in one server must emit one
 # text, checkpoint restore included. Skips (77) when TASK073_MODEL is absent.
 if (LLAMA_BUILD_TOOLS AND LLAMA_BUILD_COMMON)
@@ -480,6 +488,18 @@ if (LLAMA_BUILD_TOOLS AND LLAMA_BUILD_COMMON)
         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
         COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/run-task073-mtp-checkpoint-repeat.sh)
     set_tests_properties(test-task073-mtp-checkpoint-repeat PROPERTIES
+        LABELS "turbo"
+        SKIP_RETURN_CODE 77
+        TIMEOUT 3600)
+endif()
+
+# TASK-073.1 ST-1: the same contract on an SWA model with MTP off, so a drift can
+# only come from the checkpoint/restore path. Skips (77) when TASK0731_MODEL is absent.
+if (LLAMA_BUILD_TOOLS AND LLAMA_BUILD_COMMON)
+    add_test(NAME test-task073.1-swa-checkpoint
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+        COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/run-task073.1-swa-checkpoint.sh)
+    set_tests_properties(test-task073.1-swa-checkpoint PROPERTIES
         LABELS "turbo"
         SKIP_RETURN_CODE 77
         TIMEOUT 3600)

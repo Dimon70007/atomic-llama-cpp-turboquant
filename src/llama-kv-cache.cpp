@@ -3330,6 +3330,24 @@ void llama_kv_cache::state_write(llama_io_write_i & io, llama_seq_id seq_id, lla
             continue;
         }
 
+        {
+            llama_pos blob_min = -1;
+            llama_pos blob_max = -1;
+            for (const auto & range : cr.data) {
+                for (uint32_t i = range.first; i < range.second; ++i) {
+                    const llama_pos p = cells.pos_get(i);
+                    if (p < 0) {
+                        continue;
+                    }
+                    blob_min = blob_min < 0 ? p : std::min(blob_min, p);
+                    blob_max = std::max(blob_max, p);
+                }
+            }
+            LLAMA_LOG_INFO("%s: seq %d, n_swa %u, %u cells in %zu range(s), blob pos [%d, %d]\n",
+                    __func__, (int) seq_id, n_swa, cell_count, cr.data.size(),
+                    (int) blob_min, (int) blob_max);
+        }
+
         state_write_meta(io, cr, seq_id);
         state_write_data(io, cr);
     }

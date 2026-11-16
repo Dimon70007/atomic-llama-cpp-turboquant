@@ -1,0 +1,30 @@
+{
+  "title": "TASK-073.1 ST-1 - SWA model + checkpoint restore must emit one text",
+  "comment": "TASK-073.1 ST-1: the same checkpoint-restore contract as tests/task073-mtp-paths.json, but on an SWA model with the speculative path removed. MTP off, so a drift here can only come from the checkpoint blob and the SWA ring. Kept in its own file so the TASK-073 ST-4 Groot matrix stays the production regression.",
+  "cells": [
+    {
+      "id": "swa-checkpoints-on",
+      "note": "gemma4 26B-A4B: sliding_window 1024 on 25 of 30 layers, MTP off, checkpoints at the product default",
+      "model": "gemma-4-26B-A4B-it-UD-IQ4_XS.gguf",
+      "draft": null,
+      "sweep_cell": "nomtp",
+      "ctx": 16384,
+      "max_tokens": 1024,
+      "repeats": 3,
+      "server_args": [],
+      "expect": "one emission"
+    },
+    {
+      "id": "swa-checkpoints-off",
+      "note": "control: same weights and knobs, checkpoints disabled; isolates the checkpoint blob from everything else",
+      "model": "gemma-4-26B-A4B-it-UD-IQ4_XS.gguf",
+      "draft": null,
+      "sweep_cell": "nomtp",
+      "ctx": 16384,
+      "max_tokens": 1024,
+      "repeats": 3,
+      "server_args": ["--ctx-checkpoints", "0"],
+      "expect": "one emission"
+    }
+  ]
+}

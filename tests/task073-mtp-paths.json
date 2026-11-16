@@ -1,4 +1,5 @@
 {
+  "title": "TASK-073 ST-4 - MTP drafting paths vs checkpoint restore",
   "comment": "TASK-073 ST-4: Groot-19B-A3B is the production model, so its MTP path is the only one that has to be clean. The gemma4-assistant (shared-KV) and step35 (chain_heads) cells are out of scope by operator decision 2026-11-16; they were measured once and are recorded in the task file rather than re-run here.",
   "cells": [
     {

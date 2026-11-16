@@ -34,7 +34,7 @@ import json
 import shutil
 import subprocess
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Final
@@ -98,6 +98,15 @@ def _resolve(value: Any, label: str, cell_id: str) -> Path | None:
     if not path.is_absolute():
         raise SystemExit(f"{cell_id}: {label} must be absolute or a bare filename: {raw}")
     return path
+
+
+def load_title(json_path: Path) -> str:
+    """Matrix title for the summary heading; the file must name itself."""
+    data = json.loads(json_path.read_text(encoding="utf-8"))
+    title = str(data.get("title") or "").strip()
+    if not title:
+        raise SystemExit(f"{json_path}: 'title' must name the gate")
+    return title
 
 
 def load_cells(json_path: Path) -> list[PathCell]:
@@ -215,7 +224,7 @@ def run_cell(
 
 def write_summary(out_root: Path, rows: list[dict[str, Any]], meta: dict[str, Any]) -> Path:
     lines = [
-        "# TASK-073 ST-4 - MTP drafting paths vs checkpoint restore",
+        f"# {meta['title']}",
         "",
         f"stamp: {meta['stamp']}",
         f"server: `{meta['server']}`",
@@ -250,10 +259,14 @@ def write_summary(out_root: Path, rows: list[dict[str, Any]], meta: dict[str, An
         + "."
     )
     if failed:
-        lines.append(
-            "**Still drifting: " + ", ".join(f"`{c}`" for c in failed)
-            + ".** The restore drops this path's draft state as well; these cells need "
+        why = (
+            "The restore drops this path's draft state as well; these cells need "
             "the same treatment as the Groot path before the defect can be called closed."
+            if any(r.get("draft") for r in rows)
+            else "These cells carry no drafter, so the restore itself is what changes the context."
+        )
+        lines.append(
+            "**Still drifting: " + ", ".join(f"`{c}`" for c in failed) + ".** " + why
         )
     if errored:
         lines.append("Could not measure: " + ", ".join(f"`{c}`" for c in errored) + ".")
@@ -269,12 +282,18 @@ def write_summary(out_root: Path, rows: list[dict[str, Any]], meta: dict[str, An
 
 
 def main(argv: list[str]) -> int:
-    ap = argparse.ArgumentParser(description="TASK-073 ST-4 MTP path matrix")
+    ap = argparse.ArgumentParser(description="checkpoint-restore repeatability matrix")
     ap.add_argument("--json", required=True, type=Path, help="matrix file")
     ap.add_argument("--server", type=Path, default=DEFAULT_SERVER)
     ap.add_argument("--out-dir", type=Path, default=REPO_ROOT / "logs/task073-st4-paths")
     ap.add_argument("--prompt", default=sweep._DEFAULT_PROMPT)
     ap.add_argument("--only", default="", help="comma-separated cell ids")
+    ap.add_argument(
+        "--model-override",
+        type=Path,
+        default=None,
+        help="replace every cell's model (one model across the matrix)",
+    )
     ap.add_argument("--dry-run", action="store_true", help="print the plan, start no server")
     args = ap.parse_args(argv)
 
@@ -283,6 +302,8 @@ def main(argv: list[str]) -> int:
         return 2
 
     cells = load_cells(args.json)
+    if args.model_override is not None:
+        cells = [replace(c, model=args.model_override.expanduser()) for c in cells]
     if args.only:
         wanted = [c.strip() for c in args.only.split(",") if c.strip()]
         known = {c.id: c for c in cells}
@@ -307,7 +328,12 @@ def main(argv: list[str]) -> int:
     out_root = args.out_dir / stamp
     out_root.mkdir(parents=True, exist_ok=True)
 
-    meta = {"stamp": stamp, "server": str(args.server), "prompt_chars": len(args.prompt)}
+    meta = {
+        "stamp": stamp,
+        "title": load_title(args.json),
+        "server": str(args.server),
+        "prompt_chars": len(args.prompt),
+    }
     (out_root / "meta.json").write_text(
         json.dumps(meta, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
     )

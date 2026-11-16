@@ -1,6 +1,7 @@
 #include "server-context.h"
 #include "server-chat.h"
 #include "server-common.h"
+#include "server-checkpoint-pos.h"
 #include "server-http.h"
 #include "server-task.h"
 #include "server-queue.h"
@@ -3825,7 +3826,11 @@ private:
                                         // the position the checkpoint covers, not the live KV max
                                         common_speculative_set_state(spec.get(), slot.id, it->pos_max, it->data_spec);
 
-                                        pos_next = std::min(pos_next, std::max(it->pos_min + 1, it->pos_max));
+                                        // a blob stamped [pos_min, pos_max] covers pos_max + 1 tokens;
+                                        // resuming at max(pos_min + 1, pos_max) was right only for a
+                                        // single-position range and replayed the last token in a batch
+                                        // of its own, which changes the text on a non-batch-invariant model
+                                        pos_next = std::min(pos_next, server_prompt_checkpoint_pos_next(it->pos_max));
                                         n_past   = std::min(slot.prompt.tokens.size_up_to_pos(pos_next), (size_t) it->n_tokens);
                                         slot.prompt_checkpoint_restored = true;
                                         SLT_TRC(slot, "restored context checkpoint (pos_min = %d, pos_max = %d, n_tokens = %" PRId64 ", n_past = %d, size = %.3f MiB)\n", it->pos_min, it->pos_max, it->n_tokens, n_past, (float) it->size() / 1024 / 1024);
