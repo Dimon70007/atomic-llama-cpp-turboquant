@@ -28,6 +28,7 @@ import argparse
 import json
 import re
 import socket
+import statistics
 import subprocess
 import sys
 import time
@@ -36,7 +37,7 @@ import urllib.request
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Final
+from typing import Any, Final, Sequence
 
 _RE_ACCEPT: Final[re.Pattern[str]] = re.compile(r"draft acceptance\s*=\s*([0-9.]+)")
 _RE_MEANLEN: Final[re.Pattern[str]] = re.compile(r"mean len\s*=\s*([0-9.]+)")
@@ -68,10 +69,13 @@ DEFAULT_CELLS: Final[tuple[Cell, ...]] = (
     Cell("nomtp", None, None),
     Cell("n2-p000", 2, "0.0"),
     Cell("n2-p071", 2, "0.71"),
+    Cell("n2-p080", 2, "0.80"),
     Cell("n2-p090", 2, "0.90"),
     Cell("n2-p095", 2, "0.95"),
     Cell("n2-p100", 2, "1.0"),
     Cell("n1-p090", 1, "0.90"),
+    Cell("n3-p071", 3, "0.71"),
+    Cell("n3-p080", 3, "0.80"),
     Cell("n3-p090", 3, "0.90"),
 )
 
@@ -108,6 +112,7 @@ def _server_argv(
     ubatch: int,
     ctk: str,
     ctv: str,
+    extra_server_args: Sequence[str] = (),
 ) -> list[str]:
     argv = [
         str(bin_path),
@@ -141,6 +146,7 @@ def _server_argv(
             "-ctkd", ctk,
             "-ctvd", "turbo4",
         ]
+    argv += extra_server_args
     return argv
 
 
@@ -184,68 +190,99 @@ def run_cell(
     ctv: str,
     max_tokens: int,
     load_timeout: float,
+    repeats: int = 1,
+    extra_server_args: Sequence[str] = (),
 ) -> dict[str, Any]:
-    """Start a server for one cell, run one greedy request, tear it down."""
+    """Start a server for one cell, run `repeats` greedy requests, tear it down.
+
+    Repeats share one server process: model load dominates a cell (~11 s for
+    Groot) while one 512-token request is a couple of seconds, so reloading per
+    repeat would measure loading, not decoding.
+    """
     cell_dir = out_dir / cell.id
     cell_dir.mkdir(parents=True, exist_ok=True)
     port = _free_port()
-    argv = _server_argv(bin_path, model, port, cell, ctx, ngl, batch, ubatch, ctk, ctv)
+    argv = _server_argv(
+        bin_path, model, port, cell, ctx, ngl, batch, ubatch, ctk, ctv, extra_server_args
+    )
     (cell_dir / "argv.txt").write_text(" ".join(argv) + "\n", encoding="utf-8")
 
     log_path = cell_dir / "server.log"
     row: dict[str, Any] = {"id": cell.id, "n_max": cell.n_max, "p_min": cell.p_min}
+    runs: list[dict[str, Any]] = []
 
     t0 = time.time()
-    with log_path.open("wb") as log:
-        proc = subprocess.Popen(argv, stdout=log, stderr=subprocess.STDOUT)
-        try:
-            if not _wait_health(port, proc, load_timeout):
-                row["error"] = "server did not become healthy"
-                return row
-            row["load_sec"] = round(time.time() - t0, 1)
-
-            t1 = time.time()
+    try:
+        with log_path.open("wb") as log:
+            proc = subprocess.Popen(argv, stdout=log, stderr=subprocess.STDOUT)
             try:
-                resp = _request(port, prompt, max_tokens)
-            except urllib.error.HTTPError as exc:
-                detail = exc.read().decode("utf-8", errors="replace")[:400]
-                if exc.code == 400 and "exceed" in detail.lower():
-                    raise PromptTooLong(
-                        f"prompt + max_tokens does not fit ctx: {detail}"
-                    ) from exc
-                row["error"] = f"HTTP {exc.code}: {detail}"
-                return row
-            row["wall_sec"] = round(time.time() - t1, 1)
+                if not _wait_health(port, proc, load_timeout):
+                    row["error"] = "server did not become healthy"
+                    return row
+                row["load_sec"] = round(time.time() - t0, 1)
 
-            choice = (resp.get("choices") or [{}])[0]
-            message = choice.get("message") or {}
-            text = str(message.get("content") or "")
-            reasoning = str(message.get("reasoning_content") or "")
-            (cell_dir / "answer.txt").write_text(text, encoding="utf-8")
-            (cell_dir / "reasoning.txt").write_text(reasoning, encoding="utf-8")
-            (cell_dir / "response.json").write_text(
-                json.dumps(resp, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
-            )
+                for r in range(repeats):
+                    t1 = time.time()
+                    try:
+                        resp = _request(port, prompt, max_tokens)
+                    except urllib.error.HTTPError as exc:
+                        detail = exc.read().decode("utf-8", errors="replace")[:400]
+                        if exc.code == 400 and "exceed" in detail.lower():
+                            raise PromptTooLong(
+                                f"prompt + max_tokens does not fit ctx: {detail}"
+                            ) from exc
+                        row["error"] = f"HTTP {exc.code}: {detail}"
+                        return row
+                    wall = round(time.time() - t1, 1)
 
-            timings = resp.get("timings") or {}
-            row.update(
-                {
-                    "finish_reason": choice.get("finish_reason"),
-                    "completion_tokens": timings.get("predicted_n"),
-                    "decode_tok_per_s": timings.get("predicted_per_second"),
-                    "draft_n": timings.get("draft_n"),
-                    "draft_n_accepted": timings.get("draft_n_accepted"),
-                    "answer_chars": len(text),
-                    "reasoning_chars": len(reasoning),
-                }
-            )
-        finally:
-            proc.terminate()
-            try:
-                proc.wait(timeout=30)
-            except subprocess.TimeoutExpired:
-                proc.kill()
-                proc.wait(timeout=30)
+                    choice = (resp.get("choices") or [{}])[0]
+                    message = choice.get("message") or {}
+                    text = str(message.get("content") or "")
+                    reasoning = str(message.get("reasoning_content") or "")
+                    if repeats == 1:
+                        (cell_dir / "answer.txt").write_text(text, encoding="utf-8")
+                        (cell_dir / "reasoning.txt").write_text(reasoning, encoding="utf-8")
+                    else:
+                        (cell_dir / f"answer{r:02d}.txt").write_text(text, encoding="utf-8")
+                        (cell_dir / f"reasoning{r:02d}.txt").write_text(reasoning, encoding="utf-8")
+                    (cell_dir / f"response{r:02d}.json").write_text(
+                        json.dumps(resp, indent=2, ensure_ascii=False) + "\n",
+                        encoding="utf-8",
+                    )
+
+                    timings = resp.get("timings") or {}
+                    runs.append(
+                        {
+                            "wall_sec": wall,
+                            "finish_reason": choice.get("finish_reason"),
+                            "completion_tokens": timings.get("predicted_n"),
+                            "decode_tok_per_s": timings.get("predicted_per_second"),
+                            "draft_n": timings.get("draft_n"),
+                            "draft_n_accepted": timings.get("draft_n_accepted"),
+                            "answer_chars": len(text),
+                        }
+                    )
+            finally:
+                proc.terminate()
+                try:
+                    proc.wait(timeout=30)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    proc.wait(timeout=30)
+    except PromptTooLong:
+        raise
+
+    row["runs"] = runs
+    ok = [r for r in runs if r.get("decode_tok_per_s") is not None]
+    if not ok:
+        row["error"] = "no usable run"
+        return row
+    speeds = sorted(float(r["decode_tok_per_s"]) for r in ok)
+    row["decode_tok_per_s"] = statistics.median(speeds)
+    row["decode_min"] = speeds[0]
+    row["decode_max"] = speeds[-1]
+    for key in ("completion_tokens", "answer_chars", "finish_reason"):
+        row[key] = ok[-1].get(key)
 
     log_text = log_path.read_text(encoding="utf-8", errors="replace")
     acc = _RE_ACCEPT.findall(log_text)
@@ -256,19 +293,34 @@ def run_cell(
     return row
 
 
-def _write_summary(out_dir: Path, rows: list[dict[str, Any]], meta: dict[str, Any]) -> Path:
-    # Thinking mode puts the trace in reasoning_content and the answer in
-    # content; a cell can finish inside the trace with an empty answer. Compare
-    # everything the model emitted, otherwise two empty answers look identical.
-    texts = {
-        r["id"]: (
-            (out_dir / r["id"] / "reasoning.txt").read_text(encoding="utf-8")
-            + "\n<<<ANSWER>>>\n"
-            + (out_dir / r["id"] / "answer.txt").read_text(encoding="utf-8")
+def _read_emission(cell_dir: Path) -> str:
+    """Full emission for one cell: reasoning trace + answer, all runs joined.
+
+    Thinking mode puts the trace in reasoning_content and the answer in content,
+    and a cell can finish inside the trace with an empty answer; comparing only
+    the answer would make two empty answers look identical.
+    """
+    if (cell_dir / "reasoning.txt").is_file():
+        pairs = [(cell_dir / "reasoning.txt", cell_dir / "answer.txt")]
+    else:
+        pairs = sorted(
+            (p, p.with_name(p.name.replace("reasoning", "answer")))
+            for p in cell_dir.glob("reasoning*.txt")
         )
+    return "\n<<<RUN>>>\n".join(
+        r.read_text(encoding="utf-8") + "\n<<<ANSWER>>>\n" + a.read_text(encoding="utf-8")
+        for r, a in pairs
+        if r.is_file() and a.is_file()
+    )
+
+
+def _write_summary(out_dir: Path, rows: list[dict[str, Any]], meta: dict[str, Any]) -> Path:
+    texts = {
+        r["id"]: _read_emission(out_dir / r["id"])
         for r in rows
-        if (out_dir / r["id"] / "reasoning.txt").is_file()
+        if (out_dir / r["id"]).is_dir()
     }
+    texts = {k: v for k, v in texts.items() if v}
     # The reference is MTP-off: it is the sequential-decode truth. Any difference
     # between an MTP cell and it is drift introduced by speculative verification.
     ref_id = "nomtp" if "nomtp" in texts else (rows[0]["id"] if rows else "")
@@ -287,16 +339,21 @@ def _write_summary(out_dir: Path, rows: list[dict[str, Any]], meta: dict[str, An
         "Text equality compares the full emission (`reasoning_content` + `content`),"
         " because thinking mode can consume the whole budget before any answer starts.",
         "",
-        "| cell | n_max | p_min | decode t/s | acceptance | mean len | tokens | finish | answer chars | text == ref |",
-        "|---|---|---|---|---|---|---|---|---|---|",
+        "| cell | n_max | p_min | decode t/s (median) | min..max | acceptance | mean len | tokens | finish | answer chars | text == ref |",
+        "|---|---|---|---|---|---|---|---|---|---|---|",
     ]
     for r in rows:
+        spread = "-"
+        if r.get("decode_min") is not None and r.get("decode_max") is not None:
+            if r["decode_min"] != r["decode_max"]:
+                spread = f"{r['decode_min']:.2f}..{r['decode_max']:.2f}"
         lines.append(
-            "| {id} | {n} | {p} | {d} | {a} | {m} | {t} | {f} | {c} | {eq} |".format(
+            "| {id} | {n} | {p} | {d} | {s} | {a} | {m} | {t} | {f} | {c} | {eq} |".format(
                 id=r["id"],
                 n=r.get("n_max") if r.get("n_max") is not None else "-",
                 p=r.get("p_min") if r.get("p_min") is not None else "-",
                 d=f"{r['decode_tok_per_s']:.2f}" if r.get("decode_tok_per_s") else "-",
+                s=spread,
                 a=(
                     f"{r['acceptance_log']:.4f}"
                     if r.get("acceptance_log") is not None
@@ -372,6 +429,20 @@ def main(argv: list[str]) -> int:
     ap.add_argument("--ctv", default="turbo4.8")
     ap.add_argument("--load-timeout", type=float, default=600.0)
     ap.add_argument(
+        "--repeats",
+        type=int,
+        default=1,
+        help="requests per cell on one server load (median is reported when >1)",
+    )
+    ap.add_argument(
+        "--server-arg",
+        action="append",
+        default=[],
+        dest="server_args",
+        metavar="ARG",
+        help="extra llama-server argument, repeatable (e.g. --server-arg=--cache-ram --server-arg=0)",
+    )
+    ap.add_argument(
         "--only",
         default="",
         help="comma-separated cell ids (default: the built-in minimal grid)",
@@ -433,7 +504,7 @@ def main(argv: list[str]) -> int:
             row = run_cell(
                 cell, args.bin_path, args.model, out_dir, prompt,
                 args.ctx, args.ngl, args.batch, args.ubatch, args.ctk, args.ctv,
-                args.max_tokens, args.load_timeout,
+                args.max_tokens, args.load_timeout, args.repeats, args.server_args,
             )
         except PromptTooLong as exc:
             print(

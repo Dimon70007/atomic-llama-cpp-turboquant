@@ -15,6 +15,7 @@
 #   TASK072_MAX_TOKENS default 4096 (thinking needs room to close)
 #   TASK072_CTX        default 16384
 #   ONLY               comma-separated cell ids
+#   TASK072_REPEATS    requests per cell on one server load (default 1; median is reported)
 #
 # Exit: 0 all cells measured, 1 a cell failed, 2 bad input.
 
@@ -28,6 +29,7 @@ SERVER="${TASK072_SERVER:-${REPO_ROOT}/build-dev/bin/llama-server}"
 OUT="${TASK072_OUT:-${REPO_ROOT}/logs/task072-pmin-sweep}"
 MAX_TOKENS="${TASK072_MAX_TOKENS:-4096}"
 CTX="${TASK072_CTX:-16384}"
+REPEATS="${TASK072_REPEATS:-1}"
 
 [[ -f "${PY}" ]] || { echo "FAIL: missing ${PY}" >&2; exit 2; }
 [[ -x "${SERVER}" ]] || { echo "FAIL: missing server binary ${SERVER}" >&2; exit 2; }
@@ -41,7 +43,7 @@ if pgrep -f 'llama-server' >/dev/null 2>&1; then
 fi
 
 ARGS=(--model "${MODEL}" --bin "${SERVER}" --out-dir "${OUT}"
-      --max-tokens "${MAX_TOKENS}" --ctx "${CTX}")
+      --max-tokens "${MAX_TOKENS}" --ctx "${CTX}" --repeats "${REPEATS}")
 if [[ -n "${ONLY:-}" ]]; then
   ARGS+=(--only "${ONLY}")
 fi
