@@ -99,6 +99,7 @@ add_library(${TARGET}
     sampling.cpp
     sampling.h
     speculative.cpp
+    speculative-mtp-state.cpp
     speculative.h
     subproc.cpp
     subproc.h

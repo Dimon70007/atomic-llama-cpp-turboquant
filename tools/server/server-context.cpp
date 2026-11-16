@@ -2680,7 +2680,8 @@ private:
         bool ok = true;
 
         const uint32_t magic   = 0x4C434B50; // "PKCL"
-        const uint32_t version = 1;
+        // v2 adds the speculative-state blob; v1 files stay readable
+        const uint32_t version = 2;
         const uint32_t count   = (uint32_t) checkpoints.size();
 
         ok = ok && fwrite(&magic,   sizeof(magic),   1, f) == 1;
@@ -2693,14 +2694,17 @@ private:
             const int32_t  pos_max  = cur.pos_max;
             const uint64_t n_tgt    = cur.data_tgt.size();
             const uint64_t n_dft    = cur.data_dft.size();
+            const uint64_t n_spec   = cur.data_spec.size();
 
             ok = ok && fwrite(&n_tokens, sizeof(n_tokens), 1, f) == 1;
             ok = ok && fwrite(&pos_min,  sizeof(pos_min),  1, f) == 1;
             ok = ok && fwrite(&pos_max,  sizeof(pos_max),  1, f) == 1;
             ok = ok && fwrite(&n_tgt,    sizeof(n_tgt),    1, f) == 1;
             ok = ok && fwrite(&n_dft,    sizeof(n_dft),    1, f) == 1;
-            ok = ok && (n_tgt == 0 || fwrite(cur.data_tgt.data(), 1, n_tgt, f) == n_tgt);
-            ok = ok && (n_dft == 0 || fwrite(cur.data_dft.data(), 1, n_dft, f) == n_dft);
+            ok = ok && fwrite(&n_spec,   sizeof(n_spec),   1, f) == 1;
+            ok = ok && (n_tgt  == 0 || fwrite(cur.data_tgt.data(),  1, n_tgt,  f) == n_tgt);
+            ok = ok && (n_dft  == 0 || fwrite(cur.data_dft.data(),  1, n_dft,  f) == n_dft);
+            ok = ok && (n_spec == 0 || fwrite(cur.data_spec.data(), 1, n_spec, f) == n_spec);
         }
 
         fclose(f);
@@ -2718,15 +2722,16 @@ private:
         bool ok = fread(&magic,   sizeof(magic),   1, f) == 1 &&
                   fread(&version, sizeof(version), 1, f) == 1 &&
                   fread(&count,   sizeof(count),   1, f) == 1 &&
-                  magic == 0x4C434B50 && version == 1 && count <= 1024;
+                  magic == 0x4C434B50 && (version == 1 || version == 2) && count <= 1024;
 
         std::list<common_prompt_checkpoint> loaded;
 
         for (uint32_t i = 0; ok && i < count; ++i) {
             auto & cur = loaded.emplace_back();
 
-            uint64_t n_tgt = 0;
-            uint64_t n_dft = 0;
+            uint64_t n_tgt  = 0;
+            uint64_t n_dft  = 0;
+            uint64_t n_spec = 0;
 
             ok = ok && fread(&cur.n_tokens, sizeof(cur.n_tokens), 1, f) == 1;
             ok = ok && fread(&cur.pos_min,  sizeof(cur.pos_min),  1, f) == 1;
@@ -2734,14 +2739,22 @@ private:
             ok = ok && fread(&n_tgt,        sizeof(n_tgt),        1, f) == 1;
             ok = ok && fread(&n_dft,        sizeof(n_dft),        1, f) == 1;
 
+            // v1 has no speculative-state blob; the carry is then simply absent and
+            // set_state reports it, instead of failing the whole sidecar
+            if (version >= 2) {
+                ok = ok && fread(&n_spec, sizeof(n_spec), 1, f) == 1;
+            }
+
             // sanity: refuse absurd blob sizes (16 GiB per blob)
-            ok = ok && n_tgt <= (1ull << 34) && n_dft <= (1ull << 34);
+            ok = ok && n_tgt <= (1ull << 34) && n_dft <= (1ull << 34) && n_spec <= (1ull << 34);
 
             if (ok) {
                 cur.data_tgt.resize(n_tgt);
                 cur.data_dft.resize(n_dft);
-                ok = ok && (n_tgt == 0 || fread(cur.data_tgt.data(), 1, n_tgt, f) == n_tgt);
-                ok = ok && (n_dft == 0 || fread(cur.data_dft.data(), 1, n_dft, f) == n_dft);
+                cur.data_spec.resize(n_spec);
+                ok = ok && (n_tgt  == 0 || fread(cur.data_tgt.data(),  1, n_tgt,  f) == n_tgt);
+                ok = ok && (n_dft  == 0 || fread(cur.data_dft.data(),  1, n_dft,  f) == n_dft);
+                ok = ok && (n_spec == 0 || fread(cur.data_spec.data(), 1, n_spec, f) == n_spec);
             }
         }
 
@@ -3808,8 +3821,9 @@ private:
                                         // restore the context checkpoint
                                         it->load_tgt(ctx_tgt, slot.id, LLAMA_STATE_SEQ_FLAGS_PARTIAL_ONLY);
                                         it->load_dft(ctx_dft, slot.id, LLAMA_STATE_SEQ_FLAGS_PARTIAL_ONLY);
-                                        // restore the draft's speculative state
-                                        common_speculative_set_state(spec.get(), slot.id, it->data_spec);
+                                        // restore the draft's speculative state; it is stamped with
+                                        // the position the checkpoint covers, not the live KV max
+                                        common_speculative_set_state(spec.get(), slot.id, it->pos_max, it->data_spec);
 
                                         pos_next = std::min(pos_next, std::max(it->pos_min + 1, it->pos_max));
                                         n_past   = std::min(slot.prompt.tokens.size_up_to_pos(pos_next), (size_t) it->n_tokens);

@@ -12,6 +12,46 @@ Releases before `b10269-1.5.0` predate this file; see the git history.
 
 ## Unreleased
 
+### Added
+
+- **TASK-073 ST-1: repeatability gate for context-checkpoint restore.**
+  `test-task073-mtp-checkpoint-repeat` (`label turbo`, skips 77 without
+  `TASK073_MODEL`) sends one greedy request N times to one `llama-server` with
+  `--ctx-checkpoints` enabled and asserts a single emission. It composes
+  `tests/run-task072-groot-pmin-sweep.sh` and adds only the verdict
+  (`tests/lib/task073_checkpoint_repeat_verdict.py`); the sweep runner gained
+  `TASK072_SERVER_ARGS` to pass the ST-3 `--ctx-checkpoints 0` control arm.
+  Measured RED on `c92d1869a`: 3 texts over 4 repeats; with checkpoints off the
+  same cell emits 1.
+
+- **TASK-073 ST-4: MTP path matrix + one operator entry point.**
+  `make minillm-task073-mtp-paths` runs the production MTP path against the
+  contract (one greedy request repeated N times in one server must emit one
+  text), plus its `--ctx-checkpoints 0` reference arm. Matrix in
+  `tests/task073-mtp-paths.json`, orchestrator `tests/lib/task073_mtp_paths.py`;
+  composes the TASK-072 sweep and the ST-1 verdict instead of re-measuring.
+  A path whose model is absent is reported SKIP, never silently passed. Supports
+  `--dry-run` and `--only`.
+
+### Fixed
+
+- **TASK-073 ST-4: the MTP state restore rejected every non-Groot checkpoint.**
+  `set_state` compared the carry's stamped position against the *live* memory's
+  `pos_max`. At restore time that memory still holds the previous request's cells
+  above the checkpoint (trimmed only afterwards, in the `cached n_tokens` step),
+  so the comparison failed and the carry was dropped: `taken at pos 55 but
+  restored KV ends at 858`. The check now compares against the checkpoint's own
+  `pos_max`, which the server passes in, and lives in
+  `common_speculative_mtp_state_position_ok` with a unit test. Groot masked this
+  because its live `pos_max` happened to match; it surfaced on the Gemma path.
+
+- **TASK-073 ST-2c: the checkpoint sidecar dropped the speculative state.**
+  `checkpoints_save_sidecar` wrote `data_tgt`/`data_dft` but not `data_spec`, so
+  a slot save/restore (`slot_save_path`) lost the MTP carry even with ST-2 in
+  place - the same defect the task exists to fix, one layer out. Format is now
+  v2 with a `data_spec` blob; v1 files still load, with the carry treated as
+  absent (and reported) rather than failing the whole sidecar.
+
 ### Changed
 
 - **TASK-071: `test-iswa-size-swa` joined the `turbo` gate.** The test had no

@@ -16,6 +16,7 @@
 #   TASK072_CTX        default 16384
 #   ONLY               comma-separated cell ids
 #   TASK072_REPEATS    requests per cell on one server load (default 1; median is reported)
+#   TASK072_SERVER_ARGS extra llama-server args, space separated (e.g. "--ctx-checkpoints 0")
 #
 # Exit: 0 all cells measured, 1 a cell failed, 2 bad input.
 
@@ -46,6 +47,12 @@ ARGS=(--model "${MODEL}" --bin "${SERVER}" --out-dir "${OUT}"
       --max-tokens "${MAX_TOKENS}" --ctx "${CTX}" --repeats "${REPEATS}")
 if [[ -n "${ONLY:-}" ]]; then
   ARGS+=(--only "${ONLY}")
+fi
+if [[ -n "${TASK072_SERVER_ARGS:-}" ]]; then
+  read -r -a _extra <<< "${TASK072_SERVER_ARGS}"
+  for _arg in "${_extra[@]}"; do
+    ARGS+=(--server-arg="${_arg}")
+  done
 fi
 
 exec python3 "${PY}" "${ARGS[@]}"

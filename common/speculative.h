@@ -72,7 +72,11 @@ void common_speculative_accept(common_speculative * spec, llama_seq_id, uint16_t
 
 // (optional) get/set internal state
 bool common_speculative_get_state(common_speculative * spec, llama_seq_id seq_id, std::vector<uint8_t> & data);
-void common_speculative_set_state(common_speculative * spec, llama_seq_id seq_id, const std::vector<uint8_t> & data);
+
+// `restored_pos_max` is the last position the restored checkpoint covers. Live
+// memory cannot be compared against here: at restore time it still holds the
+// previous request's cells above the checkpoint, and they are trimmed later.
+void common_speculative_set_state(common_speculative * spec, llama_seq_id seq_id, llama_pos restored_pos_max, const std::vector<uint8_t> & data);
 
 // print statistics about the speculative decoding
 void common_speculative_print_stats(const common_speculative * spec);

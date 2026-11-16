@@ -468,6 +468,23 @@ if (LLAMA_BUILD_TOOLS AND LLAMA_BUILD_COMMON)
         TIMEOUT 14400)
 endif()
 
+# TASK-073 ST-2: MTP draft-state codec (CPU; no model).
+# Guarantees that a checkpoint's speculative blob round trips and that a foreign,
+# truncated or wrong-version blob is refused instead of memcpy'd.
+llama_build_and_test(test-task073-mtp-state-codec.cpp)
+
+# TASK-073 ST-1/ST-3: one greedy request repeated in one server must emit one
+# text, checkpoint restore included. Skips (77) when TASK073_MODEL is absent.
+if (LLAMA_BUILD_TOOLS AND LLAMA_BUILD_COMMON)
+    add_test(NAME test-task073-mtp-checkpoint-repeat
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+        COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/run-task073-mtp-checkpoint-repeat.sh)
+    set_tests_properties(test-task073-mtp-checkpoint-repeat PROPERTIES
+        LABELS "turbo"
+        SKIP_RETURN_CODE 77
+        TIMEOUT 3600)
+endif()
+
 llama_build_and_test(test-model-load-cancel.cpp LABEL "model")
 llama_build_and_test(test-autorelease.cpp       LABEL "model")
 llama_build_and_test(test-backend-sampler.cpp   LABEL "model")

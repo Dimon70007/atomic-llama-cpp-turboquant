@@ -1,0 +1,29 @@
+{
+  "comment": "TASK-073 ST-4: Groot-19B-A3B is the production model, so its MTP path is the only one that has to be clean. The gemma4-assistant (shared-KV) and step35 (chain_heads) cells are out of scope by operator decision 2026-11-16; they were measured once and are recorded in the task file rather than re-run here.",
+  "cells": [
+    {
+      "id": "groot-single-head",
+      "note": "production: qwen35moe, 1 in-GGUF NextN head, own KV, product n_max/p_min",
+      "model": "Groot-19B-A3B-261023-Q4_K_M.gguf",
+      "draft": null,
+      "sweep_cell": "n2-p090",
+      "ctx": 16384,
+      "max_tokens": 4096,
+      "repeats": 4,
+      "server_args": [],
+      "expect": "one emission"
+    },
+    {
+      "id": "groot-single-head-ckoff",
+      "note": "control: same knobs, checkpoints disabled (not a shipping config, only a reference)",
+      "model": "Groot-19B-A3B-261023-Q4_K_M.gguf",
+      "draft": null,
+      "sweep_cell": "n2-p090",
+      "ctx": 16384,
+      "max_tokens": 4096,
+      "repeats": 4,
+      "server_args": ["--ctx-checkpoints", "0"],
+      "expect": "one emission"
+    }
+  ]
+}

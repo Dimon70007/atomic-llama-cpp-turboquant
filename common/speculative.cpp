@@ -9,6 +9,7 @@
 #include "ngram-mod.h"
 #include "sampling.h"
 #include "speculative-adaptive.h"
+#include "speculative-mtp-state.h"
 
 #include "../src/llama-ext.h" // staging API: llama_set_embeddings_nextn / llama_get_embeddings_nextn_ith (used by MTP)
 
@@ -183,7 +184,9 @@ struct common_speculative_impl {
 
     // (optional) serialize/restore per-seq internal state (e.g. eagle3's deferred boundary).
     virtual bool get_state(llama_seq_id /*seq_id*/, std::vector<uint8_t> & /*data*/) const { return false; }
-    virtual void set_state(llama_seq_id /*seq_id*/, const std::vector<uint8_t> & /*data*/) {}
+
+    // `restored_pos_max`: last position covered by the restored checkpoint
+    virtual void set_state(llama_seq_id /*seq_id*/, llama_pos /*restored_pos_max*/, const std::vector<uint8_t> & /*data*/) {}
 
     // true if this implementation requires the target context to extract post-norm embeddings
     virtual bool need_embd() const = 0;
@@ -902,7 +905,7 @@ struct common_speculative_impl_draft_eagle3 : public common_speculative_impl {
         return true;
     }
 
-    void set_state(llama_seq_id seq_id, const std::vector<uint8_t> & data) override {
+    void set_state(llama_seq_id seq_id, llama_pos /*restored_pos_max*/, const std::vector<uint8_t> & data) override {
         if (!need_boundary_stash()) {
             return;
         }
@@ -2270,6 +2273,145 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
     bool need_embd_nextn() const override {
         return true;
     }
+
+    // TASK-073: the carry below survives a context checkpoint only if it is
+    // stored with it. Restoring reloads both KV caches, so a stale carry pairs a
+    // token with a hidden row from the previous request and repeats stop being
+    // reproducible. Not stored:
+    // - chain_h: rebuilt from pending_h at the start of every draft() call
+    //   (chain_heads only), so a carry from an earlier draft is never read.
+    // - i_batch_beg/i_batch_end: indices into the batch being processed, reset
+    //   by every process() call.
+    // - the batch buffer and sampler chains: scratch, refilled before use.
+    common_speculative_mtp_seq_state snapshot_state(llama_seq_id seq_id) const {
+        common_speculative_mtp_seq_state s;
+
+        s.n_embd = n_embd;
+        // pending_h is the hidden row of the last processed token, so the target
+        // KV max here is that token's position - the same value the server stamps
+        // into the checkpoint as pos_max. set_state compares the two, so a restore
+        // that lands on a different prefix is rejected instead of silently
+        // feeding the wrong row.
+        s.pos    = llama_memory_seq_pos_max(llama_get_memory(params.ctx_tgt), seq_id);
+
+        s.i_last = i_last[seq_id];
+        s.n_last = n_last[seq_id];
+        s.n_cap  = n_cap[seq_id];
+
+        // adaptive depth decides n_cap, and n_cap decides the draft length, so a
+        // controller left at the previous request's depth would draft a different
+        // number of tokens on the repeat
+        if (adaptive) {
+            s.adaptive_n_cur   = adaptive_ctrl[seq_id].n_cur;
+            s.adaptive_n_climb = adaptive_ctrl[seq_id].n_climb;
+            s.adaptive_n_drop  = adaptive_ctrl[seq_id].n_drop;
+        }
+
+        s.pending_h      = pending_h[seq_id];
+        s.verify_h_rows  = verify_h_rows[seq_id];
+        s.verify_h       = verify_h[seq_id];
+
+        // defer is one list shared by all sequences; a checkpoint is per-sequence,
+        // so keep only this sequence's rows, in their original order
+        for (size_t k = 0; k < defer.tok.size(); ++k) {
+            if (defer.seq[k] != seq_id) {
+                continue;
+            }
+            s.defer_tok.push_back(defer.tok[k]);
+            s.defer_pos.push_back(defer.pos[k]);
+            s.defer_seq.push_back(defer.seq[k]);
+            s.defer_embd.insert(s.defer_embd.end(),
+                    defer.embd.begin() + (long) (k * (size_t) n_embd),
+                    defer.embd.begin() + (long) ((k + 1) * (size_t) n_embd));
+        }
+
+        return s;
+    }
+
+    bool get_state(llama_seq_id seq_id, std::vector<uint8_t> & data) const override {
+        if (seq_id < 0 || seq_id >= (llama_seq_id) n_seq) {
+            return false;
+        }
+
+        const common_speculative_mtp_seq_state s = snapshot_state(seq_id);
+        if (s.pos < 0) {
+            // nothing processed for this sequence, so there is no carry to store
+            return false;
+        }
+
+        return common_speculative_mtp_state_encode(s, data);
+    }
+
+    void set_state(llama_seq_id seq_id, llama_pos restored_pos_max, const std::vector<uint8_t> & data) override {
+        if (seq_id < 0 || seq_id >= (llama_seq_id) n_seq) {
+            return;
+        }
+        if (data.empty()) {
+            // checkpoint taken before this build wrote a carry, or by a driver
+            // that had nothing processed; the stale carry stays and the repeat
+            // may drift. Say so instead of pretending the restore succeeded.
+            SPC_WRN("MTP state: checkpoint has no draft carry for seq %d, "
+                    "repeats may drift until the next prefill\n", (int) seq_id);
+            return;
+        }
+
+        common_speculative_mtp_seq_state s;
+        if (!common_speculative_mtp_state_decode(data, n_embd, s)) {
+            SPC_WRN("MTP state: rejecting draft carry for seq %d (bad version, length or width)\n",
+                    (int) seq_id);
+            return;
+        }
+
+        // the carry pairs with the last token the checkpoint covers
+        if (!common_speculative_mtp_state_position_ok(s.pos, restored_pos_max)) {
+            SPC_WRN("MTP state: rejecting draft carry for seq %d, taken at pos %d but the checkpoint covers up to %d\n",
+                    (int) seq_id, (int) s.pos, (int) restored_pos_max);
+            return;
+        }
+
+        pending_h[seq_id]     = s.pending_h;
+        verify_h_rows[seq_id] = s.verify_h_rows;
+        verify_h[seq_id]      = s.verify_h;
+        i_last[seq_id]        = s.i_last;
+        n_last[seq_id]        = s.n_last;
+        n_cap[seq_id]         = s.n_cap;
+
+        if (adaptive) {
+            adaptive_ctrl[seq_id].n_cur   = s.adaptive_n_cur;
+            adaptive_ctrl[seq_id].n_climb = s.adaptive_n_climb;
+            adaptive_ctrl[seq_id].n_drop  = s.adaptive_n_drop;
+        }
+
+        // replace this sequence's deferred rows, leaving the other sequences' rows
+        // in place: the list is shared, the checkpoint is not
+        const size_t row_bytes = (size_t) n_embd * sizeof(float);
+        size_t w = 0;
+        for (size_t k = 0; k < defer.tok.size(); ++k) {
+            if (defer.seq[k] == seq_id) {
+                continue;
+            }
+            if (w != k) {
+                defer.tok[w] = defer.tok[k];
+                defer.pos[w] = defer.pos[k];
+                defer.seq[w] = defer.seq[k];
+                std::memmove(defer.embd.data() + w * (size_t) n_embd,
+                             defer.embd.data() + k * (size_t) n_embd, row_bytes);
+            }
+            w++;
+        }
+        defer.tok.resize(w);
+        defer.pos.resize(w);
+        defer.seq.resize(w);
+        defer.embd.resize(w * (size_t) n_embd);
+
+        const size_t n_restored = s.defer_tok.size();
+        if (n_restored > 0) {
+            defer.tok.insert(defer.tok.end(), s.defer_tok.begin(), s.defer_tok.end());
+            defer.pos.insert(defer.pos.end(), s.defer_pos.begin(), s.defer_pos.end());
+            defer.seq.insert(defer.seq.end(), s.defer_seq.begin(), s.defer_seq.end());
+            defer.embd.insert(defer.embd.end(), s.defer_embd.begin(), s.defer_embd.end());
+        }
+    }
 };
 
 // state of self-speculation (simple implementation, not ngram-map)
@@ -3336,13 +3478,13 @@ bool common_speculative_get_state(common_speculative * spec, llama_seq_id seq_id
     return false;
 }
 
-void common_speculative_set_state(common_speculative * spec, llama_seq_id seq_id, const std::vector<uint8_t> & data) {
+void common_speculative_set_state(common_speculative * spec, llama_seq_id seq_id, llama_pos restored_pos_max, const std::vector<uint8_t> & data) {
     if (spec == nullptr) {
         return;
     }
 
     for (auto & impl : spec->impls) {
-        impl->set_state(seq_id, data);
+        impl->set_state(seq_id, restored_pos_max, data);
     }
 }
 
