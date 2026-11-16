@@ -1,0 +1,471 @@
+#!/usr/bin/env python3
+"""TASK-072: minimal p_min sweep on Groot-19B-A3B (in-GGUF MTP head).
+
+Answers one question: does `--spec-draft-p-min` change the *text*, or only the
+draft block length (speed / acceptance)?
+
+p_min is a `break` in the draft loop (common/speculative.cpp): it truncates the
+drafted block when the top-1 probability drops below the threshold. The target
+verifies every token, so under greedy sampling the text should not depend on it.
+If the text does move, that is a batch-shape leak (TASK-066 territory) and a
+much larger finding than the knob itself.
+
+Every cell runs greedy (temp 0, seed 42) in thinking mode - the operator
+measurement mode - against one fixed prompt. Cells differ only in
+`n_max` / `p_min` / MTP-on.
+
+Usage:
+    python3 tests/lib/task072_groot_pmin_sweep.py \
+        --model ~/models/Groot-19B-A3B-261023-Q4_K_M.gguf \
+        --bin build-dev/bin/llama-server --out-dir logs/task072-pmin
+
+Exit: 0 every cell produced text, 1 a cell failed, 2 bad input.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import re
+import socket
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.request
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Final
+
+_RE_ACCEPT: Final[re.Pattern[str]] = re.compile(r"draft acceptance\s*=\s*([0-9.]+)")
+_RE_MEANLEN: Final[re.Pattern[str]] = re.compile(r"mean len\s*=\s*([0-9.]+)")
+
+# One English prompt: Groot is English-only (Russian PPL 392.8), and the answer
+# carries a checkable number so a text change also reads as a fact change.
+_DEFAULT_PROMPT: Final[str] = (
+    "A train travels at 60 km/h for 2.5 hours, then at 80 km/h for 1.5 hours. "
+    "Calculate the total distance and explain the arithmetic in two sentences."
+)
+
+
+@dataclass(frozen=True)
+class Cell:
+    """One measurement cell. `p_min` None means MTP off."""
+
+    id: str
+    n_max: int | None
+    p_min: str | None
+
+    @property
+    def mtp(self) -> bool:
+        return self.p_min is not None
+
+
+# Minimal grid: the product cap (n_max 2) across the threshold, a no-speculation
+# control at p_min 1.0 (draft always truncated), and two cap probes.
+DEFAULT_CELLS: Final[tuple[Cell, ...]] = (
+    Cell("nomtp", None, None),
+    Cell("n2-p000", 2, "0.0"),
+    Cell("n2-p071", 2, "0.71"),
+    Cell("n2-p090", 2, "0.90"),
+    Cell("n2-p095", 2, "0.95"),
+    Cell("n2-p100", 2, "1.0"),
+    Cell("n1-p090", 1, "0.90"),
+    Cell("n3-p090", 3, "0.90"),
+)
+
+
+def _free_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
+
+
+def _wait_health(port: int, proc: subprocess.Popen[bytes], timeout: float) -> bool:
+    url = f"http://127.0.0.1:{port}/health"
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if proc.poll() is not None:
+            return False
+        try:
+            with urllib.request.urlopen(url, timeout=2) as resp:
+                if resp.status == 200:
+                    return True
+        except (urllib.error.URLError, OSError):
+            time.sleep(0.25)
+    return False
+
+
+def _server_argv(
+    bin_path: Path,
+    model: Path,
+    port: int,
+    cell: Cell,
+    ctx: int,
+    ngl: int,
+    batch: int,
+    ubatch: int,
+    ctk: str,
+    ctv: str,
+) -> list[str]:
+    argv = [
+        str(bin_path),
+        "--host", "127.0.0.1",
+        "--port", str(port),
+        "-m", str(model),
+        "-c", str(ctx),
+        "-ngl", str(ngl),
+        "-fit", "off",
+        "-np", "1",
+        "-b", str(batch),
+        "-ub", str(ubatch),
+        "-ctk", ctk,
+        "-ctv", ctv,
+        "-fa", "on",
+        "-lv", "3",
+        "--jinja",
+        # Product mode: thinking on; sampling fixed greedy for reproducibility.
+        "--chat-template-kwargs", '{"enable_thinking":true}',
+        "--temp", "0",
+        "--top-k", "1",
+        "--top-p", "1.0",
+        "--seed", "42",
+    ]
+    if cell.mtp:
+        argv += [
+            "--spec-type", "draft-mtp",
+            "--spec-draft-n-max", str(cell.n_max),
+            "--spec-draft-p-min", str(cell.p_min),
+            # Draft KV types are product knobs: F16 default costs 1024 MiB at 262k.
+            "-ctkd", ctk,
+            "-ctvd", "turbo4",
+        ]
+    return argv
+
+
+def _request(port: int, prompt: str, max_tokens: int) -> dict[str, Any]:
+    body = json.dumps(
+        {
+            "messages": [{"role": "user", "content": prompt}],
+            "max_tokens": max_tokens,
+            "temperature": 0,
+            "top_k": 1,
+            "top_p": 1.0,
+            "seed": 42,
+            "stream": False,
+        }
+    ).encode("utf-8")
+    req = urllib.request.Request(
+        f"http://127.0.0.1:{port}/v1/chat/completions",
+        data=body,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=3600) as resp:
+        return json.loads(resp.read().decode("utf-8"))
+
+
+class PromptTooLong(RuntimeError):
+    """Server rejected the request because prompt + max_tokens exceeds its ctx."""
+
+
+def run_cell(
+    cell: Cell,
+    bin_path: Path,
+    model: Path,
+    out_dir: Path,
+    prompt: str,
+    ctx: int,
+    ngl: int,
+    batch: int,
+    ubatch: int,
+    ctk: str,
+    ctv: str,
+    max_tokens: int,
+    load_timeout: float,
+) -> dict[str, Any]:
+    """Start a server for one cell, run one greedy request, tear it down."""
+    cell_dir = out_dir / cell.id
+    cell_dir.mkdir(parents=True, exist_ok=True)
+    port = _free_port()
+    argv = _server_argv(bin_path, model, port, cell, ctx, ngl, batch, ubatch, ctk, ctv)
+    (cell_dir / "argv.txt").write_text(" ".join(argv) + "\n", encoding="utf-8")
+
+    log_path = cell_dir / "server.log"
+    row: dict[str, Any] = {"id": cell.id, "n_max": cell.n_max, "p_min": cell.p_min}
+
+    t0 = time.time()
+    with log_path.open("wb") as log:
+        proc = subprocess.Popen(argv, stdout=log, stderr=subprocess.STDOUT)
+        try:
+            if not _wait_health(port, proc, load_timeout):
+                row["error"] = "server did not become healthy"
+                return row
+            row["load_sec"] = round(time.time() - t0, 1)
+
+            t1 = time.time()
+            try:
+                resp = _request(port, prompt, max_tokens)
+            except urllib.error.HTTPError as exc:
+                detail = exc.read().decode("utf-8", errors="replace")[:400]
+                if exc.code == 400 and "exceed" in detail.lower():
+                    raise PromptTooLong(
+                        f"prompt + max_tokens does not fit ctx: {detail}"
+                    ) from exc
+                row["error"] = f"HTTP {exc.code}: {detail}"
+                return row
+            row["wall_sec"] = round(time.time() - t1, 1)
+
+            choice = (resp.get("choices") or [{}])[0]
+            message = choice.get("message") or {}
+            text = str(message.get("content") or "")
+            reasoning = str(message.get("reasoning_content") or "")
+            (cell_dir / "answer.txt").write_text(text, encoding="utf-8")
+            (cell_dir / "reasoning.txt").write_text(reasoning, encoding="utf-8")
+            (cell_dir / "response.json").write_text(
+                json.dumps(resp, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+            )
+
+            timings = resp.get("timings") or {}
+            row.update(
+                {
+                    "finish_reason": choice.get("finish_reason"),
+                    "completion_tokens": timings.get("predicted_n"),
+                    "decode_tok_per_s": timings.get("predicted_per_second"),
+                    "draft_n": timings.get("draft_n"),
+                    "draft_n_accepted": timings.get("draft_n_accepted"),
+                    "answer_chars": len(text),
+                    "reasoning_chars": len(reasoning),
+                }
+            )
+        finally:
+            proc.terminate()
+            try:
+                proc.wait(timeout=30)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait(timeout=30)
+
+    log_text = log_path.read_text(encoding="utf-8", errors="replace")
+    acc = _RE_ACCEPT.findall(log_text)
+    mean_len = _RE_MEANLEN.findall(log_text)
+    row["acceptance_log"] = float(acc[-1]) if acc else None
+    row["mean_len_log"] = float(mean_len[-1]) if mean_len else None
+    row["mtp_draft_context"] = "creating MTP draft context against the target model" in log_text
+    return row
+
+
+def _write_summary(out_dir: Path, rows: list[dict[str, Any]], meta: dict[str, Any]) -> Path:
+    # Thinking mode puts the trace in reasoning_content and the answer in
+    # content; a cell can finish inside the trace with an empty answer. Compare
+    # everything the model emitted, otherwise two empty answers look identical.
+    texts = {
+        r["id"]: (
+            (out_dir / r["id"] / "reasoning.txt").read_text(encoding="utf-8")
+            + "\n<<<ANSWER>>>\n"
+            + (out_dir / r["id"] / "answer.txt").read_text(encoding="utf-8")
+        )
+        for r in rows
+        if (out_dir / r["id"] / "reasoning.txt").is_file()
+    }
+    # The reference is MTP-off: it is the sequential-decode truth. Any difference
+    # between an MTP cell and it is drift introduced by speculative verification.
+    ref_id = "nomtp" if "nomtp" in texts else (rows[0]["id"] if rows else "")
+    ref_text = texts.get(ref_id, "")
+    dist = {r["id"]: (texts[r["id"]] == ref_text) for r in rows if r["id"] in texts}
+
+    lines = [
+        "# TASK-072 p_min sweep (Groot-19B-A3B)",
+        "",
+        f"stamp: {meta['stamp']}",
+        f"model: `{meta['model']}`",
+        f"ctx {meta['ctx']}, greedy (temp 0, top_k 1, seed 42), thinking on, "
+        f"max_tokens {meta['max_tokens']}",
+        f"reference for text equality: `{ref_id}` (sequential decode, no draft)",
+        "",
+        "Text equality compares the full emission (`reasoning_content` + `content`),"
+        " because thinking mode can consume the whole budget before any answer starts.",
+        "",
+        "| cell | n_max | p_min | decode t/s | acceptance | mean len | tokens | finish | answer chars | text == ref |",
+        "|---|---|---|---|---|---|---|---|---|---|",
+    ]
+    for r in rows:
+        lines.append(
+            "| {id} | {n} | {p} | {d} | {a} | {m} | {t} | {f} | {c} | {eq} |".format(
+                id=r["id"],
+                n=r.get("n_max") if r.get("n_max") is not None else "-",
+                p=r.get("p_min") if r.get("p_min") is not None else "-",
+                d=f"{r['decode_tok_per_s']:.2f}" if r.get("decode_tok_per_s") else "-",
+                a=(
+                    f"{r['acceptance_log']:.4f}"
+                    if r.get("acceptance_log") is not None
+                    else "-"
+                ),
+                m=f"{r['mean_len_log']:.2f}" if r.get("mean_len_log") is not None else "-",
+                t=r.get("completion_tokens") or "-",
+                f=r.get("finish_reason") or r.get("error") or "-",
+                c=r.get("answer_chars", "-"),
+                eq="yes" if dist.get(r["id"]) else "**NO**",
+            )
+        )
+    moved = [cid for cid, same in dist.items() if not same]
+    truncated = [r["id"] for r in rows if r.get("finish_reason") == "length"]
+    mtp_cells = [r["id"] for r in rows if r.get("p_min") is not None]
+    exact = [c for c in mtp_cells if dist.get(c)]
+    reference_is_nomtp = ref_id == "nomtp"
+    lines += [
+        "",
+        "## Reading",
+        "",
+        f"MTP cells identical to `{ref_id}`: "
+        + (", ".join(f"`{c}`" for c in exact) if exact else "none")
+        + ".",
+        "",
+        (
+            "Every MTP cell reproduced the sequential-decode trajectory, so `p_min` "
+            "does not change the emitted text: it is a speed/acceptance knob."
+            if not moved
+            else "Cells that diverge from `" + ref_id + "`: "
+            + ", ".join(f"`{c}`" for c in moved)
+            + (
+                " -> speculative verification changes the trajectory (TASK-066 class: "
+                "the verify batch is not equivalent to sequential decode). `p_min`/`n_max` "
+                "decide how far that divergence is allowed to run, they do not cause it."
+                if reference_is_nomtp
+                else " -> no `nomtp` cell in this run, so equality is only shown inside "
+                "the MTP grid. Run with `nomtp` to compare against sequential decode."
+            )
+        ),
+    ]
+    if truncated:
+        lines += [
+            "",
+            "Cells that hit `finish_reason=length`: "
+            + ", ".join(f"`{c}`" for c in truncated)
+            + ". A truncated cell compares only the prefix, so raise `--max-tokens`"
+            " before quoting these cells as equality evidence.",
+        ]
+    path = out_dir / "summary.md"
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return path
+
+
+def main(argv: list[str]) -> int:
+    ap = argparse.ArgumentParser(description="TASK-072 Groot p_min sweep")
+    ap.add_argument("--model", required=True, type=Path)
+    ap.add_argument("--bin", required=True, type=Path, dest="bin_path")
+    ap.add_argument("--out-dir", required=True, type=Path)
+    ap.add_argument("--prompt", default=_DEFAULT_PROMPT)
+    ap.add_argument(
+        "--prompt-file",
+        type=Path,
+        default=None,
+        help="read the prompt from a file (overrides --prompt); use for long-context cells",
+    )
+    ap.add_argument("--max-tokens", type=int, default=4096)
+    ap.add_argument("--ctx", type=int, default=16384)
+    ap.add_argument("--ngl", type=int, default=999)
+    ap.add_argument("--batch", type=int, default=2048)
+    ap.add_argument("--ubatch", type=int, default=512)
+    ap.add_argument("--ctk", default="q8_0")
+    ap.add_argument("--ctv", default="turbo4.8")
+    ap.add_argument("--load-timeout", type=float, default=600.0)
+    ap.add_argument(
+        "--only",
+        default="",
+        help="comma-separated cell ids (default: the built-in minimal grid)",
+    )
+    args = ap.parse_args(argv)
+
+    for path, name in ((args.model, "--model"), (args.bin_path, "--bin")):
+        if not path.is_file():
+            print(f"FAIL: {name} not found: {path}", file=sys.stderr)
+            return 2
+
+    cells = list(DEFAULT_CELLS)
+    if args.only:
+        wanted = [c.strip() for c in args.only.split(",") if c.strip()]
+        known = {c.id: c for c in cells}
+        missing = [c for c in wanted if c not in known]
+        if missing:
+            raise SystemExit(f"unknown --only cells {missing}; known={sorted(known)}")
+        cells = [known[c] for c in wanted]
+
+    if args.prompt_file is not None:
+        if not args.prompt_file.is_file():
+            print(f"FAIL: --prompt-file not found: {args.prompt_file}", file=sys.stderr)
+            return 2
+        prompt = args.prompt_file.read_text(encoding="utf-8")
+        prompt_source = str(args.prompt_file)
+    else:
+        prompt = args.prompt
+        prompt_source = "<--prompt>"
+
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    out_dir = args.out_dir / stamp
+    out_dir.mkdir(parents=True, exist_ok=True)
+    meta = {
+        "stamp": stamp,
+        "model": str(args.model),
+        "bin": str(args.bin_path),
+        "ctx": args.ctx,
+        "max_tokens": args.max_tokens,
+        "batch": args.batch,
+        "ubatch": args.ubatch,
+        "ctk": args.ctk,
+        "ctv": args.ctv,
+        # Long prompts are not echoed into the stamp; record the source and size.
+        "prompt_source": prompt_source,
+        "prompt_chars": len(prompt),
+        "prompt": prompt if len(prompt) <= 2000 else prompt[:2000] + "...[truncated]",
+        "cells": [c.id for c in cells],
+    }
+    (out_dir / "meta.json").write_text(
+        json.dumps(meta, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+    )
+
+    rows: list[dict[str, Any]] = []
+    failed = False
+    for i, cell in enumerate(cells, start=1):
+        print(f"[{i}/{len(cells)}] {cell.id}", flush=True)
+        try:
+            row = run_cell(
+                cell, args.bin_path, args.model, out_dir, prompt,
+                args.ctx, args.ngl, args.batch, args.ubatch, args.ctk, args.ctv,
+                args.max_tokens, args.load_timeout,
+            )
+        except PromptTooLong as exc:
+            print(
+                f"FAIL: {exc}\n"
+                f"  prompt is {len(prompt)} chars; raise --ctx "
+                f"(currently {args.ctx}) or lower --max-tokens ({args.max_tokens})",
+                file=sys.stderr,
+            )
+            return 2
+        rows.append(row)
+        (out_dir / "rows.json").write_text(
+            json.dumps(rows, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+        )
+        if row.get("error") or row.get("decode_tok_per_s") is None:
+            failed = True
+            print(f"  FAILED: {row.get('error') or 'no timings'}", file=sys.stderr)
+            continue
+        print(
+            "  {:.2f} t/s, acc {}, mean len {}, {} tok, finish {}".format(
+                row["decode_tok_per_s"],
+                row.get("acceptance_log"),
+                row.get("mean_len_log"),
+                row.get("completion_tokens"),
+                row.get("finish_reason"),
+            ),
+            flush=True,
+        )
+
+    summary = _write_summary(out_dir, rows, meta)
+    print(f"==> {summary}")
+    return 1 if failed else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))
