@@ -502,7 +502,31 @@ if (LLAMA_BUILD_TOOLS AND LLAMA_BUILD_COMMON)
     set_tests_properties(test-task073.1-swa-checkpoint PROPERTIES
         LABELS "turbo"
         SKIP_RETURN_CODE 77
-        TIMEOUT 3600)
+        TIMEOUT 3600
+        # Let the runner find the server built in THIS tree instead of assuming a
+        # Darwin-only `build-dev` (TASK-077 F6/F10, ST-6.4).
+        ENVIRONMENT "BUILD_DIR=${CMAKE_BINARY_DIR}")
+endif()
+
+# TASK-077: numeric KV parity. Compares LOGITS (not text, see F41) for the same
+# prompt across cache types, ubatch sizes and the cached-vs-prefilled path.
+# Build-only here; the model-driven gate is test-task077-kv-parity below.
+llama_build(test-task077-kv-logit-parity.cpp)
+
+# TASK-077 ST-14: KV parity matrix on the product serving path. Self-contained:
+# the prompt is a local fixture, the server comes from THIS build tree, and no
+# parent-project path is read. One llama-server per cell, the same greedy
+# request REPEATS times, answers must be identical bit for bit (operator
+# protocol 2026-11-18). Skips (77) when TASK077_MODEL or the server is absent.
+if (LLAMA_BUILD_TOOLS AND LLAMA_BUILD_COMMON)
+    add_test(NAME test-task077-kv-parity
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+        COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/run-task077-kv-parity.sh)
+    set_tests_properties(test-task077-kv-parity PROPERTIES
+        LABELS "turbo"
+        SKIP_RETURN_CODE 77
+        TIMEOUT 14400
+        ENVIRONMENT "BUILD_DIR=${CMAKE_BINARY_DIR}")
 endif()
 
 llama_build_and_test(test-model-load-cancel.cpp LABEL "model")

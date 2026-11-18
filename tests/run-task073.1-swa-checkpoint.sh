@@ -29,8 +29,35 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PY="${REPO_ROOT}/tests/lib/task073_mtp_paths.py"
 
 JSON="${TASK073_JSON:-${REPO_ROOT}/tests/task073.1-swa-checkpoint.json}"
-SERVER="${TASK073_SERVER:-${REPO_ROOT}/build-dev/bin/llama-server}"
 OUT="${TASK073_OUT:-${REPO_ROOT}/logs/task073.1-swa-checkpoints}"
+
+# Server resolution: explicit selector wins, then the build tree ctest runs from
+# (so a CUDA build works without a Metal dev tree), then `build-dev` as the last
+# fallback for historic Darwin invocations. The old hardcoded `build-dev` default
+# made this gate unrunnable on any host without one (TASK-077 F6/F10, ST-6.4).
+#
+# ctest sets CTEST_BINARY_DIRECTORY for tests it starts; use it when present so the
+# runner finds the server next to the binaries that are actually under test.
+_build_candidates=()
+[[ -n "${TASK073_SERVER:-}" ]]           && _build_candidates+=("${TASK073_SERVER}")
+[[ -n "${CTEST_BINARY_DIRECTORY:-}" ]]   && _build_candidates+=("${CTEST_BINARY_DIRECTORY}/bin/llama-server")
+[[ -n "${BUILD_DIR:-}" ]]                && _build_candidates+=("${BUILD_DIR}/bin/llama-server")
+_build_candidates+=(
+  "${REPO_ROOT}/build/bin/llama-server"
+  "${REPO_ROOT}/build-dev/bin/llama-server"
+)
+SERVER=""
+for _cand in "${_build_candidates[@]}"; do
+  if [[ -x "${_cand}" ]]; then
+    SERVER="${_cand}"
+    break
+  fi
+done
+if [[ -z "${SERVER}" ]]; then
+  echo "FAIL: server binary not found; tried: ${_build_candidates[*]}" >&2
+  echo "      build it (cmake --build <dir> --target llama-server) or set TASK073_SERVER" >&2
+  exit 2
+fi
 
 [[ -f "${PY}" ]] || { echo "FAIL: missing ${PY}" >&2; exit 2; }
 [[ -f "${JSON}" ]] || { echo "FAIL: missing matrix ${JSON}" >&2; exit 2; }
@@ -45,10 +72,15 @@ if [[ -z "${TASK0731_MODEL:-}" && ! -f "${HOME}/models/gemma-4-26B-A4B-it-UD-IQ4
   exit 77
 fi
 
-if pgrep -f 'llama-server' >/dev/null 2>&1; then
-  echo "WARN: a llama-server is running - Metal is exclusive, stop it first:" >&2
-  echo "      make minillm-stop" >&2
-  pgrep -fl 'llama-server' >&2 || true
+# Only a process whose executable IS llama-server counts. A bare `pgrep -f
+# llama-server` matches anything that merely mentions the string in its command
+# line (the agent runtime does), which produced a false "Metal is exclusive"
+# warning that failed this gate without starting a server (TASK-077 F32). On CUDA
+# the guard is informational anyway: GPU exclusivity is per device, not global.
+if pgrep -x 'llama-server' >/dev/null 2>&1; then
+  echo "WARN: a llama-server is already running; it may hold the GPU:" >&2
+  echo "      stop it before running this gate (on Darwin: make minillm-stop)" >&2
+  pgrep -xl 'llama-server' >&2 || true
 fi
 
 # shellcheck disable=SC2086 # ARGS is a deliberate flag list

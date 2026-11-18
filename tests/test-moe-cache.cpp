@@ -443,42 +443,64 @@ static bool run_capability_queries(
 
     configure_cache(nullptr);
     ggml_moe_cache_config config = {};
+    // Every field is checked individually so a failure names the value that
+    // disagreed instead of only flagging the whole capability block (TASK-077 F33).
+    struct field_check { long long got; long long want; bool cmp; };
+    auto eq = [](auto got, auto want) -> field_check {
+        return { (long long) got, (long long) want, (long long) got == (long long) want };
+    };
+    auto report = [&](const char * name, field_check c) {
+        if (c.cmp) {
+            return true;
+        }
+        fprintf(stderr, "cache-capabilities: %s got=%lld want=%lld\n",
+                name, c.got, c.want);
+        return false;
+    };
+
     bool ok = api.query_config(1, 0, &config) == 1;
-    ok &= config.min_devices == 1; // automatic mode now accepts a single device
-    ok &= config.budget_bytes == 4u * 1024 * 1024;
-    ok &= config.reserve_bytes == 0;
-    ok &= config.minimum_slab_bytes == 1024u * 1024 * 1024;
-    ok &= config.min_expert_bytes == 1024;
-    ok &= config.min_expert_explicit == 1;
-    ok &= config.overlap_cpu_rows == 0;
+    if (!ok) {
+        fprintf(stderr, "cache-capabilities: query_config(1,0) did not return 1\n");
+    }
+    ok &= report("config.min_devices",          eq(config.min_devices, 1));
+    ok &= report("config.budget_bytes",         eq(config.budget_bytes, 4u * 1024 * 1024));
+    ok &= report("config.reserve_bytes",        eq(config.reserve_bytes, 0));
+    ok &= report("config.minimum_slab_bytes",   eq(config.minimum_slab_bytes, 1024u * 1024 * 1024));
+    ok &= report("config.min_expert_bytes",     eq(config.min_expert_bytes, 1024));
+    ok &= report("config.min_expert_explicit",  eq(config.min_expert_explicit, 1));
+    ok &= report("config.overlap_cpu_rows",     eq(config.overlap_cpu_rows, 0));
 
     ggml_moe_cache_device_caps device = {};
-    ok &= api.query_device(provider_device, &config, &device) == 1;
-    ok &= device.logical_device >= 0;
-    ok &= device.physical_device >= 0;
-    ok &= device.compute_capability >= config.min_compute_capability;
-    ok &= device.min_expert_bytes == 1024;
-    ok &= api.query_device(cpu->device, &config, &device) == 0;
+    const int dev_rc = api.query_device(provider_device, &config, &device);
+    ok &= report("query_device(provider)==1",   eq(dev_rc, 1));
+    ok &= report("device.logical_device>=0",    { device.logical_device, 0, device.logical_device >= 0 });
+    ok &= report("device.physical_device>=0",   { device.physical_device, 0, device.physical_device >= 0 });
+    ok &= report("device.compute_capability>=min",
+                 { device.compute_capability, config.min_compute_capability,
+                   device.compute_capability >= config.min_compute_capability });
+    ok &= report("device.min_expert_bytes",     eq(device.min_expert_bytes, 1024));
+    ok &= report("query_device(cpu)==0",        eq(api.query_device(cpu->device, &config, &device), 0));
 
     const size_t expert_size = ggml_row_size(GGML_TYPE_Q4_0, n_in) * n_out;
     ggml_moe_cache_shape_caps shape = {};
-    ok &= api.query_shape(
-            GGML_TYPE_Q4_0, n_in, n_out, 64, expert_size, &shape) == 1;
-    ok &= shape.pool_bytes == expert_size * 64;
-    ok &= shape.minimum_bytes == shape.scratch_bytes + shape.pool_bytes;
-    ok &= api.query_shape(
-            GGML_TYPE_F32, n_in, n_out, 64, expert_size, &shape) == 0;
-    ok &= api.query_shape(
-            GGML_TYPE_Q4_0, n_in, n_out, 64, expert_size - 1, &shape) == 0;
-    ok &= api.query_shape(
-            GGML_TYPE_Q4_0, n_in, n_out, 1, expert_size, &shape) == 1;
-    ok &= shape.pool_bytes == expert_size * 64;
-    ok &= api.query_shape(
-            GGML_TYPE_Q4_0, n_in, n_out, 0, expert_size, &shape) == 0;
+    ok &= report("query_shape(Q4_0,64)==1",
+                 eq(api.query_shape(GGML_TYPE_Q4_0, n_in, n_out, 64, expert_size, &shape), 1));
+    ok &= report("shape.pool_bytes", eq(shape.pool_bytes, expert_size * 64));
+    ok &= report("shape.minimum_bytes",
+                 eq(shape.minimum_bytes, shape.scratch_bytes + shape.pool_bytes));
+    ok &= report("query_shape(F32)==0",
+                 eq(api.query_shape(GGML_TYPE_F32, n_in, n_out, 64, expert_size, &shape), 0));
+    ok &= report("query_shape(expert_size-1)==0",
+                 eq(api.query_shape(GGML_TYPE_Q4_0, n_in, n_out, 64, expert_size - 1, &shape), 0));
+    ok &= report("query_shape(n=1)==1",
+                 eq(api.query_shape(GGML_TYPE_Q4_0, n_in, n_out, 1, expert_size, &shape), 1));
+    ok &= report("shape.pool_bytes(n=1)", eq(shape.pool_bytes, expert_size * 64));
+    ok &= report("query_shape(n=0)==0",
+                 eq(api.query_shape(GGML_TYPE_Q4_0, n_in, n_out, 0, expert_size, &shape), 0));
 
     set_env("GGML_CUDA_MOE_CACHE", "0");
     set_env("GGML_CUDA_MOE_CACHE_MODE", "off");
-    ok &= api.query_config(-1, 0, &config) == 0;
+    ok &= report("query_config(off)==0", eq(api.query_config(-1, 0, &config), 0));
 
     set_env("GGML_CUDA_MOE_CACHE", "1");
     set_env("GGML_CUDA_MOE_CACHE_MODE", "auto");
@@ -487,28 +509,42 @@ static bool run_capability_queries(
     set_env("GGML_CUDA_MOE_CACHE_MAX_BATCH", nullptr);
     set_env("GGML_CUDA_MOE_CACHE_MIN_CC", nullptr);
     set_env("GGML_CUDA_MOE_CACHE_OVERLAP_CPU_ROWS", nullptr);
-    ok &= api.query_config(1, 0, &config) == 1;
-    ok &= config.min_devices == 1; // automatic mode now accepts a single device
-    ok &= config.minimum_slab_bytes == 1024u * 1024 * 1024;
-    ok &= config.min_compute_capability == 800;
-    ok &= config.min_expert_bytes == 512u * 1024;
-    ok &= config.min_expert_explicit == 0;
-    ok &= config.max_batch == 8;
-    ok &= config.overlap_cpu_rows == -1;
-    ok &= api.query_device(provider_device, &config, &device) == 1;
-    ok &= device.min_expert_bytes == 512u * 1024;
-
-    ok &= api.query_config(0, 0, &config) == 1;
-    ok &= config.min_devices == 1;
-    ok &= config.minimum_slab_bytes == 0;
-    ok &= config.min_compute_capability == 700;
-    ok &= config.min_expert_bytes == 1024u * 1024;
-    ok &= config.min_expert_explicit == 0;
-    ok &= config.max_batch == 8;
-    ok &= config.overlap_cpu_rows == -1;
-    ok &= api.query_device(provider_device, &config, &device) == 1;
-    ok &= device.min_expert_bytes == (device.compute_capability >= 800
-            ? 512u * 1024 : 1024u * 1024);
+    ok &= report("auto.query_config==1", eq(api.query_config(1, 0, &config), 1));
+    ok &= report("auto.config.min_devices",          eq(config.min_devices, 1));
+    ok &= report("auto.config.minimum_slab_bytes",   eq(config.minimum_slab_bytes, 1024u * 1024 * 1024));
+    ok &= report("auto.config.min_compute_capability", eq(config.min_compute_capability, 800));
+    ok &= report("auto.config.min_expert_bytes",     eq(config.min_expert_bytes, 512u * 1024));
+    ok &= report("auto.config.min_expert_explicit",  eq(config.min_expert_explicit, 0));
+    ok &= report("auto.config.max_batch",            eq(config.max_batch, 8));
+    ok &= report("auto.config.overlap_cpu_rows",     eq(config.overlap_cpu_rows, -1));
+    // "auto" mode asks for CC >= 800 (Ampere). On older silicon query_device is
+    // SUPPOSED to decline, so the expectation must branch on the device instead of
+    // assuming a modern card - this test was written on/for Ampere and failed on a
+    // V100 (cc=700) purely because of that assumption (TASK-077 F33).
+    {
+        const int auto_rc = api.query_device(provider_device, &config, &device);
+        const bool cc_ok  = device.compute_capability >= config.min_compute_capability;
+        if (cc_ok) {
+            ok &= report("auto.query_device==1", eq(auto_rc, 1));
+            ok &= report("auto.device.min_expert_bytes", eq(device.min_expert_bytes, 512u * 1024));
+        } else {
+            // A device below the requested floor must be refused, not silently granted.
+            ok &= report("auto.query_device==0 (cc below auto floor)", eq(auto_rc, 0));
+        }
+    }
+    ok &= report("legacy.query_config==1", eq(api.query_config(0, 0, &config), 1));
+    ok &= report("legacy.config.min_devices",          eq(config.min_devices, 1));
+    ok &= report("legacy.config.minimum_slab_bytes",   eq(config.minimum_slab_bytes, 0));
+    ok &= report("legacy.config.min_compute_capability", eq(config.min_compute_capability, 700));
+    ok &= report("legacy.config.min_expert_bytes",     eq(config.min_expert_bytes, 1024u * 1024));
+    ok &= report("legacy.config.min_expert_explicit",  eq(config.min_expert_explicit, 0));
+    ok &= report("legacy.config.max_batch",            eq(config.max_batch, 8));
+    ok &= report("legacy.config.overlap_cpu_rows",     eq(config.overlap_cpu_rows, -1));
+    ok &= report("legacy.query_device==1", eq(api.query_device(provider_device, &config, &device), 1));
+    {
+        const long long want = device.compute_capability >= 800 ? 512LL * 1024 : 1024LL * 1024;
+        ok &= report("legacy.device.min_expert_bytes", eq(device.min_expert_bytes, want));
+    }
     configure_cache(nullptr);
 
     printf("cache-capabilities: %s\n", ok ? "OK" : "FAIL");

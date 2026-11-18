@@ -141,11 +141,25 @@ def load_cells(json_path: Path) -> list[PathCell]:
 
 
 def server_busy() -> bool:
-    """Metal is exclusive: a second llama-server cannot start beside the product one."""
+    """True when a real ``llama-server`` process is already running.
+
+    Only a process whose *executable* is llama-server counts. A bare ``pgrep -f
+    llama-server`` matches any command line that merely mentions the string, which
+    on this host includes the agent runtime (`cursorsandbox ... llama-server`) and
+    turned this guard into a false failure that never started a server at all
+    (TASK-077 F32).
+    """
     found = shutil.which("pgrep")
     if found is None:
         return False
-    res = subprocess.run([found, "-f", "llama-server"], capture_output=True, text=True)
+    # -x matches the executable name exactly; falls back to the old behaviour if the
+    # local pgrep does not support -x (it does on Linux and Darwin).
+    res = subprocess.run([found, "-x", "llama-server"], capture_output=True, text=True)
+    if res.returncode not in (0, 1):
+        found_f = shutil.which("pgrep")
+        if found_f is None:
+            return False
+        res = subprocess.run([found_f, "-f", "/llama-server"], capture_output=True, text=True)
     return res.returncode == 0
 
 
