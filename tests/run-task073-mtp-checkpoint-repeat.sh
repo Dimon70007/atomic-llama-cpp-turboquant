@@ -12,10 +12,10 @@
 # Usage:
 #   TASK073_MODEL=... TASK073_SERVER=... ./tests/run-task073-mtp-checkpoint-repeat.sh
 #
-# Env (all required):
-#   TASK073_MODEL     hybrid MTP GGUF (e.g. Groot-19B-A3B)
-#   TASK073_SERVER    llama-server binary (dev build)
 # Env (optional):
+#   TASK073_MODEL     hybrid MTP GGUF (e.g. Groot-19B-A3B); required, SKIPs 77 if absent
+#   TASK073_SERVER    llama-server binary (default: resolved from BUILD_DIR / build/ / build-dev/)
+#   BUILD_DIR         CMake build directory to take llama-server from
 #   TASK073_REPEATS   requests in the cell, default 4
 #   TASK073_CTX       default 16384
 #   TASK073_MAX_TOKENS default 4096
@@ -31,14 +31,19 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SWEEP="${REPO_ROOT}/tests/run-task072-groot-pmin-sweep.sh"
 VERDICT="${REPO_ROOT}/tests/lib/task073_checkpoint_repeat_verdict.py"
+# shellcheck source=tests/lib/llama_server_bin.sh
+source "${REPO_ROOT}/tests/lib/llama_server_bin.sh"
 CELL=n2-p090
 
 MODEL="${TASK073_MODEL:-}"
-SERVER="${TASK073_SERVER:-}"
 [[ -n "${MODEL}" ]] || { echo "SKIP: TASK073_MODEL is not set" >&2; exit 77; }
 [[ -f "${MODEL}" ]] || { echo "SKIP: TASK073_MODEL not found: ${MODEL}" >&2; exit 77; }
-[[ -n "${SERVER}" ]] || { echo "FAIL: TASK073_SERVER is not set" >&2; exit 2; }
-[[ -x "${SERVER}" ]] || { echo "FAIL: TASK073_SERVER not executable: ${SERVER}" >&2; exit 2; }
+
+# Resolved like the other TASK-073 runners: explicit TASK073_SERVER, then the build
+# tree ctest runs from, then BUILD_DIR, then build/, then build-dev/. Requiring a
+# hand-exported binary made this gate fail under ctest on every non-Darwin tree
+# (TASK-073.1.4).
+SERVER="$(llama_server_resolve "${REPO_ROOT}" "${TASK073_SERVER:-}")" || exit 2
 
 REPEATS="${TASK073_REPEATS:-4}"
 CTX="${TASK073_CTX:-16384}"

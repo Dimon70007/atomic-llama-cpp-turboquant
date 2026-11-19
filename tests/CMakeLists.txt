@@ -490,7 +490,11 @@ if (LLAMA_BUILD_TOOLS AND LLAMA_BUILD_COMMON)
     set_tests_properties(test-task073-mtp-checkpoint-repeat PROPERTIES
         LABELS "turbo"
         SKIP_RETURN_CODE 77
-        TIMEOUT 3600)
+        TIMEOUT 3600
+        # Same reason as test-task073.1-swa-checkpoint below: without BUILD_DIR the
+        # runner falls back to a Darwin-only `build-dev`. Both tests also need their
+        # model passed via ENVIRONMENT by whoever starts ctest (TASK-073.1.4).
+        ENVIRONMENT "BUILD_DIR=${CMAKE_BINARY_DIR}")
 endif()
 
 # TASK-073.1 ST-1: the same contract on an SWA model with MTP off, so a drift can

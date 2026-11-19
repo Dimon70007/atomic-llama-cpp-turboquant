@@ -25,24 +25,23 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PY="${REPO_ROOT}/tests/lib/task072_groot_pmin_sweep.py"
+# shellcheck source=tests/lib/llama_server_bin.sh
+source "${REPO_ROOT}/tests/lib/llama_server_bin.sh"
 
 MODEL="${TASK072_MODEL:-${HOME}/models/Groot-19B-A3B-261023-Q4_K_M.gguf}"
-SERVER="${TASK072_SERVER:-${REPO_ROOT}/build-dev/bin/llama-server}"
 OUT="${TASK072_OUT:-${REPO_ROOT}/logs/task072-pmin-sweep}"
 MAX_TOKENS="${TASK072_MAX_TOKENS:-4096}"
 CTX="${TASK072_CTX:-16384}"
 REPEATS="${TASK072_REPEATS:-1}"
 
 [[ -f "${PY}" ]] || { echo "FAIL: missing ${PY}" >&2; exit 2; }
-[[ -x "${SERVER}" ]] || { echo "FAIL: missing server binary ${SERVER}" >&2; exit 2; }
 [[ -f "${MODEL}" ]] || { echo "FAIL: missing model ${MODEL}" >&2; exit 2; }
 
-# A second Metal process cannot start while the product service holds the GPU.
-if pgrep -f 'llama-server' >/dev/null 2>&1; then
-  echo "FAIL: a llama-server is already running; stop it first (make minillm-stop)" >&2
-  pgrep -fl 'llama-server' >&2 || true
-  exit 2
-fi
+SERVER="$(llama_server_resolve "${REPO_ROOT}" "${TASK072_SERVER:-}")" || exit 2
+
+# Metal: a second process cannot get the GPU, so a busy host is fatal there.
+# CUDA/Vulkan: exclusivity is per device, so it is a warning (TASK-073.1.3).
+llama_server_busy_guard || exit 2
 
 ARGS=(--model "${MODEL}" --bin "${SERVER}" --out-dir "${OUT}"
       --max-tokens "${MAX_TOKENS}" --ctx "${CTX}" --repeats "${REPEATS}")
